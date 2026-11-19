@@ -1,0 +1,6 @@
+{
+  "name": "Samplfie2",
+  "description": "Live DJ performance sampler, waveform editor, 12-module audio FX rack, TCP/UDP streamer, and MP3 exporter.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
