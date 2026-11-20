@@ -7,6 +7,7 @@ import com.example.config.NetworkProtocol
 import com.example.config.RigConfig
 import com.example.config.RigConfigRepository
 import com.example.export.Mp3Exporter
+import com.example.export.WavExporter
 import com.example.midi.MidiEvent
 import com.example.midi.MidiMessageParser
 import com.example.network.NetworkAudioTransmitter
@@ -62,7 +63,8 @@ class Stage4StudioNetworkExportTest {
     }
 
     @Test
-    fun `mp3 exporter encodes valid playable mp3 frames via jump3r`() = runBlocking {
+    fun `mp3 and wav exporters produce valid audio outputs`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
         val buf = testBuffer(durationSec = 0.4f, sr = 44100)
         val outMp3 = File.createTempFile("samplfie2_test_", ".mp3")
         try {
@@ -76,6 +78,12 @@ class Stage4StudioNetworkExportTest {
                 b0 == 0xFF && b1 == 0xE0
             }
             assertTrue("Missing MPEG frame sync header in exported MP3", hasMp3Sync)
+
+            val wavRes = WavExporter.saveWavToDevice(context, buf, "stage4_wav_export")
+            assertTrue("WAV export failed: ${wavRes.exceptionOrNull()}", wavRes.isSuccess)
+            val exportedWav = wavRes.getOrNull()!!
+            assertEquals("WAV", exportedWav.formatLabel)
+            assertTrue(exportedWav.byteSize > 44)
         } finally {
             outMp3.delete()
         }
@@ -138,13 +146,13 @@ class Stage4StudioNetworkExportTest {
     @Test
     fun `midi parser decodes note on, note off, cc, pitch bend, and clock`() {
         val bytes = byteArrayOf(
-            0x90.toByte(), 60, 110, // Note On ch1 C4 v110
-            0x80.toByte(), 60, 0,   // Note Off
-            0xB0.toByte(), 74, 127, // CC 74 = 127
-            0xE0.toByte(), 0x00, 0x40, // Pitch bend center
-            0xF8.toByte(),          // Clock
-            0xFA.toByte(),          // Start
-            0xFC.toByte()           // Stop
+            0x90.toByte(), 60, 110,
+            0x80.toByte(), 60, 0,
+            0xB0.toByte(), 74, 127,
+            0xE0.toByte(), 0x00, 0x40,
+            0xF8.toByte(),
+            0xFA.toByte(),
+            0xFC.toByte()
         )
         val events = MidiMessageParser.parse(bytes)
         assertEquals(7, events.size)
@@ -158,28 +166,30 @@ class Stage4StudioNetworkExportTest {
     }
 
     @Test
-    fun `studio engine bounces looper, sequencer, and timeline mixdown`() {
+    fun `studio engine bounces looper, sequencer, timeline mixdown, and syncs global playhead`() {
         val studio = StudioEngine()
         val sample = testBuffer(0.25f)
 
-        // Looper
+        studio.setBpm(120f)
         studio.assignBufferToLoopSlot(0, sample, "Vocal Loop")
         val loopMix = studio.bounceLooperMixdown()
         assertTrue(loopMix.frameCount > 0)
         assertTrue(loopMix.computePeakAndRms().first > 0.2f)
 
-        // 16-Step Sequencer
         studio.setSequencerSampleForLane(0, sample)
         studio.toggleSequencerStep(0, 2)
         val seqBounce = studio.renderSequenceToBuffer(bars = 1)
         assertTrue(seqBounce.frameCount > 44100)
         assertTrue(seqBounce.computePeakAndRms().first > 0.2f)
 
-        // Timeline
         studio.addClipToTimeline(0, sample, startTimeSec = 0.0f)
         studio.addClipToTimeline(2, seqBounce, startTimeSec = 0.5f)
-        studio.seekTimelinePlayhead(0.25f)
-        assertEquals(0.25f, studio.timelineState.value.playheadSec, 0.01f)
+        studio.seekSyncedPlayhead(1.0f) // At 120 BPM (0.5s/beat), 1.0s = Beat 3 of Bar 1
+        assertEquals(1.0f, studio.timelineState.value.playheadSec, 0.01f)
+        assertEquals(1.0f, studio.syncedPlayhead.value.playheadSec, 0.01f)
+        assertEquals(1, studio.syncedPlayhead.value.bar)
+        assertEquals(3, studio.syncedPlayhead.value.beat)
+
         val masterMix = studio.mixdownTimeline()
         assertTrue(masterMix.durationSeconds >= 1.5f)
         assertTrue(masterMix.computePeakAndRms().first > 0.2f)

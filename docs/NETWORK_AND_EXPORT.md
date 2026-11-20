@@ -1,4 +1,9 @@
-# Samplfie2 Network Link & MP3 Export Reference
+# Samplfie2 Import, Network Streaming & Local WAV/MP3 Export
+
+## Universal Audio Import (`AudioImporter`)
+- Uses the zero-permission Android SAF `ActivityResultContracts.OpenDocument(arrayOf("audio/*"))` picker.
+- Supports RIFF `.wav` directly and decodes `.mp3`, `.aac`/`.m4a`, `.ogg`, `.flac`, `.opus`, and other device-supported audio formats via `MediaExtractor` + `MediaCodec`.
+- Resamples to the active rig sample rate, writes an editable `.wav` take into the session directory, and opens directly in the **DECK** spoke.
 
 ## Rig & Network Link Configuration (`RigConfig`)
 Persisted via Jetpack `DataStore` Preferences (`samplfie2_rig_prefs`):
@@ -7,19 +12,14 @@ Persisted via Jetpack `DataStore` Preferences (`samplfie2_rig_prefs`):
 - **Protocol**: `TCP` (`java.net.Socket`) or `UDP` (`java.net.DatagramSocket`).
 - **Sample Rate**: `22050`, `44100`, `48000`, `96000` Hz (default `44100`).
 - **Channels**: `1` (Mono) or `2` (Stereo) (default `1`).
-- **Buffer Size**: `256`, `512`, `1024`, `2048`, `4096` samples per frame packet (default `1024`).
+- **Buffer Size**: `256`, `512`, `1024`, `2048`, `4096` frames per packet (default `1024`).
 
-### Wire Packet Format (`AudioPacketFrame`)
-Each transmitted frame carries a compact 20-byte header followed by 16-bit little-endian PCM payload:
-- Magic bytes: `0x53 0x4D 0x50 0x32` (`"SMP2"`)
-- Sequence number (`UInt32` LE)
-- Sample rate (`UInt32` LE)
-- Channels (`UInt16` LE)
-- Payload byte count (`UInt16` LE)
-- Flags / Peak level (`UInt32` LE)
-- PCM 16-bit LE samples (`bufferSize * channels * 2` bytes)
+### Wire Packet Format (`SMP2`)
+20-byte big-endian/LE framed header followed by 16-bit LE PCM payload:
+- Magic: `"SMP2"` (`0x53 0x4D 0x50 0x32`)
+- Sequence number (`UInt32` LE), Sample rate (`UInt32` LE), Channels (`UInt16` LE), Payload bytes (`UInt16` LE), Peak flags (`UInt32` LE), and PCM frames.
 
-## MP3 Device Export (`Mp3Exporter`)
-- Encodes the active (or selected) `AudioBuffer` to a standard MPEG-1 Layer III (`.mp3`) file using pure-Java LAME (`de.sciss:jump3r:1.0.5`).
-- Supports `128`, `192`, `256`, and `320` kbps CBR encoding.
-- Saves cleanly to `Music/Samplfie2/` using `MediaStore.Audio.Media` (`RELATIVETIME` / `RELATIVE_PATH`) on Android 10+ (API 29+) with zero storage permission prompts, and falls back to `Environment.getExternalStoragePublicDirectory(DIRECTORY_MUSIC)/Samplfie2` on API 24–28.
+## Local Device Export (`WavExporter` & `Mp3Exporter`)
+- **`.WAV` Export**: Writes standard RIFF PCM 16-bit `.wav` files via `WavExporter.saveWavToDevice`.
+- **`.MP3` Export**: Encodes MPEG-1 Layer III (`128–320` kbps CBR) via pure-Java LAME (`de.sciss:jump3r:1.0.5`).
+- Saves into `Music/Samplfie2/` using `MediaStore.Audio.Media` on Android 10+ (API 29+) with automatic app-external `Music/Samplfie2/` fallback on legacy or headless environments.

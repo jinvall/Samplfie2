@@ -1,39 +1,30 @@
 package com.example.ui
 
-import android.net.Uri
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.audio.AudioAnalyzer
 import com.example.audio.AudioBuffer
-import com.example.audio.AudioDecoder
+import com.example.audio.AudioImporter
 import com.example.audio.AudioPlaybackEngine
 import com.example.audio.MicCaptureEngine
 import com.example.audio.MicCaptureTelemetry
 import com.example.audio.PlaybackState
 import com.example.audio.WavCodec
-import com.example.audio.WaveformPeaks
-import com.example.config.NetworkProtocol
 import com.example.config.RigConfig
 import com.example.config.RigConfigRepository
-import com.example.dsp.ChorusParams
-import com.example.dsp.DelayParams
 import com.example.dsp.DspChainEngine
-import com.example.dsp.EchoParams
-import com.example.dsp.FlangerParams
+import com.example.dsp.DspModules
 import com.example.dsp.FxPreset
 import com.example.dsp.FxPresets
 import com.example.dsp.FxRackState
-import com.example.dsp.GainParams
-import com.example.dsp.NoiseRemovalParams
-import com.example.dsp.OverdriveParams
-import com.example.dsp.PhaserParams
+import com.example.dsp.LiveSessionMode
 import com.example.dsp.PitchSpeedParams
-import com.example.dsp.ReverbParams
-import com.example.dsp.RotaryParams
-import com.example.dsp.WahParams
-import com.example.export.ExportedMp3Result
+import com.example.dsp.StompboxMasterState
+import com.example.export.ExportedAudioResult
 import com.example.export.Mp3Exporter
+import com.example.export.WavExporter
 import com.example.midi.MidiControllerManager
 import com.example.midi.MidiEvent
 import com.example.midi.MidiState
@@ -42,6 +33,7 @@ import com.example.network.NetworkLinkState
 import com.example.studio.LooperState
 import com.example.studio.SequencerState
 import com.example.studio.StudioEngine
+import com.example.studio.SyncedPlayheadState
 import com.example.studio.TimelineState
 import java.io.File
 import java.text.SimpleDateFormat
@@ -61,85 +53,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-enum class ConsoleTab(val label: String) {
-    DECK("DECK"),
-    FX_RACK("FX RACK"),
-    STUDIO("LOOPER / SEQ"),
-    RIG_LINK("RIG & MIDI")
-}
-
-enum class VisualizerMode(val label: String) {
-    WAVEFORM("WAVE"),
-    SPECTRUM("FFT"),
-    DUAL("DUAL")
-}
-
-data class SavedTakeItem(
-    val name: String,
-    val file: File,
-    val durationSec: Float
-)
-
-data class EditorState(
-    val rawBuffer: AudioBuffer? = null,
-    val dryBuffer: AudioBuffer? = null,
-    val processedBuffer: AudioBuffer? = null,
-    val dryPeaks: WaveformPeaks = WaveformPeaks(FloatArray(0), FloatArray(0), FloatArray(0)),
-    val processedPeaks: WaveformPeaks = WaveformPeaks(FloatArray(0), FloatArray(0), FloatArray(0)),
-    val staticSpectrum: FloatArray = FloatArray(32),
-    val selectionStart: Float = 0f,
-    val selectionEnd: Float = 1f,
-    val playSelectionOnly: Boolean = false,
-    val canUndo: Boolean = false,
-    val isProcessingFx: Boolean = false,
-    val visualizerMode: VisualizerMode = VisualizerMode.DUAL,
-    val statusBanner: String = "HOLD TAC PAD TO CAPTURE MIC .WAV",
-    val savedTakes: List<SavedTakeItem> = emptyList(),
-    val lastExport: ExportedMp3Result? = null,
-    val isExportingMp3: Boolean = false
-) {
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (other !is EditorState) return false
-        return rawBuffer == other.rawBuffer &&
-            dryBuffer == other.dryBuffer &&
-            processedBuffer == other.processedBuffer &&
-            dryPeaks == other.dryPeaks &&
-            processedPeaks == other.processedPeaks &&
-            staticSpectrum.contentEquals(other.staticSpectrum) &&
-            selectionStart == other.selectionStart &&
-            selectionEnd == other.selectionEnd &&
-            playSelectionOnly == other.playSelectionOnly &&
-            canUndo == other.canUndo &&
-            isProcessingFx == other.isProcessingFx &&
-            visualizerMode == other.visualizerMode &&
-            statusBanner == other.statusBanner &&
-            savedTakes == other.savedTakes &&
-            lastExport == other.lastExport &&
-            isExportingMp3 == other.isExportingMp3
-    }
-
-    override fun hashCode(): Int {
-        var result = rawBuffer?.hashCode() ?: 0
-        result = 31 * result + (dryBuffer?.hashCode() ?: 0)
-        result = 31 * result + (processedBuffer?.hashCode() ?: 0)
-        result = 31 * result + dryPeaks.hashCode()
-        result = 31 * result + processedPeaks.hashCode()
-        result = 31 * result + staticSpectrum.contentHashCode()
-        result = 31 * result + selectionStart.hashCode()
-        result = 31 * result + selectionEnd.hashCode()
-        result = 31 * result + playSelectionOnly.hashCode()
-        result = 31 * result + canUndo.hashCode()
-        result = 31 * result + isProcessingFx.hashCode()
-        result = 31 * result + visualizerMode.hashCode()
-        result = 31 * result + statusBanner.hashCode()
-        result = 31 * result + savedTakes.hashCode()
-        result = 31 * result + (lastExport?.hashCode() ?: 0)
-        result = 31 * result + isExportingMp3.hashCode()
-        return result
-    }
-}
-
 class SamplfieViewModel(application: Application) : AndroidViewModel(application) {
 
     private val appContext = application.applicationContext
@@ -155,12 +68,13 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
     private val undoStack = ArrayDeque<AudioBuffer>()
     private var fxRenderJob: Job? = null
     private val rigSaveMutex = Mutex()
+    private var lastTapMs: Long = 0L
 
     @Volatile
     private var hasRigLocalEdit = false
 
-    private val _selectedTab = MutableStateFlow(ConsoleTab.DECK)
-    val selectedTab: StateFlow<ConsoleTab> = _selectedTab.asStateFlow()
+    private val _selectedSpoke = MutableStateFlow(StudioSpoke.BOOTH)
+    val selectedSpoke: StateFlow<StudioSpoke> = _selectedSpoke.asStateFlow()
 
     private val _rigConfig = MutableStateFlow(RigConfig())
     val rigConfig: StateFlow<RigConfig> = _rigConfig.asStateFlow()
@@ -168,8 +82,14 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
     private val _fxRack = MutableStateFlow(FxRackState())
     val fxRack: StateFlow<FxRackState> = _fxRack.asStateFlow()
 
+    private val _stompbox = MutableStateFlow(StompboxMasterState())
+    val stompbox: StateFlow<StompboxMasterState> = _stompbox.asStateFlow()
+
     private val _editorState = MutableStateFlow(EditorState())
     val editorState: StateFlow<EditorState> = _editorState.asStateFlow()
+
+    private val _loopEditorState = MutableStateFlow(LoopEditorState())
+    val loopEditorState: StateFlow<LoopEditorState> = _loopEditorState.asStateFlow()
 
     val micTelemetry: StateFlow<MicCaptureTelemetry> = micEngine.telemetry
     val playbackState: StateFlow<PlaybackState> = playbackEngine.state
@@ -178,6 +98,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
     val looperState: StateFlow<LooperState> = studioEngine.looperState
     val sequencerState: StateFlow<SequencerState> = studioEngine.sequencerState
     val timelineState: StateFlow<TimelineState> = studioEngine.timelineState
+    val syncedPlayhead: StateFlow<SyncedPlayheadState> = studioEngine.syncedPlayhead
 
     init {
         viewModelScope.launch {
@@ -198,15 +119,9 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
                     is MidiEvent.NoteOn -> {
                         when (event.note) {
                             in 36..39 -> studioEngine.toggleLoopSlotActive(event.note - 36)
-                            in 40..43 -> {
-                                val lane = studioEngine.sequencerState.value.lanes.getOrNull(event.note - 40)
-                                if (lane != null) {
-                                    playbackEngine.setBuffer(lane.buffer, _rigConfig.value.bufferSize)
-                                    playbackEngine.play(onlySelection = false)
-                                }
-                            }
+                            in 40..43 -> triggerSequencerLaneOneShot(event.note - 40)
                             in 48..72 -> {
-                                val base = _editorState.value.processedBuffer ?: return@collect
+                                _editorState.value.processedBuffer ?: return@collect
                                 val semitones = (event.note - 60).toFloat()
                                 updateFxRack {
                                     copy(
@@ -241,15 +156,14 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
                             }
                         }
                     }
-                    MidiEvent.TransportStart -> studioEngine.startSequencer()
+                    MidiEvent.TransportStart -> studioEngine.startSyncedTransport()
                     MidiEvent.TransportStop -> {
-                        studioEngine.stopSequencer()
-                        studioEngine.stopLooper()
+                        studioEngine.stopSyncedTransport()
                         playbackEngine.stop()
                     }
                     MidiEvent.ClockTick -> {
                         midiController.state.value.syncedBpm?.let { bpm ->
-                            studioEngine.setBpm(bpm)
+                            setStudioBpm(bpm)
                         }
                     }
                     else -> Unit
@@ -258,15 +172,15 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun selectTab(tab: ConsoleTab) {
-        _selectedTab.value = tab
+    fun selectSpoke(spoke: StudioSpoke) {
+        _selectedSpoke.value = spoke
     }
 
     fun setVisualizerMode(mode: VisualizerMode) {
         _editorState.value = _editorState.value.copy(visualizerMode = mode)
     }
 
-    // --- TAC HOLD MIC CAPTURE ---
+    // --- TAC HOLD MIC CAPTURE & UNIVERSAL AUDIO IMPORT ---
 
     fun onTacPressStart() {
         playbackEngine.pause()
@@ -302,10 +216,35 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    /**
-     * Built-in hardware reference oscillator (synth chord/tone) for testing DSP/visualizer/export
-     * even when no acoustic microphone input is present.
-     */
+    fun importAudioUri(uri: Uri) {
+        viewModelScope.launch {
+            _editorState.value = _editorState.value.copy(
+                isImportingAudio = true,
+                statusBanner = "DECODING IMPORTED AUDIO AS .WAV…"
+            )
+            val result = AudioImporter.importUriAsWav(
+                context = appContext,
+                uri = uri,
+                takesDir = takesDir,
+                targetSampleRate = _rigConfig.value.sampleRate
+            )
+            result.onSuccess { (buffer, wavFile) ->
+                _editorState.value = _editorState.value.copy(isImportingAudio = false)
+                loadNewRawBuffer(
+                    buffer,
+                    "IMPORTED ${wavFile.name} (${"%.2f".format(buffer.durationSeconds)}s)"
+                )
+                refreshSavedTakes()
+                _selectedSpoke.value = StudioSpoke.DECK
+            }.onFailure { err ->
+                _editorState.value = _editorState.value.copy(
+                    isImportingAudio = false,
+                    statusBanner = "IMPORT FAILED: ${err.message ?: "Unsupported format"}"
+                )
+            }
+        }
+    }
+
     fun generateReferenceOscillatorTone() {
         val cfg = _rigConfig.value
         val sr = cfg.sampleRate
@@ -361,56 +300,11 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         reprocessFxChain(buffer)
     }
 
-    /**
-     * Imports an audio file from a content Uri (MP3, AAC, OGG, WAV, FLAC, ...),
-     * decodes it to PCM via MediaExtractor + MediaCodec, persists a .wav copy to
-     * the takes directory, and loads it into the editor as the active buffer.
-     */
-    fun importAudioFromUri(uri: Uri) {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val config = _rigConfig.value
-                val displayName = uri.lastPathSegment
-                    ?.replace(Regex("[^a-zA-Z0-9._-]"), "_")
-                    ?.ifBlank { "Imported" }
-                    ?: "Imported"
-                val name = if (displayName.endsWith(".wav", ignoreCase = true)) {
-                    displayName.substringBeforeLast(".")
-                } else {
-                    displayName
-                }
-
-                val buffer = AudioDecoder.decodeUriToBuffer(
-                    context = appContext,
-                    uri = uri,
-                    targetSampleRate = config.sampleRate,
-                    targetChannels = config.channels,
-                    name = name
-                )
-
-                // Persist a .wav copy so it shows up in the saved-takes bank
-                val wavFile = File(takesDir, "$name.wav")
-                WavCodec.writeWav(buffer, wavFile)
-
-                withContext(Dispatchers.Main) {
-                    loadNewRawBuffer(buffer, "IMPORTED $name")
-                    refreshSavedTakes()
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    _editorState.value = _editorState.value.copy(
-                        statusBanner = "IMPORT FAILED: ${e.message ?: "unknown error"}"
-                    )
-                }
-            }
-        }
-    }
-
     private fun refreshSavedTakes() {
         viewModelScope.launch(Dispatchers.IO) {
             val files = takesDir.listFiles { f -> f.extension.equals("wav", true) }
                 ?.sortedByDescending { it.lastModified() }
-                ?.take(8)
+                ?.take(10)
                 ?: emptyList()
             val items = files.mapNotNull { file ->
                 runCatching {
@@ -485,32 +379,18 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
 
     // --- PLAYBACK REVIEW ---
 
-    fun togglePlay() {
-        playbackEngine.togglePlay(onlySelection = _editorState.value.playSelectionOnly)
-    }
-
-    fun stopPlayback() {
-        playbackEngine.stop()
-    }
-
-    fun toggleLoop() {
-        playbackEngine.setLooping(!playbackEngine.state.value.isLooping)
-    }
-
+    fun togglePlay() = playbackEngine.togglePlay(onlySelection = _editorState.value.playSelectionOnly)
+    fun stopPlayback() = playbackEngine.stop()
+    fun toggleLoop() = playbackEngine.setLooping(!playbackEngine.state.value.isLooping)
     fun togglePlaySelectionOnly() {
-        val next = !_editorState.value.playSelectionOnly
-        _editorState.value = _editorState.value.copy(playSelectionOnly = next)
+        _editorState.value = _editorState.value.copy(playSelectionOnly = !_editorState.value.playSelectionOnly)
     }
+    fun seekPlayhead(fraction: Float) = playbackEngine.seekToFraction(fraction)
 
-    fun seekPlayhead(fraction: Float) {
-        playbackEngine.seekToFraction(fraction)
-    }
-
-    // --- 12-MODULE FX RACK ---
+    // --- 12-MODULE FX RACK & LIVE STOMPBOX MASTER PROCESSOR ---
 
     fun updateFxRack(transform: FxRackState.() -> FxRackState) {
-        val updated = _fxRack.value.transform()
-        _fxRack.value = updated
+        _fxRack.value = _fxRack.value.transform()
         _editorState.value.dryBuffer?.let { reprocessFxChain(it) }
     }
 
@@ -520,16 +400,69 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         _editorState.value = _editorState.value.copy(statusBanner = "PRESET: ${preset.label}")
     }
 
-    fun toggleMasterBypass() {
-        updateFxRack { copy(masterBypass = !masterBypass) }
+    fun toggleMasterBypass() = updateFxRack { copy(masterBypass = !masterBypass) }
+
+    fun updateStompbox(transform: StompboxMasterState.() -> StompboxMasterState) {
+        _stompbox.value = _stompbox.value.transform()
+        _editorState.value.dryBuffer?.let { reprocessFxChain(it) }
+    }
+
+    fun toggleStompboxBypass() = updateStompbox { copy(engaged = !engaged) }
+
+    fun setLiveSessionMode(mode: LiveSessionMode) {
+        _stompbox.value = _stompbox.value.copy(liveMode = mode)
+        when (mode) {
+            LiveSessionMode.STAGE_DJ -> {
+                _editorState.value = _editorState.value.copy(statusBanner = "LIVE MODE: STAGE DJ PERFORMANCE")
+            }
+            LiveSessionMode.LIVE_REC -> {
+                _editorState.value = _editorState.value.copy(statusBanner = "LIVE MODE: CLEAN FIELD / BOOTH REC")
+            }
+            LiveSessionMode.STUDIO_RELEASE -> {
+                _fxRack.value = _fxRack.value.let { rack ->
+                    if (rack.activeCount == 0) FxPresets.build(FxPreset.STUDIO_MASTER) else rack
+                }
+                _editorState.value = _editorState.value.copy(statusBanner = "LIVE MODE: COLLAB STUDIO RELEASE")
+            }
+        }
+        _editorState.value.dryBuffer?.let { reprocessFxChain(it) }
+    }
+
+    fun onStompXyDrag(x: Float, y: Float) {
+        val cx = x.coerceIn(0f, 1f)
+        val cy = y.coerceIn(0f, 1f)
+        updateStompbox {
+            copy(
+                engaged = true,
+                xyPadX = cx,
+                xyPadY = cy,
+                toneTilt = (cx * 2f - 1f) * 0.85f,
+                spaceScale = 0.2f + cy * 1.4f,
+                modScale = 0.4f + cx * 1.2f
+            )
+        }
+    }
+
+    fun tapTempo() {
+        val now = System.currentTimeMillis()
+        if (lastTapMs in 1L until now) {
+            val delta = now - lastTapMs
+            if (delta in 300L..1200L) {
+                val bpm = (60_000f / delta.toFloat()).coerceIn(60f, 180f)
+                setStudioBpm(bpm)
+            }
+        }
+        lastTapMs = now
     }
 
     private fun reprocessFxChain(dry: AudioBuffer) {
         fxRenderJob?.cancel()
         val rack = _fxRack.value
+        val stomp = _stompbox.value
+        val bpm = studioEngine.syncedPlayhead.value.bpm
         _editorState.value = _editorState.value.copy(isProcessingFx = true)
         fxRenderJob = viewModelScope.launch(Dispatchers.Default) {
-            val processed = DspChainEngine.process(dry, rack)
+            val processed = DspChainEngine.process(dry, rack, stomp, bpm)
             val dryPeaks = AudioAnalyzer.computeWaveformPeaks(dry, 140)
             val procPeaks = AudioAnalyzer.computeWaveformPeaks(processed, 140)
             val spectrum = AudioAnalyzer.computeSpectrumBands(processed, processed.frameCount / 2, 512, 32)
@@ -546,12 +479,174 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // --- LOOPER / SEQUENCER / TIMELINE ACTIONS ---
+    // --- SAMPLES SPOKE: LOOPER + LOOP SAMPLE REFINEMENT EDITOR ---
 
     fun sendEditorToLoopSlot(slotId: Int) {
         val buf = activeOutputBuffer() ?: return
         studioEngine.assignBufferToLoopSlot(slotId, buf, buf.name)
+        loadLoopSlotIntoRefiner(slotId)
         _editorState.value = _editorState.value.copy(statusBanner = "ASSIGNED TO LOOP ${'A' + slotId}")
+    }
+
+    fun loadLoopSlotIntoRefiner(slotId: Int) {
+        val slot = studioEngine.looperState.value.slots.firstOrNull { it.id == slotId }
+        val buf = slot?.buffer ?: activeOutputBuffer()
+        if (buf == null) {
+            _loopEditorState.value = _loopEditorState.value.copy(
+                selectedSlotId = slotId,
+                rawSlotBuffer = null,
+                workingBuffer = null,
+                statusNote = "SLOT ${'A' + slotId} IS EMPTY — ASSIGN TAKE FROM DECK"
+            )
+            return
+        }
+        if (slot?.buffer == null) {
+            studioEngine.assignBufferToLoopSlot(slotId, buf, buf.name)
+        }
+        viewModelScope.launch(Dispatchers.Default) {
+            val peaks = AudioAnalyzer.computeWaveformPeaks(buf, 110)
+            withContext(Dispatchers.Main) {
+                _loopEditorState.value = LoopEditorState(
+                    selectedSlotId = slotId,
+                    rawSlotBuffer = buf,
+                    workingBuffer = buf,
+                    peaks = peaks,
+                    loopStartFrac = 0f,
+                    loopEndFrac = 1f,
+                    statusNote = "REFINING LOOP ${'A' + slotId} (${"%.2f".format(buf.durationSeconds)}s)"
+                )
+            }
+        }
+    }
+
+    fun updateLoopRefinerSelection(start: Float, end: Float) {
+        val lo = minOf(start, end).coerceIn(0f, 0.98f)
+        val hi = maxOf(start, end).coerceIn(lo + 0.02f, 1f)
+        _loopEditorState.value = _loopEditorState.value.copy(loopStartFrac = lo, loopEndFrac = hi)
+    }
+
+    fun snapLoopSelectionToZeroCrossing() {
+        val buf = _loopEditorState.value.workingBuffer ?: return
+        val s = _loopEditorState.value.loopStartFrac
+        val e = _loopEditorState.value.loopEndFrac
+        val snappedS = buf.snapFractionToZeroCrossing(s)
+        val snappedE = buf.snapFractionToZeroCrossing(e).coerceAtLeast((snappedS + 0.02f).coerceAtMost(1f))
+        _loopEditorState.value = _loopEditorState.value.copy(
+            loopStartFrac = snappedS,
+            loopEndFrac = snappedE,
+            statusNote = "SNAPPED IN/OUT TO ZERO-CROSSING"
+        )
+    }
+
+    fun setLoopRefinerFades(fadeInMs: Float, fadeOutMs: Float) {
+        _loopEditorState.value = _loopEditorState.value.copy(
+            fadeInMs = fadeInMs.coerceIn(0f, 200f),
+            fadeOutMs = fadeOutMs.coerceIn(0f, 200f)
+        )
+    }
+
+    fun trimLoopRefiner() {
+        val st = _loopEditorState.value
+        val cur = st.workingBuffer ?: return
+        val trimmed = cur.extractSelection(st.loopStartFrac, st.loopEndFrac, "${cur.name} (LoopTrim)")
+        updateLoopWorkingBuffer(trimmed, "TRIMMED LOOP (${"%.2f".format(trimmed.durationSeconds)}s)")
+    }
+
+    fun applyLoopRefinerFades() {
+        val st = _loopEditorState.value
+        val cur = st.workingBuffer ?: return
+        val faded = cur.applyFadeInOut(st.fadeInMs, st.fadeOutMs)
+        updateLoopWorkingBuffer(faded, "APPLIED ${st.fadeInMs.toInt()}/${st.fadeOutMs.toInt()}ms FADES")
+    }
+
+    fun reverseLoopRefiner() {
+        val cur = _loopEditorState.value.workingBuffer ?: return
+        updateLoopWorkingBuffer(cur.reversed(), "REVERSED LOOP SAMPLE")
+        _loopEditorState.value = _loopEditorState.value.copy(isReversed = !_loopEditorState.value.isReversed)
+    }
+
+    fun normalizeLoopRefiner() {
+        val cur = _loopEditorState.value.workingBuffer ?: return
+        updateLoopWorkingBuffer(cur.normalizePeak(), "NORMALIZED PEAK TO -0.3dB")
+    }
+
+    fun removeDcLoopRefiner() {
+        val cur = _loopEditorState.value.workingBuffer ?: return
+        updateLoopWorkingBuffer(cur.removeDcOffset(), "DC OFFSET REMOVED")
+    }
+
+    fun applyLoopRefinerPitchSpeed(pitchSemis: Float, speedFactor: Float) {
+        val raw = _loopEditorState.value.rawSlotBuffer ?: return
+        viewModelScope.launch(Dispatchers.Default) {
+            val tuned = DspModules.applyPitchAndSpeed(
+                raw.samples,
+                raw.sampleRate,
+                raw.channels,
+                PitchSpeedParams(enabled = true, pitchSemitones = pitchSemis, speedFactor = speedFactor)
+            )
+            val next = raw.copy(samples = tuned)
+            val peaks = AudioAnalyzer.computeWaveformPeaks(next, 110)
+            withContext(Dispatchers.Main) {
+                _loopEditorState.value = _loopEditorState.value.copy(
+                    workingBuffer = next,
+                    peaks = peaks,
+                    pitchSemitones = pitchSemis,
+                    speedFactor = speedFactor,
+                    statusNote = "TUNED ${if (pitchSemis >= 0) "+" else ""}${"%.1f".format(pitchSemis)}st • ${"%.2f".format(speedFactor)}x"
+                )
+            }
+        }
+    }
+
+    fun resetLoopRefiner() {
+        val raw = _loopEditorState.value.rawSlotBuffer ?: return
+        updateLoopWorkingBuffer(raw, "RESET LOOP TO SLOT ORIGINAL")
+        _loopEditorState.value = _loopEditorState.value.copy(
+            pitchSemitones = 0f,
+            speedFactor = 1.0f,
+            isReversed = false
+        )
+    }
+
+    fun auditionLoopRefiner() {
+        val st = _loopEditorState.value
+        val cur = st.workingBuffer ?: return
+        val clip = cur.extractSelection(st.loopStartFrac, st.loopEndFrac)
+        playbackEngine.setBuffer(clip, _rigConfig.value.bufferSize)
+        playbackEngine.setSelectionBounds(0f, 1f)
+        playbackEngine.setLooping(true)
+        playbackEngine.play(onlySelection = false)
+    }
+
+    fun commitRefinerToLoopSlot() {
+        val st = _loopEditorState.value
+        val refined = st.workingBuffer ?: return
+        studioEngine.assignBufferToLoopSlot(st.selectedSlotId, refined, refined.name)
+        _loopEditorState.value = st.copy(
+            rawSlotBuffer = refined,
+            statusNote = "COMMITTED REFINED LOOP TO SLOT ${'A' + st.selectedSlotId}"
+        )
+    }
+
+    fun sendRefinerToDeck() {
+        val refined = _loopEditorState.value.workingBuffer ?: return
+        loadNewRawBuffer(refined, "SENT REFINED LOOP TO DECK")
+        _selectedSpoke.value = StudioSpoke.DECK
+    }
+
+    private fun updateLoopWorkingBuffer(next: AudioBuffer, note: String) {
+        viewModelScope.launch(Dispatchers.Default) {
+            val peaks = AudioAnalyzer.computeWaveformPeaks(next, 110)
+            withContext(Dispatchers.Main) {
+                _loopEditorState.value = _loopEditorState.value.copy(
+                    workingBuffer = next,
+                    peaks = peaks,
+                    loopStartFrac = 0f,
+                    loopEndFrac = 1f,
+                    statusNote = note
+                )
+            }
+        }
     }
 
     fun toggleLoopSlot(slotId: Int) = studioEngine.toggleLoopSlotActive(slotId)
@@ -562,9 +657,11 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
 
     fun bounceLooperToEditor() {
         val mix = studioEngine.bounceLooperMixdown(_rigConfig.value.sampleRate)
-        loadNewRawBuffer(mix, "BOUNCED LOOPER MIX TO EDITOR")
-        _selectedTab.value = ConsoleTab.DECK
+        loadNewRawBuffer(mix, "BOUNCED LOOPER MIX TO DECK")
+        _selectedSpoke.value = StudioSpoke.DECK
     }
+
+    // --- INSTRUMENTS SPOKE: SEQUENCER, PADS & MIDI ---
 
     fun sendEditorToSequencerLane(laneId: Int = 0) {
         val buf = activeOutputBuffer() ?: return
@@ -572,10 +669,22 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         _editorState.value = _editorState.value.copy(statusBanner = "SAMPLE ASSIGNED TO SEQ LANE ${laneId + 1}")
     }
 
+    fun triggerSequencerLaneOneShot(laneId: Int) {
+        val lane = studioEngine.sequencerState.value.lanes.getOrNull(laneId) ?: return
+        playbackEngine.setBuffer(lane.buffer, _rigConfig.value.bufferSize)
+        playbackEngine.setLooping(false)
+        playbackEngine.play(onlySelection = false)
+    }
+
     fun toggleSequencerStep(laneId: Int, step: Int) = studioEngine.toggleSequencerStep(laneId, step)
     fun toggleSequencerLaneMute(laneId: Int) = studioEngine.toggleSequencerLaneMute(laneId)
     fun toggleSequencerPlayback() = studioEngine.toggleSequencerPlayback()
-    fun setStudioBpm(bpm: Float) = studioEngine.setBpm(bpm)
+    fun setStudioBpm(bpm: Float) {
+        studioEngine.setBpm(bpm)
+        if (_fxRack.value.delay.enabled && _fxRack.value.delay.bpmSync) {
+            _editorState.value.dryBuffer?.let { reprocessFxChain(it) }
+        }
+    }
     fun setSequencerSwing(swing: Float) = studioEngine.setSequencerSwing(swing)
 
     fun bounceSequencerToTimeline() {
@@ -583,6 +692,11 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         studioEngine.addClipToTimeline(2, beat, startTimeSec = 0f)
         _editorState.value = _editorState.value.copy(statusBanner = "BOUNCED 2-BAR BEAT TO TIMELINE")
     }
+
+    // --- TRACKS SPOKE: SYNCED PLAYHEAD & TIMELINE ---
+
+    fun toggleSyncedTransport() = studioEngine.toggleSyncedTransport()
+    fun seekSyncedPlayhead(sec: Float) = studioEngine.seekSyncedPlayhead(sec)
 
     fun addEditorClipToTimeline(trackId: Int) {
         val buf = activeOutputBuffer() ?: return
@@ -606,7 +720,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
     fun removeTimelineClip(trackId: Int, clipId: String) = studioEngine.removeTimelineClip(trackId, clipId)
     fun toggleTimelineMute(trackId: Int) = studioEngine.toggleTimelineTrackMute(trackId)
     fun toggleTimelineSolo(trackId: Int) = studioEngine.toggleTimelineTrackSolo(trackId)
-    fun seekTimeline(sec: Float) = studioEngine.seekTimelinePlayhead(sec)
+    fun seekTimeline(sec: Float) = studioEngine.seekSyncedPlayhead(sec)
     fun toggleTimelinePlayback() = studioEngine.toggleTimelinePlayback()
 
     fun bounceTimelineToEditor() {
@@ -615,16 +729,15 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
             _editorState.value = _editorState.value.copy(statusBanner = "TIMELINE HAS NO CLIPS")
             return
         }
-        loadNewRawBuffer(mix, "TIMELINE MIXDOWN IN EDITOR")
-        _selectedTab.value = ConsoleTab.DECK
+        loadNewRawBuffer(mix, "TIMELINE MIXDOWN IN DECK")
+        _selectedSpoke.value = StudioSpoke.DECK
     }
 
-    // --- RIG CONFIG, NETWORK STREAMING & MP3 EXPORT ---
+    // --- RIG CONFIG, NETWORK STREAMING & LOCAL WAV/MP3 EXPORT ---
 
     fun updateRigConfig(transform: RigConfig.() -> RigConfig) {
         hasRigLocalEdit = true
-        val next = _rigConfig.value.transform()
-        _rigConfig.value = next
+        _rigConfig.value = _rigConfig.value.transform()
         viewModelScope.launch {
             rigSaveMutex.withLock {
                 rigRepository.saveConfig(_rigConfig.value)
@@ -640,9 +753,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         networkTransmitter.transmitBuffer(buf, _rigConfig.value)
     }
 
-    fun stopNetworkStream() {
-        networkTransmitter.stopTransmission()
-    }
+    fun stopNetworkStream() = networkTransmitter.stopTransmission()
 
     fun exportAsMp3(fileNameBase: String) {
         val buf = activeOutputBuffer() ?: run {
@@ -651,7 +762,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         }
         viewModelScope.launch {
             _editorState.value = _editorState.value.copy(
-                isExportingMp3 = true,
+                isExporting = true,
                 statusBanner = "ENCODING MP3 (${_rigConfig.value.mp3BitrateKbps} KBPS)…"
             )
             val res = Mp3Exporter.saveMp3ToDevice(
@@ -662,14 +773,47 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
             )
             res.onSuccess { exported ->
                 _editorState.value = _editorState.value.copy(
-                    isExportingMp3 = false,
+                    isExporting = false,
                     lastExport = exported,
+                    lastLocalExport = ExportedAudioResult(
+                        formatLabel = "MP3",
+                        fileName = exported.fileName,
+                        displayLocation = exported.displayLocation,
+                        byteSize = exported.byteSize,
+                        uri = exported.uri
+                    ),
                     statusBanner = "SAVED MP3: ${exported.displayLocation}"
                 )
             }.onFailure { err ->
                 _editorState.value = _editorState.value.copy(
-                    isExportingMp3 = false,
+                    isExporting = false,
                     statusBanner = "MP3 EXPORT FAILED: ${err.message}"
+                )
+            }
+        }
+    }
+
+    fun exportAsWav(fileNameBase: String) {
+        val buf = activeOutputBuffer() ?: run {
+            _editorState.value = _editorState.value.copy(statusBanner = "NO AUDIO TO EXPORT AS WAV")
+            return
+        }
+        viewModelScope.launch {
+            _editorState.value = _editorState.value.copy(
+                isExporting = true,
+                statusBanner = "EXPORTING .WAV TO MUSIC/SAMPLFIE2…"
+            )
+            val res = WavExporter.saveWavToDevice(appContext, buf, fileNameBase)
+            res.onSuccess { exported ->
+                _editorState.value = _editorState.value.copy(
+                    isExporting = false,
+                    lastLocalExport = exported,
+                    statusBanner = "SAVED WAV: ${exported.displayLocation}"
+                )
+            }.onFailure { err ->
+                _editorState.value = _editorState.value.copy(
+                    isExporting = false,
+                    statusBanner = "WAV EXPORT FAILED: ${err.message}"
                 )
             }
         }

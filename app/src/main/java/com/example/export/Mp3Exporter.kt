@@ -99,40 +99,43 @@ object Mp3Exporter {
                     put(MediaStore.Audio.Media.IS_PENDING, 1)
                 }
                 val resolver = context.contentResolver
-                val uri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
-                    ?: return@withContext Result.failure(IllegalStateException("MediaStore insert failed"))
-                resolver.openOutputStream(uri)?.use { os ->
-                    os.write(mp3Bytes)
-                } ?: return@withContext Result.failure(IllegalStateException("Cannot open output stream"))
-
-                values.clear()
-                values.put(MediaStore.Audio.Media.IS_PENDING, 0)
-                resolver.update(uri, values, null, null)
-
-                Result.success(
-                    ExportedMp3Result(
-                        fileName = finalName,
-                        displayLocation = "Music/Samplfie2/$finalName",
-                        byteSize = mp3Bytes.size.toLong(),
-                        uri = uri
-                    )
-                )
-            } else {
-                val musicDir = File(
-                    context.getExternalFilesDir(Environment.DIRECTORY_MUSIC) ?: context.filesDir,
-                    "Samplfie2"
-                ).apply { mkdirs() }
-                val outFile = File(musicDir, finalName)
-                outFile.writeBytes(mp3Bytes)
-                Result.success(
-                    ExportedMp3Result(
-                        fileName = finalName,
-                        displayLocation = outFile.absolutePath,
-                        byteSize = mp3Bytes.size.toLong(),
-                        uri = Uri.fromFile(outFile)
-                    )
-                )
+                val uri = runCatching {
+                    resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values)
+                }.getOrNull()
+                if (uri != null) {
+                    val wrote = runCatching {
+                        resolver.openOutputStream(uri)?.use { os -> os.write(mp3Bytes) } != null
+                    }.getOrDefault(false)
+                    if (wrote) {
+                        values.clear()
+                        values.put(MediaStore.Audio.Media.IS_PENDING, 0)
+                        runCatching { resolver.update(uri, values, null, null) }
+                        return@withContext Result.success(
+                            ExportedMp3Result(
+                                fileName = finalName,
+                                displayLocation = "Music/Samplfie2/$finalName",
+                                byteSize = mp3Bytes.size.toLong(),
+                                uri = uri
+                            )
+                        )
+                    }
+                }
             }
+
+            val musicDir = File(
+                context.getExternalFilesDir(Environment.DIRECTORY_MUSIC) ?: context.filesDir,
+                "Samplfie2"
+            ).apply { mkdirs() }
+            val outFile = File(musicDir, finalName)
+            outFile.writeBytes(mp3Bytes)
+            Result.success(
+                ExportedMp3Result(
+                    fileName = finalName,
+                    displayLocation = "Samplfie2/$finalName",
+                    byteSize = mp3Bytes.size.toLong(),
+                    uri = Uri.fromFile(outFile)
+                )
+            )
         } catch (e: Exception) {
             Result.failure(e)
         } finally {

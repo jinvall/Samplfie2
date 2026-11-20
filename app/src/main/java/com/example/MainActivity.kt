@@ -1,16 +1,19 @@
 package com.example
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,47 +24,63 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ElectricBolt
 import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.SettingsInputComponent
+import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Loop
+import androidx.compose.material.icons.filled.Piano
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.ViewTimeline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationRailItemDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.ui.ConsoleTab
 import com.example.ui.SamplfieViewModel
+import com.example.ui.StudioSpoke
+import com.example.ui.components.CircularStudioHub
 import com.example.ui.components.HardwareTopRack
 import com.example.ui.screens.DeckEditorScreen
 import com.example.ui.screens.FxRackScreen
-import com.example.ui.screens.RigLinkMidiScreen
-import com.example.ui.screens.StudioPerformanceScreen
+import com.example.ui.screens.InstrumentsSpokeScreen
+import com.example.ui.screens.LiveSpokeScreen
+import com.example.ui.screens.SamplesSpokeScreen
+import com.example.ui.screens.TracksSpokeScreen
 import com.example.ui.theme.EmeraldSignal
 import com.example.ui.theme.GunmetalDeck
+import com.example.ui.theme.HairlineDivider
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.ObsidianChassis
 import com.example.ui.theme.Samplfie2Theme
@@ -84,7 +103,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
     val context = LocalContext.current
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     var hasMicPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -94,9 +113,9 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
         )
     }
 
-    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
                 hasMicPermission = ContextCompat.checkSelfPermission(
                     context,
                     Manifest.permission.RECORD_AUDIO
@@ -115,14 +134,18 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
 
     val importAudioLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        uri?.let { viewModel.importAudioFromUri(it) }
+    ) { uri ->
+        if (uri != null) {
+            viewModel.importAudioUri(uri)
+        }
     }
 
-    val selectedTab by viewModel.selectedTab.collectAsStateWithLifecycle()
+    val selectedSpoke by viewModel.selectedSpoke.collectAsStateWithLifecycle()
     val rigConfig by viewModel.rigConfig.collectAsStateWithLifecycle()
     val fxRack by viewModel.fxRack.collectAsStateWithLifecycle()
+    val stompbox by viewModel.stompbox.collectAsStateWithLifecycle()
     val editorState by viewModel.editorState.collectAsStateWithLifecycle()
+    val loopEditorState by viewModel.loopEditorState.collectAsStateWithLifecycle()
     val micTelemetry by viewModel.micTelemetry.collectAsStateWithLifecycle()
     val playbackState by viewModel.playbackState.collectAsStateWithLifecycle()
     val networkState by viewModel.networkState.collectAsStateWithLifecycle()
@@ -130,28 +153,34 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
     val looperState by viewModel.looperState.collectAsStateWithLifecycle()
     val sequencerState by viewModel.sequencerState.collectAsStateWithLifecycle()
     val timelineState by viewModel.timelineState.collectAsStateWithLifecycle()
+    val syncedPlayhead by viewModel.syncedPlayhead.collectAsStateWithLifecycle()
 
-    var showMp3Dialog by remember { mutableStateOf(false) }
-    var mp3NameInput by remember { mutableStateOf("samplfie2_mix") }
+    BackHandler(enabled = selectedSpoke != StudioSpoke.BOOTH) {
+        viewModel.selectSpoke(StudioSpoke.BOOTH)
+    }
+
+    var showExportDialog by remember { mutableStateOf(false) }
+    var exportNameInput by remember { mutableStateOf("samplfie2_mix") }
 
     val activeBuf = editorState.processedBuffer ?: editorState.dryBuffer
-    val hasAudio = activeBuf != null && activeBuf.frameCount > 0
+    val hasAudio = (activeBuf != null && activeBuf.frameCount > 0) ||
+        timelineState.tracks.any { it.clips.isNotEmpty() }
 
-    if (showMp3Dialog) {
+    if (showExportDialog) {
         AlertDialog(
-            onDismissRequest = { showMp3Dialog = false },
+            onDismissRequest = { showExportDialog = false },
             containerColor = GunmetalDeck,
-            title = { Text("EXPORT .MP3 TO DEVICE", style = MaterialTheme.typography.titleMedium) },
+            title = { Text("LOCAL EXPORT (MUSIC/SAMPLFIE2)", style = MaterialTheme.typography.titleMedium) },
             text = {
                 Column {
                     Text(
-                        text = "Saves to Music/Samplfie2/ at ${rigConfig.mp3BitrateKbps} kbps.",
+                        text = "Export master audio locally as .WAV or .MP3 (${rigConfig.mp3BitrateKbps} kbps).",
                         style = MaterialTheme.typography.bodyMedium,
                         color = TextSecondary
                     )
                     OutlinedTextField(
-                        value = mp3NameInput,
-                        onValueChange = { mp3NameInput = it },
+                        value = exportNameInput,
+                        onValueChange = { exportNameInput = it },
                         label = { Text("Filename") },
                         singleLine = true,
                         modifier = Modifier
@@ -162,23 +191,39 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.exportAsMp3(mp3NameInput)
-                        showMp3Dialog = false
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldSignal),
-                    modifier = Modifier.testTag("dialog_mp3_confirm")
-                ) {
-                    Text("SAVE MP3", color = ObsidianChassis)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            viewModel.exportAsWav(exportNameInput)
+                            showExportDialog = false
+                        },
+                        border = BorderStroke(1.dp, NeonCyan),
+                        modifier = Modifier.testTag("dialog_wav_confirm")
+                    ) {
+                        Text("SAVE .WAV", color = NeonCyan)
+                    }
+                    Button(
+                        onClick = {
+                            viewModel.exportAsMp3(exportNameInput)
+                            showExportDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldSignal),
+                        modifier = Modifier.testTag("dialog_mp3_confirm")
+                    ) {
+                        Text("SAVE .MP3", color = ObsidianChassis)
+                    }
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showMp3Dialog = false }) {
+                TextButton(onClick = { showExportDialog = false }) {
                     Text("CANCEL")
                 }
             }
         )
+    }
+
+    val openAudioPicker = {
+        importAudioLauncher.launch(arrayOf("audio/*"))
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -191,48 +236,24 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
             topBar = {
                 HardwareTopRack(
                     rigConfig = rigConfig,
+                    selectedSpoke = selectedSpoke,
                     activeFxCount = fxRack.activeCount,
                     isMasterBypass = fxRack.masterBypass,
                     isRecording = micTelemetry.isRecording,
                     hasAudio = hasAudio,
-                    onExportMp3Click = { showMp3Dialog = true },
+                    bpm = syncedPlayhead.bpm,
+                    onReturnToBooth = { viewModel.selectSpoke(StudioSpoke.BOOTH) },
+                    onExportMp3Click = { showExportDialog = true },
                     modifier = Modifier.statusBarsPadding()
                 )
             },
             bottomBar = {
                 if (!useNavigationRail) {
-                    NavigationBar(
-                        containerColor = GunmetalDeck,
+                    StudioSpokeBottomDock(
+                        selectedSpoke = selectedSpoke,
+                        onSelectSpoke = { viewModel.selectSpoke(it) },
                         modifier = Modifier.navigationBarsPadding()
-                    ) {
-                        ConsoleTab.entries.forEach { tab ->
-                            NavigationBarItem(
-                                selected = selectedTab == tab,
-                                onClick = { viewModel.selectTab(tab) },
-                                icon = {
-                                    Icon(
-                                        imageVector = tabIcon(tab),
-                                        contentDescription = tab.label
-                                    )
-                                },
-                                label = {
-                                    Text(
-                                        text = tab.label,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        maxLines = 1
-                                    )
-                                },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = ObsidianChassis,
-                                    selectedTextColor = NeonCyan,
-                                    indicatorColor = NeonCyan,
-                                    unselectedIconColor = TextSecondary,
-                                    unselectedTextColor = TextSecondary
-                                ),
-                                modifier = Modifier.testTag("nav_tab_${tab.name.lowercase()}")
-                            )
-                        }
-                    }
+                    )
                 }
             }
         ) { innerPadding ->
@@ -246,18 +267,18 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                         containerColor = GunmetalDeck,
                         modifier = Modifier.fillMaxHeight()
                     ) {
-                        ConsoleTab.entries.forEach { tab ->
+                        StudioSpoke.entries.forEach { spoke ->
                             NavigationRailItem(
-                                selected = selectedTab == tab,
-                                onClick = { viewModel.selectTab(tab) },
+                                selected = selectedSpoke == spoke,
+                                onClick = { viewModel.selectSpoke(spoke) },
                                 icon = {
                                     Icon(
-                                        imageVector = tabIcon(tab),
-                                        contentDescription = tab.label
+                                        imageVector = spokeIcon(spoke),
+                                        contentDescription = spoke.fullTitle
                                     )
                                 },
                                 label = {
-                                    Text(tab.label, style = MaterialTheme.typography.labelSmall)
+                                    Text(spoke.shortLabel, style = MaterialTheme.typography.labelSmall)
                                 },
                                 colors = NavigationRailItemDefaults.colors(
                                     selectedIconColor = ObsidianChassis,
@@ -266,14 +287,34 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                                     unselectedIconColor = TextSecondary,
                                     unselectedTextColor = TextSecondary
                                 ),
-                                modifier = Modifier.testTag("nav_rail_${tab.name.lowercase()}")
+                                modifier = Modifier.testTag("nav_rail_${spoke.name.lowercase()}")
                             )
                         }
                     }
                 }
 
-                when (selectedTab) {
-                    ConsoleTab.DECK -> DeckEditorScreen(
+                when (selectedSpoke) {
+                    StudioSpoke.BOOTH -> CircularStudioHub(
+                        editorState = editorState,
+                        playbackState = playbackState,
+                        fxRack = fxRack,
+                        stompbox = stompbox,
+                        looperState = looperState,
+                        sequencerState = sequencerState,
+                        timelineState = timelineState,
+                        syncedPlayhead = syncedPlayhead,
+                        networkState = networkState,
+                        midiState = midiState,
+                        onSelectSpoke = { viewModel.selectSpoke(it) },
+                        onToggleSyncedPlay = { viewModel.toggleSyncedTransport() },
+                        onImportAudioClick = openAudioPicker,
+                        onGenerateOscTone = { viewModel.generateReferenceOscillatorTone() },
+                        onExportWavClick = { viewModel.exportAsWav("samplfie2_booth") },
+                        onExportMp3Click = { showExportDialog = true },
+                        onStreamTxClick = { viewModel.streamActiveAudioOverNetwork() }
+                    )
+
+                    StudioSpoke.DECK -> DeckEditorScreen(
                         editorState = editorState,
                         micTelemetry = micTelemetry,
                         playbackState = playbackState,
@@ -285,6 +326,7 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                         },
                         onTacPressStart = { viewModel.onTacPressStart() },
                         onTacPressRelease = { viewModel.onTacPressRelease() },
+                        onImportAudioClick = openAudioPicker,
                         onGenerateOscTone = { viewModel.generateReferenceOscillatorTone() },
                         onVisualizerModeChange = { viewModel.setVisualizerMode(it) },
                         onSelectionChange = { s, e -> viewModel.updateSelection(s, e) },
@@ -297,32 +339,20 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                         onExtractSelection = { viewModel.extractSelection() },
                         onUndo = { viewModel.undoExtraction() },
                         onResetToOriginal = { viewModel.resetToOriginalTake() },
-                        onOpenFxRack = { viewModel.selectTab(ConsoleTab.FX_RACK) },
+                        onOpenFxRack = { viewModel.selectSpoke(StudioSpoke.FX_RACK) },
                         onSendToLooperSlot = { viewModel.sendEditorToLoopSlot(it) },
                         onSendToSequencer = { viewModel.sendEditorToSequencerLane(0) },
                         onAddToTimeline = { viewModel.addEditorClipToTimeline(0) },
                         onStreamTx = { viewModel.streamActiveAudioOverNetwork() },
-                        onExportMp3Click = { showMp3Dialog = true },
-                        onLoadSavedTake = { viewModel.loadSavedTake(it) },
-                        onImportAudioFile = {
-                            importAudioLauncher.launch(arrayOf("audio/*"))
-                        }
+                        onExportWavClick = { viewModel.exportAsWav("samplfie2_deck") },
+                        onExportMp3Click = { showExportDialog = true },
+                        onLoadSavedTake = { viewModel.loadSavedTake(it) }
                     )
 
-                    ConsoleTab.FX_RACK -> FxRackScreen(
-                        fxRack = fxRack,
-                        playbackState = playbackState,
-                        hasAudio = hasAudio,
-                        onTogglePlay = { viewModel.togglePlay() },
-                        onToggleMasterBypass = { viewModel.toggleMasterBypass() },
-                        onApplyPreset = { viewModel.applyFxPreset(it) },
-                        onUpdateFxRack = { viewModel.updateFxRack(it) }
-                    )
-
-                    ConsoleTab.STUDIO -> StudioPerformanceScreen(
+                    StudioSpoke.SAMPLES -> SamplesSpokeScreen(
                         looperState = looperState,
-                        sequencerState = sequencerState,
-                        timelineState = timelineState,
+                        loopEditorState = loopEditorState,
+                        savedTakes = editorState.savedTakes,
                         hasEditorAudio = hasAudio,
                         onSetBpm = { viewModel.setStudioBpm(it) },
                         onToggleLooperPlay = { viewModel.toggleLooperPlayback() },
@@ -332,16 +362,50 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                         onClearLoopSlot = { viewModel.clearLoopSlot(it) },
                         onSetLoopBars = { slotId, bars -> viewModel.setLoopSlotBars(slotId, bars) },
                         onBounceLooperToEditor = { viewModel.bounceLooperToEditor() },
+                        onImportAudioClick = openAudioPicker,
+                        onLoadSavedTake = { viewModel.loadSavedTake(it) },
+                        onLoadSlotIntoRefiner = { viewModel.loadLoopSlotIntoRefiner(it) },
+                        onUpdateLoopSelection = { s, e -> viewModel.updateLoopRefinerSelection(s, e) },
+                        onSnapZeroCrossing = { viewModel.snapLoopSelectionToZeroCrossing() },
+                        onTrimLoop = { viewModel.trimLoopRefiner() },
+                        onSetLoopFades = { fin, fout -> viewModel.setLoopRefinerFades(fin, fout) },
+                        onApplyFades = { viewModel.applyLoopRefinerFades() },
+                        onReverseLoop = { viewModel.reverseLoopRefiner() },
+                        onNormalizeLoop = { viewModel.normalizeLoopRefiner() },
+                        onRemoveDcLoop = { viewModel.removeDcLoopRefiner() },
+                        onTuneLoopPitchSpeed = { p, sp -> viewModel.applyLoopRefinerPitchSpeed(p, sp) },
+                        onResetLoopRefiner = { viewModel.resetLoopRefiner() },
+                        onAuditionLoopRefiner = { viewModel.auditionLoopRefiner() },
+                        onCommitRefinerToSlot = { viewModel.commitRefinerToLoopSlot() },
+                        onSendRefinerToDeck = { viewModel.sendRefinerToDeck() }
+                    )
+
+                    StudioSpoke.INSTRUMENTS -> InstrumentsSpokeScreen(
+                        sequencerState = sequencerState,
+                        midiState = midiState,
+                        hasEditorAudio = hasAudio,
+                        onSetBpm = { viewModel.setStudioBpm(it) },
                         onToggleSequencerPlay = { viewModel.toggleSequencerPlayback() },
                         onToggleSequencerStep = { laneId, step -> viewModel.toggleSequencerStep(laneId, step) },
                         onToggleSequencerMute = { viewModel.toggleSequencerLaneMute(it) },
                         onAssignEditorToSeqLane = { viewModel.sendEditorToSequencerLane(it) },
+                        onTriggerLanePad = { viewModel.triggerSequencerLaneOneShot(it) },
                         onSetSwing = { viewModel.setSequencerSwing(it) },
                         onBounceSequencerToTimeline = { viewModel.bounceSequencerToTimeline() },
+                        onRefreshMidi = { viewModel.refreshMidiDevices() }
+                    )
+
+                    StudioSpoke.TRACKS -> TracksSpokeScreen(
+                        timelineState = timelineState,
+                        syncedPlayhead = syncedPlayhead,
+                        hasEditorAudio = hasAudio,
+                        onSetBpm = { viewModel.setStudioBpm(it) },
+                        onToggleSyncedPlay = { viewModel.toggleSyncedTransport() },
                         onToggleTimelinePlay = { viewModel.toggleTimelinePlayback() },
-                        onSeekTimeline = { viewModel.seekTimeline(it) },
+                        onSeekSyncedPlayhead = { viewModel.seekSyncedPlayhead(it) },
                         onAddEditorClipToTrack = { viewModel.addEditorClipToTimeline(it) },
                         onAddLooperToTimeline = { viewModel.addLooperMixToTimeline() },
+                        onBounceSequencerToTimeline = { viewModel.bounceSequencerToTimeline() },
                         onNudgeClip = { trackId, clipId, delta -> viewModel.nudgeTimelineClip(trackId, clipId, delta) },
                         onRemoveClip = { trackId, clipId -> viewModel.removeTimelineClip(trackId, clipId) },
                         onToggleTrackMute = { viewModel.toggleTimelineMute(it) },
@@ -349,18 +413,48 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                         onBounceTimelineToEditor = { viewModel.bounceTimelineToEditor() }
                     )
 
-                    ConsoleTab.RIG_LINK -> RigLinkMidiScreen(
-                        rigConfig = rigConfig,
-                        networkState = networkState,
-                        midiState = midiState,
+                    StudioSpoke.FX_RACK -> FxRackScreen(
+                        fxRack = fxRack,
+                        playbackState = playbackState,
                         hasAudio = hasAudio,
-                        isExportingMp3 = editorState.isExportingMp3,
-                        lastExport = editorState.lastExport,
+                        onTogglePlay = { viewModel.togglePlay() },
+                        onToggleMasterBypass = { viewModel.toggleMasterBypass() },
+                        onApplyPreset = { viewModel.applyFxPreset(it) },
+                        onUpdateFxRack = { viewModel.updateFxRack(it) }
+                    )
+
+                    StudioSpoke.LIVE -> LiveSpokeScreen(
+                        stompbox = stompbox,
+                        fxRack = fxRack,
+                        rigConfig = rigConfig,
+                        micTelemetry = micTelemetry,
+                        playbackState = playbackState,
+                        looperState = looperState,
+                        networkState = networkState,
+                        hasMicPermission = hasMicPermission,
+                        hasAudio = hasAudio,
+                        isExporting = editorState.isExporting,
+                        lastLocalExport = editorState.lastLocalExport,
+                        bpm = syncedPlayhead.bpm,
+                        onSelectLiveMode = { viewModel.setLiveSessionMode(it) },
+                        onUpdateStompbox = { viewModel.updateStompbox(it) },
+                        onToggleStompBypass = { viewModel.toggleStompboxBypass() },
+                        onXyDrag = { x, y -> viewModel.onStompXyDrag(x, y) },
+                        onTapTempo = { viewModel.tapTempo() },
+                        onTogglePlay = { viewModel.togglePlay() },
+                        onToggleSyncedPlay = { viewModel.toggleSyncedTransport() },
+                        onToggleLoopSlot = { viewModel.toggleLoopSlot(it) },
+                        onRequestMicPermission = {
+                            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        },
+                        onTacPressStart = { viewModel.onTacPressStart() },
+                        onTacPressRelease = { viewModel.onTacPressRelease() },
+                        onBounceTimelineToEditor = { viewModel.bounceTimelineToEditor() },
                         onUpdateConfig = { viewModel.updateRigConfig(it) },
                         onStreamTx = { viewModel.streamActiveAudioOverNetwork() },
                         onStopStream = { viewModel.stopNetworkStream() },
-                        onExportMp3 = { viewModel.exportAsMp3(it) },
-                        onRefreshMidi = { viewModel.refreshMidiDevices() }
+                        onExportWav = { viewModel.exportAsWav(it) },
+                        onExportMp3 = { viewModel.exportAsMp3(it) }
                     )
                 }
             }
@@ -368,9 +462,70 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
     }
 }
 
-private fun tabIcon(tab: ConsoleTab) = when (tab) {
-    ConsoleTab.DECK -> Icons.Filled.GraphicEq
-    ConsoleTab.FX_RACK -> Icons.Filled.Tune
-    ConsoleTab.STUDIO -> Icons.Filled.GridView
-    ConsoleTab.RIG_LINK -> Icons.Filled.SettingsInputComponent
+@Composable
+private fun StudioSpokeBottomDock(
+    selectedSpoke: StudioSpoke,
+    onSelectSpoke: (StudioSpoke) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = GunmetalDeck,
+        border = BorderStroke(1.dp, HairlineDivider),
+        tonalElevation = 3.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            StudioSpoke.entries.forEach { spoke ->
+                val isSelected = selectedSpoke == spoke
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .minimumInteractiveComponentSize()
+                        .padding(horizontal = 2.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { onSelectSpoke(spoke) }
+                        .testTag("nav_tab_${spoke.name.lowercase()}"),
+                    color = if (isSelected) NeonCyan.copy(alpha = 0.22f) else ObsidianChassis.copy(alpha = 0.4f),
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, if (isSelected) NeonCyan else HairlineDivider.copy(alpha = 0.6f))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(vertical = 6.dp, horizontal = 2.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = spokeIcon(spoke),
+                            contentDescription = spoke.fullTitle,
+                            tint = if (isSelected) NeonCyan else TextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = spoke.shortLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isSelected) NeonCyan else TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun spokeIcon(spoke: StudioSpoke) = when (spoke) {
+    StudioSpoke.BOOTH -> Icons.Filled.Hub
+    StudioSpoke.DECK -> Icons.Filled.GraphicEq
+    StudioSpoke.SAMPLES -> Icons.Filled.Loop
+    StudioSpoke.INSTRUMENTS -> Icons.Filled.Piano
+    StudioSpoke.TRACKS -> Icons.Filled.ViewTimeline
+    StudioSpoke.FX_RACK -> Icons.Filled.Tune
+    StudioSpoke.LIVE -> Icons.Filled.ElectricBolt
 }

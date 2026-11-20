@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -20,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,13 +35,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.config.RigConfig
+import com.example.ui.StudioSpoke
 import com.example.ui.theme.AmberHot
 import com.example.ui.theme.BrushedPanel
 import com.example.ui.theme.ElevatedBezel
@@ -58,10 +58,13 @@ import com.example.ui.theme.TextSecondary
 @Composable
 fun HardwareTopRack(
     rigConfig: RigConfig,
+    selectedSpoke: StudioSpoke,
     activeFxCount: Int,
     isMasterBypass: Boolean,
     isRecording: Boolean,
     hasAudio: Boolean,
+    bpm: Float,
+    onReturnToBooth: () -> Unit,
     onExportMp3Click: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -74,7 +77,7 @@ fun HardwareTopRack(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -83,14 +86,42 @@ fun HardwareTopRack(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.weight(1f)
             ) {
-                HardwareLedIndicator(
-                    active = true,
-                    color = if (isRecording) TacCoral else NeonCyan,
-                    sizeDp = 10
-                )
+                if (selectedSpoke != StudioSpoke.BOOTH) {
+                    Surface(
+                        color = NeonCyan.copy(alpha = 0.16f),
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, NeonCyan),
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(onClick = onReturnToBooth)
+                            .testTag("top_booth_button")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Hub,
+                                contentDescription = "Return to Production Booth Hub",
+                                tint = NeonCyan,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text("BOOTH", style = MaterialTheme.typography.labelSmall, color = NeonCyan)
+                        }
+                    }
+                } else {
+                    HardwareLedIndicator(
+                        active = true,
+                        color = if (isRecording) TacCoral else NeonCyan,
+                        sizeDp = 10
+                    )
+                }
+
                 Column {
                     Text(
-                        text = "SAMPLFIE2",
+                        text = if (selectedSpoke == StudioSpoke.BOOTH) "SAMPLFIE2" else "SAMPLFIE2 · ${selectedSpoke.shortLabel}",
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                         color = TextPrimary,
                         maxLines = 1,
@@ -109,8 +140,21 @@ fun HardwareTopRack(
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
+                Surface(
+                    color = BrushedPanel,
+                    shape = RoundedCornerShape(6.dp),
+                    border = BorderStroke(1.dp, HairlineDivider)
+                ) {
+                    Text(
+                        text = "${bpm.toInt()} BPM",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AmberHot,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                    )
+                }
+
                 Surface(
                     color = if (isMasterBypass) ElevatedBezel else if (activeFxCount > 0) NeonCyan.copy(alpha = 0.16f) else BrushedPanel,
                     shape = RoundedCornerShape(6.dp),
@@ -123,7 +167,7 @@ fun HardwareTopRack(
                         text = if (isMasterBypass) "BYPASS" else "FX $activeFxCount",
                         style = MaterialTheme.typography.labelMedium,
                         color = if (isMasterBypass) AmberHot else if (activeFxCount > 0) NeonCyan else TextMuted,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
                     )
                 }
 
@@ -266,7 +310,6 @@ fun VuPeakMeterBar(
                     i >= segments - 7 -> AmberHot
                     else -> EmeraldSignal
                 }
-                val isActive = i < litPeak || i < litRms
                 val alpha = when {
                     i < litRms -> 1f
                     i < litPeak -> 0.72f

@@ -2,9 +2,10 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,14 +17,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.ContentCut
-import androidx.compose.material.icons.filled.Loop
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Waves
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -40,7 +39,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import android.net.Uri
 import com.example.R
 import com.example.audio.MicCaptureTelemetry
 import com.example.audio.PlaybackState
@@ -66,6 +64,7 @@ import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.VioletMod
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DeckEditorScreen(
     editorState: EditorState,
@@ -77,8 +76,8 @@ fun DeckEditorScreen(
     onRequestMicPermission: () -> Unit,
     onTacPressStart: () -> Unit,
     onTacPressRelease: () -> Unit,
+    onImportAudioClick: () -> Unit,
     onGenerateOscTone: () -> Unit,
-    onImportAudioFile: () -> Unit,
     onVisualizerModeChange: (VisualizerMode) -> Unit,
     onSelectionChange: (Float, Float) -> Unit,
     onSeekPlayhead: (Float) -> Unit,
@@ -95,6 +94,7 @@ fun DeckEditorScreen(
     onSendToSequencer: () -> Unit,
     onAddToTimeline: () -> Unit,
     onStreamTx: () -> Unit,
+    onExportWavClick: () -> Unit,
     onExportMp3Click: () -> Unit,
     onLoadSavedTake: (SavedTakeItem) -> Unit,
     modifier: Modifier = Modifier
@@ -116,32 +116,42 @@ fun DeckEditorScreen(
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Status Banner + Quick OSC generator
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        // Status Banner + Import Any Audio + Quick OSC generator
+        HardwarePanel {
             Text(
                 text = editorState.statusBanner,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (micTelemetry.isRecording) TacCoral else NeonCyan,
-                modifier = Modifier.weight(1f)
+                color = if (micTelemetry.isRecording) TacCoral else NeonCyan
             )
-            HardwareChipToggle(
-                label = "OSC TONE",
-                selected = false,
-                onClick = onGenerateOscTone,
-                accentColor = VioletMod,
-                modifier = Modifier.testTag("osc_tone_button")
-            )
-            HardwareChipToggle(
-                label = stringResource(R.string.btn_import_audio),
-                selected = false,
-                onClick = onImportAudioFile,
-                accentColor = NeonCyan,
-                modifier = Modifier.testTag("import_audio_button")
-            )
+            Spacer(modifier = Modifier.height(6.dp))
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = onImportAudioClick,
+                    enabled = !editorState.isImportingAudio,
+                    colors = ButtonDefaults.buttonColors(containerColor = NeonCyan),
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("deck_import_audio_button")
+                ) {
+                    Icon(Icons.Filled.AudioFile, contentDescription = null, tint = ObsidianChassis)
+                    Text(
+                        text = if (editorState.isImportingAudio) " IMPORTING…" else " IMPORT ANY AUDIO (.WAV)",
+                        color = ObsidianChassis,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+                HardwareChipToggle(
+                    label = "OSC TONE",
+                    selected = false,
+                    onClick = onGenerateOscTone,
+                    accentColor = VioletMod,
+                    modifier = Modifier.testTag("osc_tone_button")
+                )
+            }
         }
 
         // Real-Time Audio Visualization Component
@@ -189,7 +199,7 @@ fun DeckEditorScreen(
                     Column(modifier = Modifier.weight(1f)) {
                         HardwareParameterSlider(
                             label = "IN MARKER",
-                            valueText = "${"%.2f".format(editorState.selectionStart * activeBuf.durationSeconds)}s",
+                            valueText = "${"%.2f".format(editorState.selectionStart * (activeBuf?.durationSeconds ?: 0f))}s",
                             value = editorState.selectionStart,
                             valueRange = 0f..0.96f,
                             onValueChange = { onSelectionChange(it, editorState.selectionEnd) },
@@ -254,10 +264,10 @@ fun DeckEditorScreen(
 
         // DJ Transport Review Strip (Always Reviewable)
         HardwarePanel {
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Button(
                     onClick = onTogglePlay,
@@ -266,7 +276,6 @@ fun DeckEditorScreen(
                         containerColor = if (playbackState.isPlaying) AmberHot else EmeraldSignal
                     ),
                     modifier = Modifier
-                        .weight(1.3f)
                         .minimumInteractiveComponentSize()
                         .testTag("transport_play_button")
                 ) {
@@ -329,7 +338,7 @@ fun DeckEditorScreen(
             onPressRelease = onTacPressRelease
         )
 
-        // Performance Routing & Quick Actions
+        // Performance Routing & Local/Network Export
         if (hasAudio) {
             HardwarePanel {
                 Text(
@@ -338,11 +347,10 @@ fun DeckEditorScreen(
                     color = TextSecondary
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     HardwareChipToggle(
                         label = "FX RACK (${fxRack.activeCount})",
@@ -370,20 +378,27 @@ fun DeckEditorScreen(
                         accentColor = AmberHot
                     )
                     HardwareChipToggle(
-                        label = "TO TIMELINE",
+                        label = "TO TRACKS",
                         selected = false,
                         onClick = onAddToTimeline,
                         accentColor = EmeraldSignal
                     )
                     HardwareChipToggle(
-                        label = if (networkState.isTransmitting) "TX LIVE…" else "STREAM TX",
+                        label = if (networkState.isTransmitting) "TX LIVE…" else "NET TX",
                         selected = networkState.isTransmitting,
                         onClick = onStreamTx,
                         accentColor = NeonCyan,
                         modifier = Modifier.testTag("route_stream_tx")
                     )
                     HardwareChipToggle(
-                        label = "SAVE MP3",
+                        label = "SAVE .WAV",
+                        selected = false,
+                        onClick = onExportWavClick,
+                        accentColor = NeonCyan,
+                        modifier = Modifier.testTag("route_save_wav")
+                    )
+                    HardwareChipToggle(
+                        label = "SAVE .MP3",
                         selected = false,
                         onClick = onExportMp3Click,
                         accentColor = EmeraldSignal,
@@ -397,16 +412,15 @@ fun DeckEditorScreen(
         if (editorState.savedTakes.isNotEmpty()) {
             HardwarePanel {
                 Text(
-                    text = "CAPTURED .WAV TAKES",
+                    text = "CAPTURED & IMPORTED .WAV TAKES",
                     style = MaterialTheme.typography.labelMedium,
                     color = TextSecondary
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     editorState.savedTakes.forEach { take ->
                         Surface(

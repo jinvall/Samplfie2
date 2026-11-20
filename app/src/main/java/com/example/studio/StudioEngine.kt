@@ -192,6 +192,15 @@ data class TimelineState(
     val totalDurationSec: Float = 8.0f
 )
 
+data class SyncedPlayheadState(
+    val isPlaying: Boolean = false,
+    val bpm: Float = 124f,
+    val playheadSec: Float = 0f,
+    val bar: Int = 1,
+    val beat: Int = 1,
+    val phaseFraction: Float = 0f
+)
+
 /**
  * Pure Kotlin mixing engine for Looper slots, 16-Step Sequencer patterns, and Multi-Track Timeline arrangements,
  * plus live AudioTrack playback for Sequencer, Looper, and Timeline with real-time playhead tracking.
@@ -208,13 +217,18 @@ class StudioEngine {
     private val _timelineState = MutableStateFlow(TimelineState())
     val timelineState: StateFlow<TimelineState> = _timelineState.asStateFlow()
 
+    private val _syncedPlayhead = MutableStateFlow(SyncedPlayheadState())
+    val syncedPlayhead: StateFlow<SyncedPlayheadState> = _syncedPlayhead.asStateFlow()
+
     private var seqJob: Job? = null
     private var looperJob: Job? = null
     private var timelineJob: Job? = null
+    private var masterSyncJob: Job? = null
 
     private val seqPlayingFlag = AtomicBoolean(false)
     private val looperPlayingFlag = AtomicBoolean(false)
     private val timelinePlayingFlag = AtomicBoolean(false)
+    private val masterSyncFlag = AtomicBoolean(false)
 
     // --- LOOPER ---
 
@@ -261,6 +275,85 @@ class StudioEngine {
         val clamped = bpm.coerceIn(60f, 180f)
         _looperState.value = _looperState.value.copy(bpm = clamped)
         _sequencerState.value = _sequencerState.value.copy(bpm = clamped)
+        _syncedPlayhead.value = _syncedPlayhead.value.copy(bpm = clamped)
+    }
+
+    fun seekSyncedPlayhead(sec: Float) {
+        val maxSec = _timelineState.value.totalDurationSec.coerceAtLeast(4f)
+        val clamped = sec.coerceIn(0f, maxSec)
+        val bpm = _syncedPlayhead.value.bpm.coerceIn(60f, 180f)
+        val beatSec = 60f / bpm
+        val totalBeats = (clamped / beatSec).toInt()
+        val bar = (totalBeats / 4) + 1
+        val beat = (totalBeats % 4) + 1
+        val phase = ((clamped % (beatSec * 4f)) / (beatSec * 4f)).coerceIn(0f, 1f)
+        val step = ((clamped / (beatSec / 4f)).toInt() % 16).coerceIn(0, 15)
+
+        _timelineState.value = _timelineState.value.copy(playheadSec = clamped)
+        _looperState.value = _looperState.value.copy(barProgress = phase)
+        _sequencerState.value = _sequencerState.value.copy(currentStep = step)
+        _syncedPlayhead.value = _syncedPlayhead.value.copy(
+            playheadSec = clamped,
+            bar = bar,
+            beat = beat,
+            phaseFraction = phase
+        )
+    }
+
+    fun toggleSyncedTransport() {
+        if (masterSyncFlag.get()) {
+            stopSyncedTransport()
+        } else {
+            startSyncedTransport()
+        }
+    }
+
+    fun startSyncedTransport() {
+        stopSyncedTransport()
+        masterSyncFlag.set(true)
+        _syncedPlayhead.value = _syncedPlayhead.value.copy(isPlaying = true)
+        startLooper()
+        startSequencer()
+        if (_timelineState.value.tracks.any { it.clips.isNotEmpty() }) {
+            startTimeline()
+        }
+        masterSyncJob = scope.launch {
+            val startPlayhead = _syncedPlayhead.value.playheadSec
+            var elapsed = 0f
+            val tickMs = 40L
+            while (masterSyncFlag.get() && isActive) {
+                delay(tickMs)
+                elapsed += tickMs / 1000f
+                val tlSec = if (timelinePlayingFlag.get()) {
+                    _timelineState.value.playheadSec
+                } else {
+                    val total = _timelineState.value.totalDurationSec.coerceAtLeast(8f)
+                    (startPlayhead + elapsed) % total
+                }
+                val bpm = _syncedPlayhead.value.bpm.coerceIn(60f, 180f)
+                val beatSec = 60f / bpm
+                val barDur = beatSec * 4f
+                val totalBeats = (tlSec / beatSec).toInt()
+                val phase = ((tlSec % barDur) / barDur).coerceIn(0f, 1f)
+                _syncedPlayhead.value = _syncedPlayhead.value.copy(
+                    isPlaying = true,
+                    playheadSec = tlSec,
+                    bar = (totalBeats / 4) + 1,
+                    beat = (totalBeats % 4) + 1,
+                    phaseFraction = phase
+                )
+            }
+        }
+    }
+
+    fun stopSyncedTransport() {
+        masterSyncFlag.set(false)
+        masterSyncJob?.cancel()
+        masterSyncJob = null
+        stopLooper()
+        stopSequencer()
+        stopTimeline()
+        _syncedPlayhead.value = _syncedPlayhead.value.copy(isPlaying = false)
     }
 
     fun toggleLooperPlayback() {
@@ -659,6 +752,7 @@ class StudioEngine {
     }
 
     fun release() {
+        stopSyncedTransport()
         stopLooper()
         stopSequencer()
         stopTimeline()

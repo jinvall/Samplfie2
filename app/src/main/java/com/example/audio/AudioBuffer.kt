@@ -1,5 +1,6 @@
 package com.example.audio
 
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
@@ -40,6 +41,85 @@ data class AudioBuffer(
             channels = channels,
             name = newName
         )
+    }
+
+    fun applyFadeInOut(fadeInMs: Float, fadeOutMs: Float): AudioBuffer {
+        if (frameCount == 0) return this
+        val out = samples.copyOf()
+        val fadeInFrames = ((fadeInMs.coerceAtLeast(0f) / 1000f) * sampleRate).toInt().coerceAtMost(frameCount / 2)
+        val fadeOutFrames = ((fadeOutMs.coerceAtLeast(0f) / 1000f) * sampleRate).toInt().coerceAtMost(frameCount / 2)
+
+        for (f in 0 until fadeInFrames) {
+            val gain = f.toFloat() / fadeInFrames.coerceAtLeast(1)
+            for (c in 0 until channels) {
+                out[f * channels + c] *= gain
+            }
+        }
+        for (f in 0 until fadeOutFrames) {
+            val frameIdx = frameCount - 1 - f
+            val gain = f.toFloat() / fadeOutFrames.coerceAtLeast(1)
+            for (c in 0 until channels) {
+                out[frameIdx * channels + c] *= gain
+            }
+        }
+        return copy(samples = out)
+    }
+
+    fun reversed(): AudioBuffer {
+        if (frameCount <= 1) return this
+        val out = FloatArray(samples.size)
+        for (f in 0 until frameCount) {
+            val srcFrame = frameCount - 1 - f
+            for (c in 0 until channels) {
+                out[f * channels + c] = samples[srcFrame * channels + c]
+            }
+        }
+        return copy(samples = out)
+    }
+
+    fun removeDcOffset(): AudioBuffer {
+        if (frameCount == 0) return this
+        val out = samples.copyOf()
+        for (c in 0 until channels) {
+            var sum = 0.0
+            for (f in 0 until frameCount) {
+                sum += out[f * channels + c]
+            }
+            val mean = (sum / frameCount).toFloat()
+            for (f in 0 until frameCount) {
+                out[f * channels + c] = (out[f * channels + c] - mean).coerceIn(-1f, 1f)
+            }
+        }
+        return copy(samples = out)
+    }
+
+    fun normalizePeak(targetPeak: Float = 0.966f): AudioBuffer {
+        val (peak, _) = computePeakAndRms()
+        if (peak <= 1e-5f) return this
+        val scale = targetPeak / peak
+        val out = FloatArray(samples.size) { i -> (samples[i] * scale).coerceIn(-1f, 1f) }
+        return copy(samples = out)
+    }
+
+    fun snapFractionToZeroCrossing(fraction: Float, searchWindowFrames: Int = 512): Float {
+        if (frameCount < 4) return fraction.coerceIn(0f, 1f)
+        val center = (fraction.coerceIn(0f, 1f) * frameCount).toInt().coerceIn(1, frameCount - 2)
+        val lo = (center - searchWindowFrames).coerceAtLeast(1)
+        val hi = (center + searchWindowFrames).coerceAtMost(frameCount - 2)
+        var bestFrame = center
+        var bestDist = Int.MAX_VALUE
+        for (f in lo..hi) {
+            val s0 = samples[(f - 1) * channels]
+            val s1 = samples[f * channels]
+            if ((s0 <= 0f && s1 >= 0f) || (s0 >= 0f && s1 <= 0f)) {
+                val dist = abs(f - center)
+                if (dist < bestDist) {
+                    bestDist = dist
+                    bestFrame = f
+                }
+            }
+        }
+        return bestFrame.toFloat() / frameCount.toFloat()
     }
 
     fun toMonoSamples(): FloatArray {
@@ -101,7 +181,7 @@ data class AudioBuffer(
         var peak = 0f
         var sumSq = 0.0
         for (s in samples) {
-            val a = kotlin.math.abs(s)
+            val a = abs(s)
             if (a > peak) peak = a
             sumSq += s * s
         }

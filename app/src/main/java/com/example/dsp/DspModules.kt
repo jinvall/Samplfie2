@@ -10,15 +10,14 @@ import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
-import kotlin.math.tan
 import kotlin.math.tanh
 
 /**
- * Collection of 12 pure-Kotlin floating-point audio DSP processors.
+ * Collection of 12 pure-Kotlin floating-point audio DSP processors + Stompbox master Tilt EQ.
  */
 object DspModules {
 
-    // 1. Noise Removal (80 Hz rumble HPF + RMS envelope soft-knee noise gate)
+    // 1. Noise Removal (Variable HPF + attack/release/soft-knee envelope noise gate)
     fun applyNoiseRemoval(
         samples: FloatArray,
         sampleRate: Int,
@@ -29,15 +28,19 @@ object DspModules {
         val frames = samples.size / channels
         val out = FloatArray(samples.size)
 
-        val rc = 1.0f / (2.0f * PI.toFloat() * 80f)
+        val hpfHz = params.highPassFreqHz.coerceIn(25f, 300f)
+        val rc = 1.0f / (2.0f * PI.toFloat() * hpfHz)
         val dt = 1.0f / sampleRate.toFloat()
         val hpAlpha = rc / (rc + dt)
         val prevIn = FloatArray(channels)
         val prevHp = FloatArray(channels)
 
-        val attackCoeff = exp(-1.0f / (0.003f * sampleRate))
-        val releaseCoeff = exp(-1.0f / (0.065f * sampleRate))
+        val attackSec = (params.attackMs.coerceIn(0.5f, 50f) / 1000f)
+        val releaseSec = (params.releaseMs.coerceIn(10f, 500f) / 1000f)
+        val attackCoeff = exp(-1.0f / (attackSec * sampleRate))
+        val releaseCoeff = exp(-1.0f / (releaseSec * sampleRate))
         val thresholdLin = 10f.pow(params.thresholdDb / 20f)
+        val kneeRatio = 10f.pow(-params.kneeWidthDb.coerceIn(0f, 18f) / 20f)
         val floorGain = 10f.pow(-params.reductionDb / 20f)
         var envelope = 0f
 
@@ -64,13 +67,18 @@ object DspModules {
                 releaseCoeff * envelope + (1f - releaseCoeff) * rms
             }
 
-            // Soft knee expander around thresholdLin
-            val gain = if (envelope >= thresholdLin) {
-                1f
-            } else {
-                val ratio = (envelope / max(thresholdLin, 1e-6f)).coerceIn(0f, 1f)
-                val shaped = ratio * ratio
-                floorGain + (1f - floorGain) * shaped
+            val lowerKnee = thresholdLin * kneeRatio
+            val gain = when {
+                envelope >= thresholdLin -> 1f
+                envelope <= lowerKnee -> {
+                    val ratio = (envelope / max(lowerKnee, 1e-6f)).coerceIn(0f, 1f)
+                    floorGain + (1f - floorGain) * ratio * ratio * 0.1f
+                }
+                else -> {
+                    val t = ((envelope - lowerKnee) / max(thresholdLin - lowerKnee, 1e-6f)).coerceIn(0f, 1f)
+                    val shaped = 0.1f + 0.9f * t * t
+                    floorGain + (1f - floorGain) * shaped
+                }
             }
 
             for (c in 0 until channels) {
@@ -80,7 +88,7 @@ object DspModules {
         return out
     }
 
-    // 2. Pitch & Speed (WSOLA Time Stretch + Cubic Hermite Resampling + Vinyl Link mode)
+    // 2. Pitch & Speed (WSOLA Time Stretch + Fine Cents + Cubic Hermite Resampling + Vinyl Link mode)
     fun applyPitchAndSpeed(
         samples: FloatArray,
         sampleRate: Int,
@@ -89,10 +97,12 @@ object DspModules {
     ): FloatArray {
         if (!params.enabled || samples.isEmpty()) return samples
         val speed = params.speedFactor.coerceIn(0.5f, 2.0f)
+        val totalSemis = (params.pitchSemitones + params.fineCents.coerceIn(-50f, 50f) / 100f)
+            .coerceIn(-12.5f, 12.5f)
         val pitchRatio = if (params.vinylLink) {
             speed
         } else {
-            2.0f.pow(params.pitchSemitones.coerceIn(-12f, 12f) / 12.0f)
+            2.0f.pow(totalSemis / 12.0f)
         }
 
         if (abs(speed - 1f) < 0.005f && abs(pitchRatio - 1f) < 0.005f) {
@@ -106,7 +116,7 @@ object DspModules {
         }
 
         val stretched = if (abs(timeStretchFactor - 1f) > 0.005f) {
-            wsolaStretch(samples, sampleRate, channels, timeStretchFactor)
+            wsolaStretch(samples, sampleRate, channels, timeStretchFactor, params.grainSizeMs)
         } else {
             samples
         }
@@ -122,12 +132,14 @@ object DspModules {
         samples: FloatArray,
         sampleRate: Int,
         channels: Int,
-        stretchFactor: Float
+        stretchFactor: Float,
+        grainSizeMs: Float
     ): FloatArray {
         val inFrames = samples.size / channels
         if (inFrames < 64) return samples
 
-        val windowSize = (sampleRate * 0.032f).toInt().coerceIn(256, max(256, inFrames / 2))
+        val grainSec = grainSizeMs.coerceIn(14f, 64f) / 1000f
+        val windowSize = (sampleRate * grainSec).toInt().coerceIn(256, max(256, inFrames / 2))
         val hopOut = windowSize / 2
         val hopIn = max(1, (hopOut / stretchFactor).toInt())
         val searchRadius = (sampleRate * 0.006f).toInt().coerceIn(8, windowSize / 3)
@@ -143,7 +155,6 @@ object DspModules {
         var outPos = 0
 
         while (outPos + windowSize <= outFrames && inPos < inFrames) {
-            // Find best correlation alignment around inPos
             var bestOffset = 0
             if (outPos > 0 && inPos > searchRadius && inPos + windowSize + searchRadius < inFrames) {
                 var bestCorr = Float.NEGATIVE_INFINITY
@@ -209,10 +220,15 @@ object DspModules {
         return out
     }
 
-    // 3. Gain + Optional Peak Normalize + Soft-Knee Limiter
-    fun applyGain(samples: FloatArray, params: GainParams): FloatArray {
+    // 3. Gain + Compression Ratio + Stereo Width + Peak Normalize + Variable Ceiling Soft Limiter
+    fun applyGain(
+        samples: FloatArray,
+        params: GainParams,
+        channels: Int = 1
+    ): FloatArray {
         if (!params.enabled || samples.isEmpty()) return samples
         val out = FloatArray(samples.size)
+        val ceilingLin = 10f.pow(params.limiterCeilingDb.coerceIn(-6f, -0.1f) / 20f)
         var normScale = 1f
         if (params.normalize) {
             var peak = 0f
@@ -221,23 +237,46 @@ object DspModules {
                 if (a > peak) peak = a
             }
             if (peak > 1e-5f) {
-                normScale = 0.966f / peak
+                normScale = ceilingLin / peak
             }
         }
         val gainLin = 10f.pow(params.gainDb.coerceIn(-24f, 24f) / 20f) * normScale
+        val compRatio = params.compressionRatio.coerceIn(1f, 8f)
+        val compThresh = 0.5f
+
         for (i in samples.indices) {
             var y = samples[i] * gainLin
-            if (params.softLimiter && abs(y) > 0.9f) {
+            if (compRatio > 1.05f && abs(y) > compThresh) {
                 val sign = if (y >= 0f) 1f else -1f
-                val excess = abs(y) - 0.9f
-                y = sign * (0.9f + 0.1f * tanh(excess * 10f))
+                val over = abs(y) - compThresh
+                y = sign * (compThresh + over / compRatio)
+            }
+            if (params.softLimiter && abs(y) > ceilingLin * 0.9f) {
+                val sign = if (y >= 0f) 1f else -1f
+                val knee = ceilingLin * 0.9f
+                val excess = abs(y) - knee
+                val headroom = (ceilingLin - knee).coerceAtLeast(0.02f)
+                y = sign * (knee + headroom * tanh(excess / headroom))
             }
             out[i] = y.coerceIn(-1f, 1f)
+        }
+
+        if (channels == 2 && abs(params.stereoWidth - 1f) > 0.01f) {
+            val width = params.stereoWidth.coerceIn(0f, 2f)
+            val frames = out.size / 2
+            for (f in 0 until frames) {
+                val l = out[f * 2]
+                val r = out[f * 2 + 1]
+                val mid = (l + r) * 0.5f
+                val side = (l - r) * 0.5f * width
+                out[f * 2] = (mid + side).coerceIn(-1f, 1f)
+                out[f * 2 + 1] = (mid - side).coerceIn(-1f, 1f)
+            }
         }
         return out
     }
 
-    // 4. Overdrive (Asymmetric tube waveshaper + 1-pole tone LPF)
+    // 4. Overdrive (Pre-HPF + Asymmetric tube waveshaper + 1-pole tone LPF)
     fun applyOverdrive(
         samples: FloatArray,
         sampleRate: Int,
@@ -249,19 +288,28 @@ object DspModules {
         val drive = params.drive.coerceIn(1f, 20f)
         val mix = params.mix.coerceIn(0f, 1f)
         val dry = 1f - mix
-        val bias = 0.12f
+        val bias = params.asymmetry.coerceIn(0f, 0.8f) * 0.4f
         val norm = 1f / max(0.35f, tanh(drive * 0.7f))
 
         val fc = params.toneHz.coerceIn(400f, sampleRate * 0.45f)
         val lpAlpha = (1f - exp(-2f * PI.toFloat() * fc / sampleRate)).coerceIn(0.01f, 1f)
         val lpState = FloatArray(channels)
+
+        val preHpHz = params.preHighPassHz.coerceIn(20f, 800f)
+        val rc = 1f / (2f * PI.toFloat() * preHpHz)
+        val hpAlpha = rc / (rc + 1f / sampleRate)
+        val hpPrevIn = FloatArray(channels)
+        val hpPrevOut = FloatArray(channels)
         val frames = samples.size / channels
 
         for (f in 0 until frames) {
             for (c in 0 until channels) {
                 val idx = f * channels + c
                 val x = samples[idx]
-                val shaped = (tanh(x * drive + bias) - tanh(bias)) * norm
+                val pre = hpAlpha * (hpPrevOut[c] + x - hpPrevIn[c])
+                hpPrevIn[c] = x
+                hpPrevOut[c] = pre
+                val shaped = (tanh(pre * drive + bias) - tanh(bias)) * norm
                 lpState[c] += lpAlpha * (shaped - lpState[c])
                 out[idx] = (x * dry + lpState[c] * mix).coerceIn(-1f, 1f)
             }
@@ -269,7 +317,7 @@ object DspModules {
         return out
     }
 
-    // 5. Wah (Envelope-follower + LFO swept State-Variable Bandpass Filter)
+    // 5. Wah (Auto-Env / LFO / Manual Pedal swept State-Variable Bandpass Filter)
     fun applyWah(
         samples: FloatArray,
         sampleRate: Int,
@@ -296,14 +344,16 @@ object DspModules {
             env = if (monoAbs > env) attack * env + (1f - attack) * monoAbs else release * env + (1f - release) * monoAbs
 
             val lfo = 0.5f + 0.5f * sin(2.0 * PI * params.rateHz * f / sampleRate).toFloat()
-            val modFreq = (params.centerFreqHz * (0.45f + 1.15f * lfo + env * params.envSensitivity * 2.4f))
-                .coerceIn(180f, sampleRate * 0.36f)
+            val modFreq = when (params.mode) {
+                WahMode.AUTO_ENV -> params.centerFreqHz * (0.45f + 1.15f * lfo + env * params.envSensitivity * 2.4f)
+                WahMode.LFO_SWEEP -> params.centerFreqHz * (0.4f + 1.6f * lfo)
+                WahMode.MANUAL_PEDAL -> params.centerFreqHz * (0.35f + 1.85f * params.manualPedalPos.coerceIn(0f, 1f))
+            }.coerceIn(180f, sampleRate * 0.36f)
             val fCoeff = (2f * sin(PI.toFloat() * modFreq / sampleRate)).coerceIn(0.001f, 0.95f)
 
             for (c in 0 until channels) {
                 val idx = f * channels + c
                 val x = samples[idx]
-                // 2-step oversampled SVF update for crisp high-Q stability
                 repeat(2) {
                     low[c] += fCoeff * 0.5f * band[c]
                     val high = x - low[c] - qInv * band[c]
@@ -316,312 +366,63 @@ object DspModules {
         return out
     }
 
-    // 6. Phaser (4-stage cascaded swept 1st-order all-pass filters with resonance feedback)
-    fun applyPhaser(
+    // Master DJ Stompbox Tilt EQ + Dynamics Trim
+    fun applyTiltEqAndTrim(
         samples: FloatArray,
         sampleRate: Int,
         channels: Int,
-        params: PhaserParams
+        toneTilt: Float,
+        trimDb: Float
     ): FloatArray {
-        if (!params.enabled || samples.isEmpty()) return samples
+        if (samples.isEmpty() || (abs(toneTilt) < 0.02f && abs(trimDb) < 0.05f)) return samples
         val out = FloatArray(samples.size)
         val frames = samples.size / channels
-        val mix = params.mix.coerceIn(0f, 1f)
-        val dry = 1f - mix
-        val fb = params.feedback.coerceIn(0f, 0.88f)
-        val stages = 4
-        val apState = Array(channels) { FloatArray(stages) }
-        val lastOut = FloatArray(channels)
+        val trimLin = 10f.pow(trimDb.coerceIn(-12f, 12f) / 20f)
+        val tilt = toneTilt.coerceIn(-1f, 1f)
 
-        for (f in 0 until frames) {
-            val lfo = 0.5f + 0.5f * sin(2.0 * PI * params.rateHz * f / sampleRate).toFloat()
-            val sweepHz = 220f + (lfo * params.depth) * 2600f
-            val tanVal = tan(PI.toFloat() * sweepHz.coerceIn(100f, sampleRate * 0.4f) / sampleRate)
-            val coeff = (1f - tanVal) / (1f + tanVal)
-
-            for (c in 0 until channels) {
-                val idx = f * channels + c
-                val x = samples[idx]
-                var signal = x + lastOut[c] * fb
-                for (s in 0 until stages) {
-                    val y = -coeff * signal + apState[c][s]
-                    apState[c][s] = signal + coeff * y
-                    signal = y
-                }
-                lastOut[c] = signal.coerceIn(-1f, 1f)
-                out[idx] = (x * dry + lastOut[c] * mix).coerceIn(-1f, 1f)
-            }
-        }
-        return out
-    }
-
-    // 7. Flanger (Short modulated fractional delay line with bipolar feedback)
-    fun applyFlanger(
-        samples: FloatArray,
-        sampleRate: Int,
-        channels: Int,
-        params: FlangerParams
-    ): FloatArray {
-        if (!params.enabled || samples.isEmpty()) return samples
-        val out = FloatArray(samples.size)
-        val frames = samples.size / channels
-        val maxDelaySamples = ((0.008f + params.depthMs / 1000f) * sampleRate).toInt().coerceAtLeast(32)
-        val delayBuf = Array(channels) { FloatArray(maxDelaySamples + 4) }
-        var writePtr = 0
-        val mix = params.mix.coerceIn(0f, 1f)
-        val dry = 1f - mix
-        val fb = params.feedback.coerceIn(-0.85f, 0.85f)
-
-        for (f in 0 until frames) {
-            val lfo = 0.5f + 0.5f * sin(2.0 * PI * params.rateHz * f / sampleRate).toFloat()
-            val delaySamples = (0.0004f + (params.depthMs / 1000f) * lfo) * sampleRate
-
-            for (c in 0 until channels) {
-                val idx = f * channels + c
-                val x = samples[idx]
-                val buf = delayBuf[c]
-                val delayed = readFractional(buf, writePtr, delaySamples)
-                buf[writePtr] = (x + delayed * fb).coerceIn(-1f, 1f)
-                out[idx] = (x * dry + delayed * mix).coerceIn(-1f, 1f)
-            }
-            writePtr = (writePtr + 1) % delayBuf[0].size
-        }
-        return out
-    }
-
-    // 8. Chorus (3-voice detuned LFO modulated delay)
-    fun applyChorus(
-        samples: FloatArray,
-        sampleRate: Int,
-        channels: Int,
-        params: ChorusParams
-    ): FloatArray {
-        if (!params.enabled || samples.isEmpty()) return samples
-        val out = FloatArray(samples.size)
-        val frames = samples.size / channels
-        val maxDelaySamples = ((0.045f + params.depthMs / 1000f) * sampleRate).toInt().coerceAtLeast(64)
-        val delayBuf = Array(channels) { FloatArray(maxDelaySamples + 4) }
-        var writePtr = 0
-        val mix = params.mix.coerceIn(0f, 1f)
-        val dry = 1f - mix
-        val baseDelaysMs = floatArrayOf(14f, 21f, 28f)
-        val phaseOffsets = floatArrayOf(0f, (2.0 * PI / 3.0).toFloat(), (4.0 * PI / 3.0).toFloat())
-
-        for (f in 0 until frames) {
-            val basePhase = (2.0 * PI * params.rateHz * f / sampleRate).toFloat()
-            for (c in 0 until channels) {
-                val idx = f * channels + c
-                val x = samples[idx]
-                val buf = delayBuf[c]
-                buf[writePtr] = x
-
-                var wet = 0f
-                for (v in 0 until 3) {
-                    val lfo = 0.5f + 0.5f * sin(basePhase + phaseOffsets[v] + c * 0.6f)
-                    val dSamples = ((baseDelaysMs[v] + params.depthMs * lfo) / 1000f) * sampleRate
-                    wet += readFractional(buf, writePtr, dSamples)
-                }
-                wet /= 3f
-                out[idx] = (x * dry + wet * mix).coerceIn(-1f, 1f)
-            }
-            writePtr = (writePtr + 1) % delayBuf[0].size
-        }
-        return out
-    }
-
-    // 9. Rotary Speaker (Dual-band Leslie cabinet: crossover + Doppler pitch vibrato + AM swirl)
-    fun applyRotarySpeaker(
-        samples: FloatArray,
-        sampleRate: Int,
-        channels: Int,
-        params: RotaryParams
-    ): FloatArray {
-        if (!params.enabled || samples.isEmpty()) return samples
-        val out = FloatArray(samples.size)
-        val frames = samples.size / channels
-        val mix = params.mix.coerceIn(0f, 1f)
-        val dry = 1f - mix
-        val lpAlpha = (1f - exp(-2f * PI.toFloat() * 800f / sampleRate)).coerceIn(0.01f, 1f)
+        val splitHz = 950f
+        val lpAlpha = (1f - exp(-2f * PI.toFloat() * splitHz / sampleRate)).coerceIn(0.01f, 1f)
         val lpState = FloatArray(channels)
-
-        val maxDopplerSamples = (0.004f * sampleRate).toInt().coerceAtLeast(32)
-        val hornBuf = Array(channels) { FloatArray(maxDopplerSamples + 4) }
-        var writePtr = 0
+        val lowGain = 1f - tilt * 0.45f
+        val highGain = 1f + tilt * 0.55f
 
         for (f in 0 until frames) {
-            val hornPhase = (2.0 * PI * params.rateHz * f / sampleRate).toFloat()
-            val drumPhase = (2.0 * PI * (params.rateHz * 0.72f) * f / sampleRate).toFloat()
-
             for (c in 0 until channels) {
                 val idx = f * channels + c
                 val x = samples[idx]
                 lpState[c] += lpAlpha * (x - lpState[c])
-                val lowDrum = lpState[c]
-                val highHorn = x - lowDrum
-
-                val chOffset = if (channels == 2 && c == 1) (PI / 2.0).toFloat() else 0f
-                val hornAm = 1f - params.depth * 0.42f * (0.5f + 0.5f * cos(hornPhase + chOffset))
-                val drumAm = 1f - params.depth * 0.30f * (0.5f + 0.5f * sin(drumPhase + chOffset))
-
-                hornBuf[c][writePtr] = highHorn
-                val dopplerDelay = (0.0014f + 0.0012f * params.depth * sin(hornPhase + chOffset)) * sampleRate
-                val dopplerHorn = readFractional(hornBuf[c], writePtr, dopplerDelay.coerceAtLeast(1f))
-
-                val wet = dopplerHorn * hornAm * params.hornBalance * 1.4f +
-                    lowDrum * drumAm * (1f - params.hornBalance) * 1.4f
-                out[idx] = (x * dry + wet * mix).coerceIn(-1f, 1f)
+                val low = lpState[c]
+                val high = x - low
+                val tilted = low * lowGain + high * highGain
+                out[idx] = (tilted * trimLin).coerceIn(-1f, 1f)
             }
-            writePtr = (writePtr + 1) % hornBuf[0].size
         }
         return out
     }
 
-    // 10. Echo (Tape-style delay with HF low-pass damping in feedback loop)
-    fun applyEcho(
-        samples: FloatArray,
-        sampleRate: Int,
-        channels: Int,
-        params: EchoParams
-    ): FloatArray {
-        if (!params.enabled || samples.isEmpty()) return samples
-        val out = FloatArray(samples.size)
-        val frames = samples.size / channels
-        val delaySamples = ((params.delayMs.coerceIn(20f, 1500f) / 1000f) * sampleRate).toInt().coerceAtLeast(1)
-        val delayBuf = Array(channels) { FloatArray(delaySamples) }
-        var ptr = 0
-        val fb = params.feedback.coerceIn(0f, 0.9f)
-        val damp = (1f - params.damping.coerceIn(0f, 0.92f)).coerceIn(0.05f, 1f)
-        val dampState = FloatArray(channels)
-        val mix = params.mix.coerceIn(0f, 1f)
-        val dry = 1f - mix
+    fun applyPhaser(samples: FloatArray, sampleRate: Int, channels: Int, params: PhaserParams): FloatArray =
+        DspSpatialModModules.applyPhaser(samples, sampleRate, channels, params)
 
-        for (f in 0 until frames) {
-            for (c in 0 until channels) {
-                val idx = f * channels + c
-                val x = samples[idx]
-                val delayed = delayBuf[c][ptr]
-                dampState[c] += damp * (delayed - dampState[c])
-                delayBuf[c][ptr] = (x + dampState[c] * fb).coerceIn(-1f, 1f)
-                out[idx] = (x * dry + delayed * mix).coerceIn(-1f, 1f)
-            }
-            ptr = (ptr + 1) % delaySamples
-        }
-        return out
-    }
+    fun applyFlanger(samples: FloatArray, sampleRate: Int, channels: Int, params: FlangerParams): FloatArray =
+        DspSpatialModModules.applyFlanger(samples, sampleRate, channels, params)
 
-    // 11. Delay (Digital delay with stereo/ping-pong tap spread)
+    fun applyChorus(samples: FloatArray, sampleRate: Int, channels: Int, params: ChorusParams): FloatArray =
+        DspSpatialModModules.applyChorus(samples, sampleRate, channels, params)
+
+    fun applyRotarySpeaker(samples: FloatArray, sampleRate: Int, channels: Int, params: RotaryParams): FloatArray =
+        DspSpatialModModules.applyRotarySpeaker(samples, sampleRate, channels, params)
+
+    fun applyEcho(samples: FloatArray, sampleRate: Int, channels: Int, params: EchoParams): FloatArray =
+        DspSpatialModModules.applyEcho(samples, sampleRate, channels, params)
+
     fun applyDelay(
         samples: FloatArray,
         sampleRate: Int,
         channels: Int,
-        params: DelayParams
-    ): FloatArray {
-        if (!params.enabled || samples.isEmpty()) return samples
-        val out = FloatArray(samples.size)
-        val frames = samples.size / channels
-        val baseDelaySamples = ((params.delayMs.coerceIn(10f, 1500f) / 1000f) * sampleRate).toInt().coerceAtLeast(1)
-        val secondaryDelaySamples = max(1, (baseDelaySamples * (1f - params.stereoSpread * 0.35f)).toInt())
-        val delayBuf = Array(channels) { c ->
-            FloatArray(if (c == 1) secondaryDelaySamples else baseDelaySamples)
-        }
-        val ptrs = IntArray(channels)
-        val fb = params.feedback.coerceIn(0f, 0.92f)
-        val mix = params.mix.coerceIn(0f, 1f)
-        val dry = 1f - mix
+        params: DelayParams,
+        bpm: Float = 124f
+    ): FloatArray = DspSpatialModModules.applyDelay(samples, sampleRate, channels, params, bpm)
 
-        for (f in 0 until frames) {
-            for (c in 0 until channels) {
-                val idx = f * channels + c
-                val x = samples[idx]
-                val buf = delayBuf[c]
-                val delayed = buf[ptrs[c]]
-                val crossChannel = if (channels == 2) delayBuf[1 - c][ptrs[1 - c]] else delayed
-                val feedbackSample = delayed * (1f - params.stereoSpread * 0.5f) + crossChannel * (params.stereoSpread * 0.5f)
-                buf[ptrs[c]] = (x + feedbackSample * fb).coerceIn(-1f, 1f)
-                ptrs[c] = (ptrs[c] + 1) % buf.size
-                out[idx] = (x * dry + delayed * mix).coerceIn(-1f, 1f)
-            }
-        }
-        return out
-    }
-
-    // 12. Reverb (Schroeder/Freeverb 4-parallel damped comb filters + 2 series all-pass diffusers)
-    fun applyReverb(
-        samples: FloatArray,
-        sampleRate: Int,
-        channels: Int,
-        params: ReverbParams
-    ): FloatArray {
-        if (!params.enabled || samples.isEmpty()) return samples
-        val out = FloatArray(samples.size)
-        val frames = samples.size / channels
-        val scale = sampleRate / 44100f
-        val preDelaySamples = max(1, (params.preDelayMs / 1000f * sampleRate).toInt())
-
-        val combBase = intArrayOf(1557, 1617, 1491, 1422)
-        val apBase = intArrayOf(556, 441)
-        val fb = 0.72f + params.roomSize.coerceIn(0f, 1f) * 0.23f
-        val damp = params.damping.coerceIn(0.05f, 0.9f)
-        val mix = params.mix.coerceIn(0f, 1f)
-        val dry = 1f - mix
-
-        for (c in 0 until channels) {
-            val preBuf = FloatArray(preDelaySamples)
-            var prePtr = 0
-
-            val combs = combBase.map { len ->
-                FloatArray(max(8, (len * scale + c * 23).toInt()))
-            }
-            val combPtrs = IntArray(combs.size)
-            val combFilters = FloatArray(combs.size)
-
-            val allpasses = apBase.map { len ->
-                FloatArray(max(8, (len * scale + c * 17).toInt()))
-            }
-            val apPtrs = IntArray(allpasses.size)
-
-            for (f in 0 until frames) {
-                val idx = f * channels + c
-                val x = samples[idx]
-
-                val preOut = preBuf[prePtr]
-                preBuf[prePtr] = x
-                prePtr = (prePtr + 1) % preDelaySamples
-
-                var combSum = 0f
-                for (i in combs.indices) {
-                    val buf = combs[i]
-                    val ptr = combPtrs[i]
-                    val y = buf[ptr]
-                    combFilters[i] = y * (1f - damp) + combFilters[i] * damp
-                    buf[ptr] = (preOut + combFilters[i] * fb).coerceIn(-1f, 1f)
-                    combPtrs[i] = (ptr + 1) % buf.size
-                    combSum += y
-                }
-                var diffused = combSum * 0.25f
-
-                for (i in allpasses.indices) {
-                    val buf = allpasses[i]
-                    val ptr = apPtrs[i]
-                    val bufOut = buf[ptr]
-                    val y = -diffused + bufOut
-                    buf[ptr] = (diffused + bufOut * 0.5f).coerceIn(-1f, 1f)
-                    apPtrs[i] = (ptr + 1) % buf.size
-                    diffused = y
-                }
-
-                out[idx] = (x * dry + diffused * mix).coerceIn(-1f, 1f)
-            }
-        }
-        return out
-    }
-
-    private fun readFractional(buffer: FloatArray, writePtr: Int, delaySamples: Float): Float {
-        val size = buffer.size
-        val readPos = (writePtr - delaySamples + size * 2) % size
-        val i0 = readPos.toInt() % size
-        val i1 = (i0 + 1) % size
-        val frac = readPos - readPos.toInt()
-        return buffer[i0] * (1f - frac) + buffer[i1] * frac
-    }
+    fun applyReverb(samples: FloatArray, sampleRate: Int, channels: Int, params: ReverbParams): FloatArray =
+        DspSpatialModModules.applyReverb(samples, sampleRate, channels, params)
 }

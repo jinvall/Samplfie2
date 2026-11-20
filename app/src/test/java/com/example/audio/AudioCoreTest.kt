@@ -58,6 +58,30 @@ class AudioCoreTest {
     }
 
     @Test
+    fun `loop sample refinement helpers normalize, fade, reverse, dc fix, and snap zero crossing`() {
+        val base = generateSineBuffer(freqHz = 200f, sampleRate = 44100, channels = 1, durationSec = 0.2f, amplitude = 0.25f)
+        val biased = base.copy(samples = FloatArray(base.samples.size) { base.samples[it] + 0.15f })
+
+        val dcFixed = biased.removeDcOffset()
+        assertTrue(abs(dcFixed.samples.average()) < 0.01)
+
+        val normalized = dcFixed.normalizePeak(0.95f)
+        assertEquals(0.95f, normalized.computePeakAndRms().first, 0.02f)
+
+        val faded = normalized.applyFadeInOut(20f, 20f)
+        assertEquals(0f, faded.samples.first(), 0.001f)
+        assertEquals(0f, faded.samples.last(), 0.001f)
+
+        val rev = normalized.reversed()
+        assertEquals(normalized.samples.first(), rev.samples.last(), 0.0001f)
+        assertEquals(normalized.samples.last(), rev.samples.first(), 0.0001f)
+
+        val snapped = normalized.snapFractionToZeroCrossing(0.31f, searchWindowFrames = 400)
+        val frameIdx = (snapped * normalized.frameCount).toInt().coerceIn(1, normalized.frameCount - 1)
+        assertTrue(abs(normalized.samples[frameIdx]) < 0.15f)
+    }
+
+    @Test
     fun `channel conversion and resampling preserve duration and energy`() {
         val mono = generateSineBuffer(freqHz = 440f, sampleRate = 44100, channels = 1, durationSec = 0.4f)
         val stereo = mono.convertChannels(2)
@@ -77,8 +101,7 @@ class AudioCoreTest {
         val bands = AudioAnalyzer.computeSpectrumBands(buf, centerFrame = buf.frameCount / 2, fftSize = 1024, bandCount = 32)
         assertEquals(32, bands.size)
         val peakBandIndex = bands.indices.maxByOrNull { bands[it] } ?: -1
-        // 1kHz in log-spaced 35Hz..20.2kHz across 32 bands is around band 15..19
-        assertTrue("Expected peak band around 15..19 for 1kHz, got $peakBandIndex", peakBandIndex in 14..20)
+        assertTrue("Expected peak band around 14..20 for 1kHz, got $peakBandIndex", peakBandIndex in 14..20)
         assertTrue(bands[peakBandIndex] > 0.75f)
 
         val peaks = AudioAnalyzer.computeWaveformPeaks(buf, 64)
