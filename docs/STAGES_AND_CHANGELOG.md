@@ -24,5 +24,6 @@
 
 ## Stage 5: Circular Studio Production Booth Hub, 6 Radial Spokes, Loop Refiner & Live Stompbox
 **Status:** PASSED
-- Redesigned main navigation around the **Circular Production Booth Hub** (`CircularStudioHub`) and 6 radial device spokes: **DECK**, **SAMPLES** (with integrated **Loop Refinement Editor**), **INSTRUMENTS** (16-step seq, pads, MIDI), **TRACKS** (globally synced playhead), **FX RACK** (12 expanded modules), and **LIVE** (`StompboxMiniProcessor` + `Stage DJ` / `Live Rec` / `Studio Release` modes + Rig/Export hub).
+- Redesigned main navigation around the **Circular Production Booth Hub** (`CircularStudioHub` / `CircularStudioWheel`) and 6 radial device spokes: **DECK**, **SAMPLES** (with integrated **Loop Refinement Editor**), **INSTRUMENTS** (16-step seq, pads, MIDI), **TRACKS** (globally synced playhead), **FX RACK** (12 expanded modules), and **LIVE** (`StompboxMiniProcessor` + `Stage DJ` / `Live Rec` / `Studio Release` modes + Rig/Export hub).
+- Added persistent **Master Production Control Hub** (`DockedCircularProductionHub` with expandable inline 360° wheel on portrait stations, and `WideCircularProductionSidebar` on wide/tablet layouts) so master sync transport, beat/VU dial, deck audition, tap BPM, stomp bypass, universal import, and network TX stay on screen across every station spoke.
 - Verified end-to-end via `Stage5ComposeConsoleTest` (`gradle :app:testDebugUnitTest`), `compile_applet`, and zero `TODO`/placeholder scan.

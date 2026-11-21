@@ -20,7 +20,7 @@ Samplfie2 is organized around a **Circular Production Booth Hub-and-Spoke** mode
 - `export/` — `WavExporter` (`.wav` export) & `Mp3Exporter` (`de.sciss:jump3r` pure-Java LAME `.mp3` encoder) saving to `Music/Samplfie2/` via `MediaStore` (with app-external fallback).
 - `midi/` — `MidiControllerManager` & `MidiMessageParser` (`android.media.midi.MidiManager` Note/CC/PitchBend/Clock integration).
 - `studio/` — `StudioEngine` & `DrumKitSynthesizer` (4-slot Looper, 16-Step Sequencer, 4-Track Timeline, and `SyncedPlayheadState` synchronizing timeline, sequencer, and looper clocks).
-- `ui/` — `SamplfieUiState`, `SamplfieViewModel`, `components/` (`CircularStudioHub`, `StompboxMiniProcessor`, `HardwareChrome`, `AudioVisualizerPanel`, `TacHoldPad`), `screens/` (`DeckEditorScreen`, `SamplesSpokeScreen`, `InstrumentsSpokeScreen`, `TracksSpokeScreen`, `FxRackScreen`, `FxRackSpatialCards`, `LiveSpokeScreen`), and adaptive `MainActivity`.
+- `ui/` — `SamplfieUiState`, `SamplfieViewModel`, `components/` (`MasterProductionHub` providing persistent on-screen `DockedCircularProductionHub` on portrait stations and `WideCircularProductionSidebar` on wide/tablet screens, `CircularStudioHub` / `CircularStudioWheel`, `StompboxMiniProcessor`, `HardwareChrome`, `AudioVisualizerPanel`, `TacHoldPad`), `screens/` (`DeckEditorScreen`, `SamplesSpokeScreen`, `InstrumentsSpokeScreen`, `TracksSpokeScreen`, `FxRackScreen`, `FxRackSpatialCards`, `LiveSpokeScreen`), and adaptive `MainActivity`.
 
 ## Permissions
 - `RECORD_AUDIO`: Runtime permission requested only when arming or holding the TAC mic capture pad.

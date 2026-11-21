@@ -40,9 +40,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
-import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -71,7 +68,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.SamplfieViewModel
 import com.example.ui.StudioSpoke
 import com.example.ui.components.CircularStudioHub
+import com.example.ui.components.DockedCircularProductionHub
 import com.example.ui.components.HardwareTopRack
+import com.example.ui.components.WideCircularProductionSidebar
 import com.example.ui.screens.DeckEditorScreen
 import com.example.ui.screens.FxRackScreen
 import com.example.ui.screens.InstrumentsSpokeScreen
@@ -227,7 +226,7 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val useNavigationRail = maxWidth >= 700.dp
+        val isWideStudioLayout = maxWidth >= 700.dp
 
         Scaffold(
             modifier = Modifier.fillMaxSize(),
@@ -248,7 +247,7 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                 )
             },
             bottomBar = {
-                if (!useNavigationRail) {
+                if (!isWideStudioLayout) {
                     StudioSpokeBottomDock(
                         selectedSpoke = selectedSpoke,
                         onSelectSpoke = { viewModel.selectSpoke(it) },
@@ -262,41 +261,12 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
-                if (useNavigationRail) {
-                    NavigationRail(
-                        containerColor = GunmetalDeck,
-                        modifier = Modifier.fillMaxHeight()
-                    ) {
-                        StudioSpoke.entries.forEach { spoke ->
-                            NavigationRailItem(
-                                selected = selectedSpoke == spoke,
-                                onClick = { viewModel.selectSpoke(spoke) },
-                                icon = {
-                                    Icon(
-                                        imageVector = spokeIcon(spoke),
-                                        contentDescription = spoke.fullTitle
-                                    )
-                                },
-                                label = {
-                                    Text(spoke.shortLabel, style = MaterialTheme.typography.labelSmall)
-                                },
-                                colors = NavigationRailItemDefaults.colors(
-                                    selectedIconColor = ObsidianChassis,
-                                    selectedTextColor = NeonCyan,
-                                    indicatorColor = NeonCyan,
-                                    unselectedIconColor = TextSecondary,
-                                    unselectedTextColor = TextSecondary
-                                ),
-                                modifier = Modifier.testTag("nav_rail_${spoke.name.lowercase()}")
-                            )
-                        }
-                    }
-                }
-
-                when (selectedSpoke) {
-                    StudioSpoke.BOOTH -> CircularStudioHub(
+                if (isWideStudioLayout) {
+                    WideCircularProductionSidebar(
+                        selectedSpoke = selectedSpoke,
                         editorState = editorState,
                         playbackState = playbackState,
+                        micTelemetry = micTelemetry,
                         fxRack = fxRack,
                         stompbox = stompbox,
                         looperState = looperState,
@@ -305,157 +275,224 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                         syncedPlayhead = syncedPlayhead,
                         networkState = networkState,
                         midiState = midiState,
+                        hasAudio = hasAudio,
                         onSelectSpoke = { viewModel.selectSpoke(it) },
                         onToggleSyncedPlay = { viewModel.toggleSyncedTransport() },
+                        onToggleDeckPlay = { viewModel.togglePlay() },
+                        onTapTempo = { viewModel.tapTempo() },
+                        onToggleStompBypass = { viewModel.toggleStompboxBypass() },
                         onImportAudioClick = openAudioPicker,
-                        onGenerateOscTone = { viewModel.generateReferenceOscillatorTone() },
-                        onExportWavClick = { viewModel.exportAsWav("samplfie2_booth") },
                         onExportMp3Click = { showExportDialog = true },
                         onStreamTxClick = { viewModel.streamActiveAudioOverNetwork() }
                     )
+                }
 
-                    StudioSpoke.DECK -> DeckEditorScreen(
-                        editorState = editorState,
-                        micTelemetry = micTelemetry,
-                        playbackState = playbackState,
-                        fxRack = fxRack,
-                        networkState = networkState,
-                        hasMicPermission = hasMicPermission,
-                        onRequestMicPermission = {
-                            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                        },
-                        onTacPressStart = { viewModel.onTacPressStart() },
-                        onTacPressRelease = { viewModel.onTacPressRelease() },
-                        onImportAudioClick = openAudioPicker,
-                        onGenerateOscTone = { viewModel.generateReferenceOscillatorTone() },
-                        onVisualizerModeChange = { viewModel.setVisualizerMode(it) },
-                        onSelectionChange = { s, e -> viewModel.updateSelection(s, e) },
-                        onSeekPlayhead = { viewModel.seekPlayhead(it) },
-                        onTogglePlay = { viewModel.togglePlay() },
-                        onStop = { viewModel.stopPlayback() },
-                        onToggleLoop = { viewModel.toggleLoop() },
-                        onTogglePlaySelectionOnly = { viewModel.togglePlaySelectionOnly() },
-                        onToggleMasterBypass = { viewModel.toggleMasterBypass() },
-                        onExtractSelection = { viewModel.extractSelection() },
-                        onUndo = { viewModel.undoExtraction() },
-                        onResetToOriginal = { viewModel.resetToOriginalTake() },
-                        onOpenFxRack = { viewModel.selectSpoke(StudioSpoke.FX_RACK) },
-                        onSendToLooperSlot = { viewModel.sendEditorToLoopSlot(it) },
-                        onSendToSequencer = { viewModel.sendEditorToSequencerLane(0) },
-                        onAddToTimeline = { viewModel.addEditorClipToTimeline(0) },
-                        onStreamTx = { viewModel.streamActiveAudioOverNetwork() },
-                        onExportWavClick = { viewModel.exportAsWav("samplfie2_deck") },
-                        onExportMp3Click = { showExportDialog = true },
-                        onLoadSavedTake = { viewModel.loadSavedTake(it) }
-                    )
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                ) {
+                    if (!isWideStudioLayout && selectedSpoke != StudioSpoke.BOOTH) {
+                        DockedCircularProductionHub(
+                            selectedSpoke = selectedSpoke,
+                            editorState = editorState,
+                            playbackState = playbackState,
+                            micTelemetry = micTelemetry,
+                            fxRack = fxRack,
+                            stompbox = stompbox,
+                            looperState = looperState,
+                            sequencerState = sequencerState,
+                            timelineState = timelineState,
+                            syncedPlayhead = syncedPlayhead,
+                            networkState = networkState,
+                            midiState = midiState,
+                            hasAudio = hasAudio,
+                            onSelectSpoke = { viewModel.selectSpoke(it) },
+                            onToggleSyncedPlay = { viewModel.toggleSyncedTransport() },
+                            onToggleDeckPlay = { viewModel.togglePlay() },
+                            onTapTempo = { viewModel.tapTempo() },
+                            onToggleStompBypass = { viewModel.toggleStompboxBypass() },
+                            onImportAudioClick = openAudioPicker,
+                            onStreamTxClick = { viewModel.streamActiveAudioOverNetwork() }
+                        )
+                    }
 
-                    StudioSpoke.SAMPLES -> SamplesSpokeScreen(
-                        looperState = looperState,
-                        loopEditorState = loopEditorState,
-                        savedTakes = editorState.savedTakes,
-                        hasEditorAudio = hasAudio,
-                        onSetBpm = { viewModel.setStudioBpm(it) },
-                        onToggleLooperPlay = { viewModel.toggleLooperPlayback() },
-                        onAssignEditorToLoop = { viewModel.sendEditorToLoopSlot(it) },
-                        onToggleLoopSlot = { viewModel.toggleLoopSlot(it) },
-                        onToggleLoopMute = { viewModel.toggleLoopMute(it) },
-                        onClearLoopSlot = { viewModel.clearLoopSlot(it) },
-                        onSetLoopBars = { slotId, bars -> viewModel.setLoopSlotBars(slotId, bars) },
-                        onBounceLooperToEditor = { viewModel.bounceLooperToEditor() },
-                        onImportAudioClick = openAudioPicker,
-                        onLoadSavedTake = { viewModel.loadSavedTake(it) },
-                        onLoadSlotIntoRefiner = { viewModel.loadLoopSlotIntoRefiner(it) },
-                        onUpdateLoopSelection = { s, e -> viewModel.updateLoopRefinerSelection(s, e) },
-                        onSnapZeroCrossing = { viewModel.snapLoopSelectionToZeroCrossing() },
-                        onTrimLoop = { viewModel.trimLoopRefiner() },
-                        onSetLoopFades = { fin, fout -> viewModel.setLoopRefinerFades(fin, fout) },
-                        onApplyFades = { viewModel.applyLoopRefinerFades() },
-                        onReverseLoop = { viewModel.reverseLoopRefiner() },
-                        onNormalizeLoop = { viewModel.normalizeLoopRefiner() },
-                        onRemoveDcLoop = { viewModel.removeDcLoopRefiner() },
-                        onTuneLoopPitchSpeed = { p, sp -> viewModel.applyLoopRefinerPitchSpeed(p, sp) },
-                        onResetLoopRefiner = { viewModel.resetLoopRefiner() },
-                        onAuditionLoopRefiner = { viewModel.auditionLoopRefiner() },
-                        onCommitRefinerToSlot = { viewModel.commitRefinerToLoopSlot() },
-                        onSendRefinerToDeck = { viewModel.sendRefinerToDeck() }
-                    )
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                    ) {
+                        when (selectedSpoke) {
+                            StudioSpoke.BOOTH -> CircularStudioHub(
+                                editorState = editorState,
+                                playbackState = playbackState,
+                                micTelemetry = micTelemetry,
+                                fxRack = fxRack,
+                                stompbox = stompbox,
+                                looperState = looperState,
+                                sequencerState = sequencerState,
+                                timelineState = timelineState,
+                                syncedPlayhead = syncedPlayhead,
+                                networkState = networkState,
+                                midiState = midiState,
+                                onSelectSpoke = { viewModel.selectSpoke(it) },
+                                onToggleSyncedPlay = { viewModel.toggleSyncedTransport() },
+                                onToggleDeckPlay = { viewModel.togglePlay() },
+                                onTapTempo = { viewModel.tapTempo() },
+                                onToggleStompBypass = { viewModel.toggleStompboxBypass() },
+                                onSelectLiveMode = { viewModel.setLiveSessionMode(it) },
+                                onImportAudioClick = openAudioPicker,
+                                onGenerateOscTone = { viewModel.generateReferenceOscillatorTone() },
+                                onExportWavClick = { viewModel.exportAsWav("samplfie2_booth") },
+                                onExportMp3Click = { showExportDialog = true },
+                                onStreamTxClick = { viewModel.streamActiveAudioOverNetwork() },
+                                showWheel = !isWideStudioLayout
+                            )
 
-                    StudioSpoke.INSTRUMENTS -> InstrumentsSpokeScreen(
-                        sequencerState = sequencerState,
-                        midiState = midiState,
-                        hasEditorAudio = hasAudio,
-                        onSetBpm = { viewModel.setStudioBpm(it) },
-                        onToggleSequencerPlay = { viewModel.toggleSequencerPlayback() },
-                        onToggleSequencerStep = { laneId, step -> viewModel.toggleSequencerStep(laneId, step) },
-                        onToggleSequencerMute = { viewModel.toggleSequencerLaneMute(it) },
-                        onAssignEditorToSeqLane = { viewModel.sendEditorToSequencerLane(it) },
-                        onTriggerLanePad = { viewModel.triggerSequencerLaneOneShot(it) },
-                        onSetSwing = { viewModel.setSequencerSwing(it) },
-                        onBounceSequencerToTimeline = { viewModel.bounceSequencerToTimeline() },
-                        onRefreshMidi = { viewModel.refreshMidiDevices() }
-                    )
+                            StudioSpoke.DECK -> DeckEditorScreen(
+                                editorState = editorState,
+                                micTelemetry = micTelemetry,
+                                playbackState = playbackState,
+                                fxRack = fxRack,
+                                networkState = networkState,
+                                hasMicPermission = hasMicPermission,
+                                onRequestMicPermission = {
+                                    micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                },
+                                onTacPressStart = { viewModel.onTacPressStart() },
+                                onTacPressRelease = { viewModel.onTacPressRelease() },
+                                onImportAudioClick = openAudioPicker,
+                                onGenerateOscTone = { viewModel.generateReferenceOscillatorTone() },
+                                onVisualizerModeChange = { viewModel.setVisualizerMode(it) },
+                                onSelectionChange = { s, e -> viewModel.updateSelection(s, e) },
+                                onSeekPlayhead = { viewModel.seekPlayhead(it) },
+                                onTogglePlay = { viewModel.togglePlay() },
+                                onStop = { viewModel.stopPlayback() },
+                                onToggleLoop = { viewModel.toggleLoop() },
+                                onTogglePlaySelectionOnly = { viewModel.togglePlaySelectionOnly() },
+                                onToggleMasterBypass = { viewModel.toggleMasterBypass() },
+                                onExtractSelection = { viewModel.extractSelection() },
+                                onUndo = { viewModel.undoExtraction() },
+                                onResetToOriginal = { viewModel.resetToOriginalTake() },
+                                onOpenFxRack = { viewModel.selectSpoke(StudioSpoke.FX_RACK) },
+                                onSendToLooperSlot = { viewModel.sendEditorToLoopSlot(it) },
+                                onSendToSequencer = { viewModel.sendEditorToSequencerLane(0) },
+                                onAddToTimeline = { viewModel.addEditorClipToTimeline(0) },
+                                onStreamTx = { viewModel.streamActiveAudioOverNetwork() },
+                                onExportWavClick = { viewModel.exportAsWav("samplfie2_deck") },
+                                onExportMp3Click = { showExportDialog = true },
+                                onLoadSavedTake = { viewModel.loadSavedTake(it) }
+                            )
 
-                    StudioSpoke.TRACKS -> TracksSpokeScreen(
-                        timelineState = timelineState,
-                        syncedPlayhead = syncedPlayhead,
-                        hasEditorAudio = hasAudio,
-                        onSetBpm = { viewModel.setStudioBpm(it) },
-                        onToggleSyncedPlay = { viewModel.toggleSyncedTransport() },
-                        onToggleTimelinePlay = { viewModel.toggleTimelinePlayback() },
-                        onSeekSyncedPlayhead = { viewModel.seekSyncedPlayhead(it) },
-                        onAddEditorClipToTrack = { viewModel.addEditorClipToTimeline(it) },
-                        onAddLooperToTimeline = { viewModel.addLooperMixToTimeline() },
-                        onBounceSequencerToTimeline = { viewModel.bounceSequencerToTimeline() },
-                        onNudgeClip = { trackId, clipId, delta -> viewModel.nudgeTimelineClip(trackId, clipId, delta) },
-                        onRemoveClip = { trackId, clipId -> viewModel.removeTimelineClip(trackId, clipId) },
-                        onToggleTrackMute = { viewModel.toggleTimelineMute(it) },
-                        onToggleTrackSolo = { viewModel.toggleTimelineSolo(it) },
-                        onBounceTimelineToEditor = { viewModel.bounceTimelineToEditor() }
-                    )
+                            StudioSpoke.SAMPLES -> SamplesSpokeScreen(
+                                looperState = looperState,
+                                loopEditorState = loopEditorState,
+                                savedTakes = editorState.savedTakes,
+                                hasEditorAudio = hasAudio,
+                                onSetBpm = { viewModel.setStudioBpm(it) },
+                                onToggleLooperPlay = { viewModel.toggleLooperPlayback() },
+                                onAssignEditorToLoop = { viewModel.sendEditorToLoopSlot(it) },
+                                onToggleLoopSlot = { viewModel.toggleLoopSlot(it) },
+                                onToggleLoopMute = { viewModel.toggleLoopMute(it) },
+                                onClearLoopSlot = { viewModel.clearLoopSlot(it) },
+                                onSetLoopBars = { slotId, bars -> viewModel.setLoopSlotBars(slotId, bars) },
+                                onBounceLooperToEditor = { viewModel.bounceLooperToEditor() },
+                                onImportAudioClick = openAudioPicker,
+                                onLoadSavedTake = { viewModel.loadSavedTake(it) },
+                                onLoadSlotIntoRefiner = { viewModel.loadLoopSlotIntoRefiner(it) },
+                                onUpdateLoopSelection = { s, e -> viewModel.updateLoopRefinerSelection(s, e) },
+                                onSnapZeroCrossing = { viewModel.snapLoopSelectionToZeroCrossing() },
+                                onTrimLoop = { viewModel.trimLoopRefiner() },
+                                onSetLoopFades = { fin, fout -> viewModel.setLoopRefinerFades(fin, fout) },
+                                onApplyFades = { viewModel.applyLoopRefinerFades() },
+                                onReverseLoop = { viewModel.reverseLoopRefiner() },
+                                onNormalizeLoop = { viewModel.normalizeLoopRefiner() },
+                                onRemoveDcLoop = { viewModel.removeDcLoopRefiner() },
+                                onTuneLoopPitchSpeed = { p, sp -> viewModel.applyLoopRefinerPitchSpeed(p, sp) },
+                                onResetLoopRefiner = { viewModel.resetLoopRefiner() },
+                                onAuditionLoopRefiner = { viewModel.auditionLoopRefiner() },
+                                onCommitRefinerToSlot = { viewModel.commitRefinerToLoopSlot() },
+                                onSendRefinerToDeck = { viewModel.sendRefinerToDeck() }
+                            )
 
-                    StudioSpoke.FX_RACK -> FxRackScreen(
-                        fxRack = fxRack,
-                        playbackState = playbackState,
-                        hasAudio = hasAudio,
-                        onTogglePlay = { viewModel.togglePlay() },
-                        onToggleMasterBypass = { viewModel.toggleMasterBypass() },
-                        onApplyPreset = { viewModel.applyFxPreset(it) },
-                        onUpdateFxRack = { viewModel.updateFxRack(it) }
-                    )
+                            StudioSpoke.INSTRUMENTS -> InstrumentsSpokeScreen(
+                                sequencerState = sequencerState,
+                                midiState = midiState,
+                                hasEditorAudio = hasAudio,
+                                onSetBpm = { viewModel.setStudioBpm(it) },
+                                onToggleSequencerPlay = { viewModel.toggleSequencerPlayback() },
+                                onToggleSequencerStep = { laneId, step -> viewModel.toggleSequencerStep(laneId, step) },
+                                onToggleSequencerMute = { viewModel.toggleSequencerLaneMute(it) },
+                                onAssignEditorToSeqLane = { viewModel.sendEditorToSequencerLane(it) },
+                                onTriggerLanePad = { viewModel.triggerSequencerLaneOneShot(it) },
+                                onSetSwing = { viewModel.setSequencerSwing(it) },
+                                onBounceSequencerToTimeline = { viewModel.bounceSequencerToTimeline() },
+                                onRefreshMidi = { viewModel.refreshMidiDevices() }
+                            )
 
-                    StudioSpoke.LIVE -> LiveSpokeScreen(
-                        stompbox = stompbox,
-                        fxRack = fxRack,
-                        rigConfig = rigConfig,
-                        micTelemetry = micTelemetry,
-                        playbackState = playbackState,
-                        looperState = looperState,
-                        networkState = networkState,
-                        hasMicPermission = hasMicPermission,
-                        hasAudio = hasAudio,
-                        isExporting = editorState.isExporting,
-                        lastLocalExport = editorState.lastLocalExport,
-                        bpm = syncedPlayhead.bpm,
-                        onSelectLiveMode = { viewModel.setLiveSessionMode(it) },
-                        onUpdateStompbox = { viewModel.updateStompbox(it) },
-                        onToggleStompBypass = { viewModel.toggleStompboxBypass() },
-                        onXyDrag = { x, y -> viewModel.onStompXyDrag(x, y) },
-                        onTapTempo = { viewModel.tapTempo() },
-                        onTogglePlay = { viewModel.togglePlay() },
-                        onToggleSyncedPlay = { viewModel.toggleSyncedTransport() },
-                        onToggleLoopSlot = { viewModel.toggleLoopSlot(it) },
-                        onRequestMicPermission = {
-                            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                        },
-                        onTacPressStart = { viewModel.onTacPressStart() },
-                        onTacPressRelease = { viewModel.onTacPressRelease() },
-                        onBounceTimelineToEditor = { viewModel.bounceTimelineToEditor() },
-                        onUpdateConfig = { viewModel.updateRigConfig(it) },
-                        onStreamTx = { viewModel.streamActiveAudioOverNetwork() },
-                        onStopStream = { viewModel.stopNetworkStream() },
-                        onExportWav = { viewModel.exportAsWav(it) },
-                        onExportMp3 = { viewModel.exportAsMp3(it) }
-                    )
+                            StudioSpoke.TRACKS -> TracksSpokeScreen(
+                                timelineState = timelineState,
+                                syncedPlayhead = syncedPlayhead,
+                                hasEditorAudio = hasAudio,
+                                onSetBpm = { viewModel.setStudioBpm(it) },
+                                onToggleSyncedPlay = { viewModel.toggleSyncedTransport() },
+                                onToggleTimelinePlay = { viewModel.toggleTimelinePlayback() },
+                                onSeekSyncedPlayhead = { viewModel.seekSyncedPlayhead(it) },
+                                onAddEditorClipToTrack = { viewModel.addEditorClipToTimeline(it) },
+                                onAddLooperToTimeline = { viewModel.addLooperMixToTimeline() },
+                                onBounceSequencerToTimeline = { viewModel.bounceSequencerToTimeline() },
+                                onNudgeClip = { trackId, clipId, delta -> viewModel.nudgeTimelineClip(trackId, clipId, delta) },
+                                onRemoveClip = { trackId, clipId -> viewModel.removeTimelineClip(trackId, clipId) },
+                                onToggleTrackMute = { viewModel.toggleTimelineMute(it) },
+                                onToggleTrackSolo = { viewModel.toggleTimelineSolo(it) },
+                                onBounceTimelineToEditor = { viewModel.bounceTimelineToEditor() }
+                            )
+
+                            StudioSpoke.FX_RACK -> FxRackScreen(
+                                fxRack = fxRack,
+                                playbackState = playbackState,
+                                hasAudio = hasAudio,
+                                onTogglePlay = { viewModel.togglePlay() },
+                                onToggleMasterBypass = { viewModel.toggleMasterBypass() },
+                                onApplyPreset = { viewModel.applyFxPreset(it) },
+                                onUpdateFxRack = { viewModel.updateFxRack(it) }
+                            )
+
+                            StudioSpoke.LIVE -> LiveSpokeScreen(
+                                stompbox = stompbox,
+                                fxRack = fxRack,
+                                rigConfig = rigConfig,
+                                micTelemetry = micTelemetry,
+                                playbackState = playbackState,
+                                looperState = looperState,
+                                networkState = networkState,
+                                hasMicPermission = hasMicPermission,
+                                hasAudio = hasAudio,
+                                isExporting = editorState.isExporting,
+                                lastLocalExport = editorState.lastLocalExport,
+                                bpm = syncedPlayhead.bpm,
+                                onSelectLiveMode = { viewModel.setLiveSessionMode(it) },
+                                onUpdateStompbox = { viewModel.updateStompbox(it) },
+                                onToggleStompBypass = { viewModel.toggleStompboxBypass() },
+                                onXyDrag = { x, y -> viewModel.onStompXyDrag(x, y) },
+                                onTapTempo = { viewModel.tapTempo() },
+                                onTogglePlay = { viewModel.togglePlay() },
+                                onToggleSyncedPlay = { viewModel.toggleSyncedTransport() },
+                                onToggleLoopSlot = { viewModel.toggleLoopSlot(it) },
+                                onRequestMicPermission = {
+                                    micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                },
+                                onTacPressStart = { viewModel.onTacPressStart() },
+                                onTacPressRelease = { viewModel.onTacPressRelease() },
+                                onBounceTimelineToEditor = { viewModel.bounceTimelineToEditor() },
+                                onUpdateConfig = { viewModel.updateRigConfig(it) },
+                                onStreamTx = { viewModel.streamActiveAudioOverNetwork() },
+                                onStopStream = { viewModel.stopNetworkStream() },
+                                onExportWav = { viewModel.exportAsWav(it) },
+                                onExportMp3 = { viewModel.exportAsMp3(it) }
+                            )
+                        }
+                    }
                 }
             }
         }
