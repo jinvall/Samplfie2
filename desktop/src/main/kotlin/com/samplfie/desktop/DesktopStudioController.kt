@@ -33,6 +33,13 @@ import com.samplfie.desktop.model.VisualizerMode
 import com.samplfie.desktop.network.NetBridgeState
 import com.samplfie.desktop.network.SessionHandoffSnapshot
 import com.samplfie.desktop.network.Smp2NetworkNode
+import com.samplfie.desktop.stems.DesktopDisbandClient
+import com.samplfie.desktop.stems.DesktopDisbandHttpTransport
+import com.samplfie.desktop.stems.DesktopDisbandStem
+import com.samplfie.desktop.stems.DesktopSecretsState
+import com.samplfie.desktop.stems.DesktopSecretsVault
+import com.samplfie.desktop.stems.DesktopStemPreset
+import com.samplfie.desktop.stems.DesktopStemState
 import com.samplfie.desktop.studio.DesktopArrangementEngine
 import com.samplfie.desktop.studio.DesktopLoopRefinerState
 import com.samplfie.desktop.studio.DesktopLooperState
@@ -41,6 +48,8 @@ import com.samplfie.desktop.studio.DesktopSyncedPlayheadState
 import com.samplfie.desktop.studio.DesktopTimelineState
 import com.samplfie.desktop.tuner.PitchDetector
 import java.io.File
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -82,11 +91,21 @@ class DesktopStudioController {
 
     private val undoStack = ArrayDeque<DesktopAudioBuffer>()
     private var lastTapMs: Long = 0L
+    private val stemExecutor = Executors.newSingleThreadExecutor()
+    private var stemFuture: Future<*>? = null
 
     val defaultExportDir: File = File(System.getProperty("user.home"), "Music/Samplfie2").apply { mkdirs() }
+    val secretsVault = DesktopSecretsVault()
+    @Volatile
+    private var disbandClient = DesktopDisbandClient()
 
     private val _uiState = MutableStateFlow(DesktopStudioUiState())
     val uiState: StateFlow<DesktopStudioUiState> = _uiState.asStateFlow()
+
+    private val _stemState = MutableStateFlow(DesktopStemState())
+    val stemState: StateFlow<DesktopStemState> = _stemState.asStateFlow()
+
+    val secretsState: StateFlow<DesktopSecretsState> = secretsVault.state
 
     val arrangement = DesktopArrangementEngine()
 
@@ -740,7 +759,241 @@ class DesktopStudioController {
         netNode.transmitBuffer(buf, _uiState.value.rigConfig)
     }
 
+    // --- SECRETS VAULT & DISBAND STEMS ---
+
+    internal fun overrideDisbandTransportForTest(transport: DesktopDisbandHttpTransport) {
+        disbandClient = DesktopDisbandClient(transport)
+    }
+
+    fun saveSecretKey(keyName: String, secretValue: String) {
+        runCatching {
+            secretsVault.putSecret(keyName, secretValue)
+        }.onSuccess {
+            val msg = if (secretValue.trim().isEmpty()) {
+                "Removed ${DesktopSecretsVault.sanitizeKeyName(keyName)} from Vault"
+            } else {
+                "Saved ${DesktopSecretsVault.sanitizeKeyName(keyName)} securely"
+            }
+            _uiState.value = _uiState.value.copy(statusLine = msg)
+        }.onFailure { err ->
+            _uiState.value = _uiState.value.copy(statusLine = "VAULT ERROR: ${err.message}")
+        }
+    }
+
+    fun deleteSecretKey(keyName: String) {
+        secretsVault.removeSecret(keyName)
+        _uiState.value = _uiState.value.copy(statusLine = "Removed $keyName from Vault")
+    }
+
+    fun toggleDisbandStem(stem: DesktopDisbandStem) {
+        val next = _stemState.value.selectedStems.toMutableSet()
+        if (!next.add(stem)) next.remove(stem)
+        _stemState.value = _stemState.value.copy(
+            selectedStems = next,
+            errorMessage = null,
+            statusMessage = if (next.isEmpty()) {
+                "NO SPECIFIC STEMS SELECTED — WILL PROMPT FOR ALL-STEMS CONFIRMATION"
+            } else {
+                "TARGET STEMS: ${next.joinToString(", ") { it.label }}"
+            }
+        )
+    }
+
+    fun applyStemPreset(preset: DesktopStemPreset) {
+        val next = preset.stems
+        _stemState.value = _stemState.value.copy(
+            selectedStems = next,
+            errorMessage = null,
+            statusMessage = if (next.isEmpty()) {
+                "UNSPECIFIED STEM SET — WILL PROMPT FOR ALL-STEMS CONFIRMATION"
+            } else {
+                "PRESET ${preset.label.uppercase()}: ${next.joinToString(", ") { it.label }}"
+            }
+        )
+    }
+
+    fun setStemUseSelectionOnly(onlySel: Boolean) {
+        _stemState.value = _stemState.value.copy(useSelectionOnly = onlySel)
+    }
+
+    fun requestStemSeparation(): Boolean {
+        if (_stemState.value.isRunning) return false
+        val source = resolveSourceBufferForStems() ?: run {
+            val msg = "NO AUDIO LOADED TO SEPARATE STEMS"
+            _stemState.value = _stemState.value.copy(errorMessage = msg, statusMessage = msg, lastToastMessage = msg)
+            _uiState.value = _uiState.value.copy(statusLine = msg)
+            return false
+        }
+        val apiKey = secretsVault.resolveDisbandApiKey()
+        if (apiKey.isNullOrBlank()) {
+            val msg = "DISBAND_API_KEY MISSING — OPEN KEYS & SECRETS STORE IN TOP BAR OR BOOTH"
+            _stemState.value = _stemState.value.copy(errorMessage = msg, statusMessage = msg, lastToastMessage = msg)
+            _uiState.value = _uiState.value.copy(statusLine = msg)
+            return false
+        }
+
+        val chosen = _stemState.value.selectedStems
+        if (chosen.isEmpty()) {
+            val est = DesktopStemState.estimateAllStemsCredits(source.durationSeconds)
+            val toast = "No specific stem set specified — Separating ALL stems can cost ~$est credits."
+            _stemState.value = _stemState.value.copy(
+                showAllStemsConfirmation = true,
+                pendingAllStemsEstimatedCredits = est,
+                pendingAudioDurationSec = source.durationSeconds,
+                errorMessage = null,
+                lastToastMessage = toast,
+                statusMessage = "CONFIRMATION REQUIRED: SEPARATE ALL STEMS (~$est CREDITS)"
+            )
+            _uiState.value = _uiState.value.copy(statusLine = toast)
+            return false
+        }
+        launchDisbandSeparation(chosen.toList(), source, apiKey)
+        return true
+    }
+
+    fun confirmSeparateAllStems() {
+        val source = resolveSourceBufferForStems() ?: run {
+            _stemState.value = _stemState.value.copy(showAllStemsConfirmation = false)
+            return
+        }
+        val apiKey = secretsVault.resolveDisbandApiKey() ?: run {
+            _stemState.value = _stemState.value.copy(
+                showAllStemsConfirmation = false,
+                errorMessage = "DISBAND_API_KEY MISSING"
+            )
+            return
+        }
+        _stemState.value = _stemState.value.copy(showAllStemsConfirmation = false)
+        launchDisbandSeparation(DesktopDisbandStem.ALL_STEMS_DEFAULT, source, apiKey)
+    }
+
+    fun dismissAllStemsConfirmation() {
+        val msg = "Cancelled All-Stems separation — pick specific stems (Vocals, Drums, Bass, Guitar) to save credits."
+        _stemState.value = _stemState.value.copy(
+            showAllStemsConfirmation = false,
+            statusMessage = msg
+        )
+        _uiState.value = _uiState.value.copy(statusLine = msg)
+    }
+
+    fun cancelStemSeparation() {
+        stemFuture?.cancel(true)
+        _stemState.value = _stemState.value.copy(
+            isRunning = false,
+            jobStatusLabel = "CANCELLED",
+            statusMessage = "DISBAND STEM SEPARATION CANCELLED"
+        )
+    }
+
+    private fun resolveSourceBufferForStems(): DesktopAudioBuffer? {
+        val base = _uiState.value.processedBuffer ?: _uiState.value.dryBuffer ?: return null
+        if (base.frameCount <= 0) return null
+        if (!_stemState.value.useSelectionOnly) return base
+        val sel = base.extractSelection(_uiState.value.selectionStart, _uiState.value.selectionEnd)
+        return if (sel.frameCount > 0) sel else base
+    }
+
+    private fun launchDisbandSeparation(
+        targetStems: List<DesktopDisbandStem>,
+        source: DesktopAudioBuffer,
+        apiKey: String
+    ) {
+        val baseUrl = secretsVault.resolveDisbandBaseUrl()
+        stemFuture?.cancel(true)
+        _stemState.value = _stemState.value.copy(
+            isRunning = true,
+            showAllStemsConfirmation = false,
+            jobStatusLabel = "SUBMITTING",
+            errorMessage = null,
+            statusMessage = "DISBAND: REQUESTING ${targetStems.joinToString("+") { it.shortTag }}…"
+        )
+        stemFuture = stemExecutor.submit {
+            val res = runCatching {
+                disbandClient.separateAndDownloadStems(
+                    baseUrl = baseUrl,
+                    apiKey = apiKey,
+                    stems = targetStems,
+                    sourceBuffer = source
+                ) { jobId, status, charge ->
+                    _stemState.value = _stemState.value.copy(
+                        activeJobId = jobId ?: _stemState.value.activeJobId,
+                        jobStatusLabel = status,
+                        lastCreditCharge = charge ?: _stemState.value.lastCreditCharge,
+                        statusMessage = "DISBAND [${jobId ?: "…"}]: $status" +
+                            (charge?.let { " ($it credits)" } ?: "")
+                    )
+                }
+            }
+            res.onSuccess { (job, tracks) ->
+                val done = "DISBAND READY (${tracks.size} stems • ${job.charge ?: 0} credits)"
+                _stemState.value = _stemState.value.copy(
+                    isRunning = false,
+                    activeJobId = job.id,
+                    jobStatusLabel = "READY",
+                    lastCreditCharge = job.charge,
+                    separatedStems = tracks,
+                    errorMessage = null,
+                    lastToastMessage = done,
+                    statusMessage = done
+                )
+                _uiState.value = _uiState.value.copy(statusLine = done)
+            }.onFailure { err ->
+                val msg = err.message ?: "Disband separation failed"
+                _stemState.value = _stemState.value.copy(
+                    isRunning = false,
+                    jobStatusLabel = "ERROR",
+                    errorMessage = msg,
+                    lastToastMessage = msg,
+                    statusMessage = "DISBAND ERROR: $msg"
+                )
+                _uiState.value = _uiState.value.copy(statusLine = "DISBAND ERROR: $msg")
+            }
+        }
+    }
+
+    fun loadSeparatedStemToDeck(stemId: String) {
+        val stem = _stemState.value.separatedStems.firstOrNull { it.stemId == stemId } ?: return
+        loadNewBuffer(
+            buffer = stem.buffer,
+            banner = "LOADED STEM TO DECK: ${stem.label.uppercase()}",
+            preserveLoopPlayback = true
+        )
+    }
+
+    fun sendSeparatedStemToLooper(stemId: String, slotId: Int = 0) {
+        val stem = _stemState.value.separatedStems.firstOrNull { it.stemId == stemId } ?: return
+        arrangement.assignBufferToLoopSlot(slotId.coerceIn(0, 3), stem.buffer, stem.label)
+        _uiState.value = _uiState.value.copy(statusLine = "STEM ${stem.label.uppercase()} -> LOOP ${'A' + slotId.coerceIn(0, 3)}")
+    }
+
+    fun addSeparatedStemToTimeline(stemId: String, trackId: Int) {
+        val stem = _stemState.value.separatedStems.firstOrNull { it.stemId == stemId } ?: return
+        arrangement.addClipToTimeline(trackId.coerceIn(0, 3), stem.buffer, startTimeSec = 0f)
+        _uiState.value = _uiState.value.copy(statusLine = "STEM ${stem.label.uppercase()} -> TRACK ${trackId.coerceIn(0, 3) + 1}")
+    }
+
+    fun sendAllSeparatedStemsToTimeline() {
+        val stems = _stemState.value.separatedStems
+        if (stems.isEmpty()) return
+        stems.take(4).forEachIndexed { idx, stem ->
+            arrangement.addClipToTimeline(idx, stem.buffer, startTimeSec = 0f)
+        }
+        _uiState.value = _uiState.value.copy(statusLine = "PLACED ${stems.take(4).size} STEMS ONTO TRACKS 1–${stems.take(4).size}")
+    }
+
+    fun exportSeparatedStemWav(stemId: String, targetFile: File): Result<File> {
+        val stem = _stemState.value.separatedStems.firstOrNull { it.stemId == stemId }
+            ?: return Result.failure(IllegalArgumentException("Stem not found"))
+        return runCatching {
+            DesktopWavCodec.writeWav(stem.buffer, targetFile)
+            _uiState.value = _uiState.value.copy(statusLine = "SAVED STEM WAV -> ${targetFile.absolutePath}")
+            targetFile
+        }
+    }
+
     fun shutdown() {
+        stemFuture?.cancel(true)
+        stemExecutor.shutdownNow()
         soundEngine.stopPlayback()
         soundEngine.stopMicAndCollectBuffer()
         arrangement.release()

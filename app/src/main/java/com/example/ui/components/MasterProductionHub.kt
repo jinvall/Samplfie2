@@ -508,6 +508,8 @@ fun WideCircularProductionSidebar(
     onImportAudioClick: () -> Unit,
     onExportMp3Click: () -> Unit,
     onStreamTxClick: () -> Unit,
+    hasDisbandKey: Boolean = false,
+    onOpenSecretsVault: () -> Unit = {},
     onPushHandoffClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -621,6 +623,12 @@ fun WideCircularProductionSidebar(
                     selected = networkState.isTransmitting,
                     onClick = onStreamTxClick,
                     accentColor = VioletMod
+                )
+                HardwareChipToggle(
+                    label = if (hasDisbandKey) "KEYS OK" else "KEYS",
+                    selected = hasDisbandKey,
+                    onClick = onOpenSecretsVault,
+                    accentColor = if (hasDisbandKey) EmeraldSignal else AmberHot
                 )
             }
 

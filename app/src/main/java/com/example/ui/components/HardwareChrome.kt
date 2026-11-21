@@ -15,11 +15,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -64,7 +66,9 @@ fun HardwareTopRack(
     isRecording: Boolean,
     hasAudio: Boolean,
     bpm: Float,
+    hasDisbandKey: Boolean = false,
     onReturnToBooth: () -> Unit,
+    onOpenSecretsVault: () -> Unit = {},
     onExportMp3Click: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -74,115 +78,133 @@ fun HardwareTopRack(
         border = BorderStroke(1.dp, HairlineDivider),
         tonalElevation = 2.dp
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val showBpmBadge = maxWidth >= 380.dp
             Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.weight(1f)
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                if (selectedSpoke != StudioSpoke.BOOTH) {
-                    Surface(
-                        color = NeonCyan.copy(alpha = 0.16f),
-                        shape = RoundedCornerShape(8.dp),
-                        border = BorderStroke(1.dp, NeonCyan),
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable(onClick = onReturnToBooth)
-                            .testTag("top_booth_button")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    if (selectedSpoke != StudioSpoke.BOOTH) {
+                        Surface(
+                            color = NeonCyan.copy(alpha = 0.16f),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, NeonCyan),
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(onClick = onReturnToBooth)
+                                .testTag("top_booth_button")
                         ) {
-                            Icon(
-                                imageVector = Icons.Filled.Hub,
-                                contentDescription = "Return to Production Booth Hub",
-                                tint = NeonCyan,
-                                modifier = Modifier.size(16.dp)
+                            Row(
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Hub,
+                                    contentDescription = "Return to Production Booth Hub",
+                                    tint = NeonCyan,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text("BOOTH", style = MaterialTheme.typography.labelSmall, color = NeonCyan)
+                            }
+                        }
+                    } else {
+                        HardwareLedIndicator(
+                            active = true,
+                            color = if (isRecording) TacCoral else NeonCyan,
+                            sizeDp = 10
+                        )
+                    }
+
+                    Column {
+                        Text(
+                            text = if (selectedSpoke == StudioSpoke.BOOTH) "SAMPLFIE2" else "SAMPLFIE2 · ${selectedSpoke.shortLabel}",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = TextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "${rigConfig.sampleRate / 1000}kHz • ${rigConfig.channels}CH • B${rigConfig.bufferSize} • ${rigConfig.protocol.label}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.testTag("top_rig_summary")
+                        )
+                    }
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    if (showBpmBadge) {
+                        Surface(
+                            color = BrushedPanel,
+                            shape = RoundedCornerShape(6.dp),
+                            border = BorderStroke(1.dp, HairlineDivider)
+                        ) {
+                            Text(
+                                text = "${bpm.toInt()} BPM",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = AmberHot,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
                             )
-                            Text("BOOTH", style = MaterialTheme.typography.labelSmall, color = NeonCyan)
                         }
                     }
-                } else {
-                    HardwareLedIndicator(
-                        active = true,
-                        color = if (isRecording) TacCoral else NeonCyan,
-                        sizeDp = 10
-                    )
-                }
 
-                Column {
-                    Text(
-                        text = if (selectedSpoke == StudioSpoke.BOOTH) "SAMPLFIE2" else "SAMPLFIE2 · ${selectedSpoke.shortLabel}",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = TextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = "${rigConfig.sampleRate / 1000}kHz • ${rigConfig.channels}CH • B${rigConfig.bufferSize} • ${rigConfig.protocol.label}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = TextSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.testTag("top_rig_summary")
-                    )
-                }
-            }
+                    Surface(
+                        color = if (isMasterBypass) ElevatedBezel else if (activeFxCount > 0) NeonCyan.copy(alpha = 0.16f) else BrushedPanel,
+                        shape = RoundedCornerShape(6.dp),
+                        border = BorderStroke(
+                            1.dp,
+                            if (isMasterBypass) AmberHot else if (activeFxCount > 0) NeonCyan else HairlineDivider
+                        )
+                    ) {
+                        Text(
+                            text = if (isMasterBypass) "BYP" else "FX $activeFxCount",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isMasterBypass) AmberHot else if (activeFxCount > 0) NeonCyan else TextMuted,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                        )
+                    }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Surface(
-                    color = BrushedPanel,
-                    shape = RoundedCornerShape(6.dp),
-                    border = BorderStroke(1.dp, HairlineDivider)
-                ) {
-                    Text(
-                        text = "${bpm.toInt()} BPM",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = AmberHot,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
-                    )
-                }
+                    IconButton(
+                        onClick = onOpenSecretsVault,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("top_secrets_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Key,
+                            contentDescription = "Keys and Secrets Store",
+                            tint = if (hasDisbandKey) EmeraldSignal else AmberHot
+                        )
+                    }
 
-                Surface(
-                    color = if (isMasterBypass) ElevatedBezel else if (activeFxCount > 0) NeonCyan.copy(alpha = 0.16f) else BrushedPanel,
-                    shape = RoundedCornerShape(6.dp),
-                    border = BorderStroke(
-                        1.dp,
-                        if (isMasterBypass) AmberHot else if (activeFxCount > 0) NeonCyan else HairlineDivider
-                    )
-                ) {
-                    Text(
-                        text = if (isMasterBypass) "BYPASS" else "FX $activeFxCount",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = if (isMasterBypass) AmberHot else if (activeFxCount > 0) NeonCyan else TextMuted,
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
-                    )
-                }
-
-                IconButton(
-                    onClick = onExportMp3Click,
-                    enabled = hasAudio,
-                    modifier = Modifier
-                        .minimumInteractiveComponentSize()
-                        .testTag("top_export_mp3_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Download,
-                        contentDescription = "Export MP3",
-                        tint = if (hasAudio) EmeraldSignal else TextMuted
-                    )
+                    IconButton(
+                        onClick = onExportMp3Click,
+                        enabled = hasAudio,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("top_export_mp3_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Download,
+                            contentDescription = "Export MP3",
+                            tint = if (hasAudio) EmeraldSignal else TextMuted
+                        )
+                    }
                 }
             }
         }

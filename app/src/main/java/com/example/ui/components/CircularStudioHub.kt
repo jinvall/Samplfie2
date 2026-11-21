@@ -58,11 +58,15 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.audio.MicCaptureTelemetry
 import com.example.audio.PlaybackState
+import com.example.config.SecretsVaultState
 import com.example.dsp.FxRackState
 import com.example.dsp.LiveSessionMode
 import com.example.dsp.StompboxMasterState
 import com.example.midi.MidiState
 import com.example.network.NetworkLinkState
+import com.example.stems.DisbandStem
+import com.example.stems.StemPreset
+import com.example.stems.StemSeparationUiState
 import com.example.studio.LooperState
 import com.example.studio.SequencerState
 import com.example.studio.SyncedPlayheadState
@@ -529,6 +533,8 @@ fun CircularStudioHub(
     syncedPlayhead: SyncedPlayheadState,
     networkState: NetworkLinkState,
     midiState: MidiState,
+    secretsState: SecretsVaultState = SecretsVaultState(),
+    stemState: StemSeparationUiState = StemSeparationUiState(),
     workspaceConfig: WorkspaceConfig = WorkspaceConfig(),
     peerLabel: String = "127.0.0.1:9000",
     onSelectSpoke: (StudioSpoke) -> Unit,
@@ -547,6 +553,16 @@ fun CircularStudioHub(
     onApplyPendingHandoff: () -> Unit = {},
     onToggleRadialWheelSpoke: (StudioSpoke) -> Unit = {},
     onToggleDockSpokePinned: (StudioSpoke) -> Unit = {},
+    onOpenSecretsVault: () -> Unit = {},
+    onToggleDisbandStem: (DisbandStem) -> Unit = {},
+    onApplyStemPreset: (StemPreset) -> Unit = {},
+    onSetStemSelectionOnly: (Boolean) -> Unit = {},
+    onRequestStemSeparation: () -> Unit = {},
+    onCancelStemSeparation: () -> Unit = {},
+    onLoadStemToDeck: (String) -> Unit = {},
+    onSendStemToLooper: (String, Int) -> Unit = { _, _ -> },
+    onAddStemToTimeline: (String, Int) -> Unit = { _, _ -> },
+    onSendAllStemsToTimeline: () -> Unit = {},
     showWheel: Boolean = true,
     modifier: Modifier = Modifier
 ) {
@@ -683,8 +699,32 @@ fun CircularStudioHub(
                     accentColor = VioletMod,
                     modifier = Modifier.testTag("booth_open_vmc_button")
                 )
+                HardwareChipToggle(
+                    label = if (secretsState.hasDisbandKey) "SECRETS & KEYS (SET)" else "SECRETS & KEYS",
+                    selected = secretsState.hasDisbandKey,
+                    onClick = onOpenSecretsVault,
+                    accentColor = if (secretsState.hasDisbandKey) EmeraldSignal else AmberHot,
+                    modifier = Modifier.testTag("booth_secrets_button")
+                )
             }
         }
+
+        // Disband AI Stem Separation Console inside Production Booth
+        DisbandStemSeparationPanel(
+            stemState = stemState,
+            secretsState = secretsState,
+            hasAudio = hasAudio,
+            onToggleStem = onToggleDisbandStem,
+            onApplyPreset = onApplyStemPreset,
+            onSetUseSelectionOnly = onSetStemSelectionOnly,
+            onRequestSeparation = onRequestStemSeparation,
+            onCancelSeparation = onCancelStemSeparation,
+            onOpenSecretsVault = onOpenSecretsVault,
+            onLoadStemToDeck = onLoadStemToDeck,
+            onSendStemToLooper = onSendStemToLooper,
+            onAddStemToTimeline = onAddStemToTimeline,
+            onSendAllStemsToTimeline = onSendAllStemsToTimeline
+        )
 
         // Master Production Control Strip (Transport, Stomp, Mode, I/O)
         HardwarePanel(borderColor = NeonCyan.copy(alpha = 0.35f)) {

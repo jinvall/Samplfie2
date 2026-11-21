@@ -3,6 +3,8 @@ package com.samplfie.desktop
 import com.samplfie.desktop.model.DesktopStation
 import com.samplfie.desktop.ui.ChromaticTunerPanel
 import com.samplfie.desktop.ui.CircularHubSidebar
+import com.samplfie.desktop.ui.DesktopSecretsVaultDialog
+import com.samplfie.desktop.ui.DesktopStemSeparationPanel
 import com.samplfie.desktop.ui.FxAndStompPanel
 import com.samplfie.desktop.ui.InstrumentsSeqPanel
 import com.samplfie.desktop.ui.LiveStagePanel
@@ -50,8 +52,10 @@ class SamplfieDesktopFrame(
 
     private val topStatusLabel = StudioTheme.hardwareLabel("READY", StudioTheme.NeonCyan, StudioTheme.MonoFont)
     private val stationTitleLabel = StudioTheme.hardwareLabel("SIGNAL & WAV DECK EDITOR", StudioTheme.TextPrimary, StudioTheme.TitleFont)
+    private val topSecretsBtn = StudioTheme.hardwareButton("KEYS VAULT", StudioTheme.AmberHot) { openSecretsVaultDialog() }
     private val navPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 2)).apply { isOpaque = false }
     private var lastVisibleNav: List<DesktopStation> = emptyList()
+    private var showingAllStemsConfirmModal = false
 
     private val hubSidebar = CircularHubSidebar(
         onSelectStation = { controller.selectStation(it) },
@@ -75,7 +79,17 @@ class SamplfieDesktopFrame(
         onPushHandoff = { controller.pushSessionToPeer() },
         onGrabHandoff = { controller.grabSessionFromPeer() },
         onApplyPendingHandoff = { controller.applyPendingHandoff() },
-        onToggleSyncedPlay = { controller.arrangement.toggleSyncedTransport() }
+        onToggleSyncedPlay = { controller.arrangement.toggleSyncedTransport() },
+        onOpenSecretsVault = { openSecretsVaultDialog() },
+        onToggleDisbandStem = { controller.toggleDisbandStem(it) },
+        onApplyStemPreset = { controller.applyStemPreset(it) },
+        onSetStemScopeSelectionOnly = { controller.setStemUseSelectionOnly(it) },
+        onRequestStemSeparation = { triggerStemSeparationWithPrompt() },
+        onCancelStemSeparation = { controller.cancelStemSeparation() },
+        onLoadStemToDeck = { controller.loadSeparatedStemToDeck(it) },
+        onSendStemToLoop = { stemId, slotId -> controller.sendSeparatedStemToLooper(stemId, slotId) },
+        onAddStemToTrack = { stemId, trackId -> controller.addSeparatedStemToTimeline(stemId, trackId) },
+        onSendAllStemsToTracks = { controller.sendAllSeparatedStemsToTimeline() }
     )
 
     private val editorPanel = SignalEditorPanel(
@@ -245,8 +259,16 @@ class SamplfieDesktopFrame(
                 add(StudioTheme.hardwareLabel("SAMPLFIE2 LINUX STUDIO", StudioTheme.NeonCyan, StudioTheme.TitleFont))
                 add(stationTitleLabel)
             }
+            val right = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
+                isOpaque = false
+                add(StudioTheme.hardwareButton("STEMS (DISBAND)", StudioTheme.MagentaFx) {
+                    controller.selectStation(DesktopStation.BOOTH)
+                })
+                add(topSecretsBtn)
+            }
             add(left, BorderLayout.WEST)
             add(topStatusLabel, BorderLayout.CENTER)
+            add(right, BorderLayout.EAST)
         }
         val navScroll = JScrollPane(navPanel, JScrollPane.VERTICAL_SCROLLBAR_NEVER, JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED).apply {
             border = null
@@ -304,10 +326,16 @@ class SamplfieDesktopFrame(
             add(JMenuItem("Open 64-Ch VMC Controller").apply { addActionListener { controller.selectStation(DesktopStation.VMC) } })
             add(JMenuItem("Rescan Linux ALSA MIDI Ports").apply { addActionListener { controller.refreshMidiPorts() } })
         }
+        val vaultMenu = JMenu("Stems & Vault").apply {
+            foreground = StudioTheme.TextPrimary
+            add(JMenuItem("Secrets & Keys Vault…").apply { addActionListener { openSecretsVaultDialog() } })
+            add(JMenuItem("Separate Stems (Disband API)…").apply { addActionListener { triggerStemSeparationWithPrompt() } })
+        }
         add(fileMenu)
         add(stationMenu)
         add(signalMenu)
         add(peerMenu)
+        add(vaultMenu)
     }
 
     private fun syncUi() {
@@ -321,17 +349,21 @@ class SamplfieDesktopFrame(
         val tl = controller.timelineState.value
         val sync = controller.syncedPlayhead.value
         val vmc = controller.vmcState.value
+        val stems = controller.stemState.value
+        val secrets = controller.secretsState.value
 
         if (ui.workspaceConfig.visibleStations != lastVisibleNav) {
             rebuildNavButtons(ui.workspaceConfig.visibleStations)
         }
 
+        topSecretsBtn.text = if (secrets.hasDisbandKey) "KEYS OK" else "SET KEYS"
+        topSecretsBtn.foreground = if (secrets.hasDisbandKey) StudioTheme.EmeraldSignal else StudioTheme.AmberHot
         stationTitleLabel.text = "· ${ui.station.fullTitle}"
         topStatusLabel.text = ui.statusLine
         cardLayout.show(cardHost, ui.station.name)
 
         hubSidebar.updateState(ui, play, mic, net)
-        boothPanel.updateState(ui, play, net, sync)
+        boothPanel.updateState(ui, play, net, sync, stems, secrets)
         editorPanel.updateState(ui, play)
         samplesPanel.updateState(looper, refiner)
         instrumentsPanel.updateState(seq, vmc)
@@ -341,6 +373,40 @@ class SamplfieDesktopFrame(
         tunerPanel.updateState(ui)
         vmcPanel.updateState(vmc)
         netPanel.updateState(ui, net)
+    }
+
+    private fun openSecretsVaultDialog() {
+        DesktopSecretsVaultDialog(
+            owner = this,
+            initialState = controller.secretsState.value,
+            onSaveSecret = { k, v -> controller.saveSecretKey(k, v) },
+            onDeleteSecret = { k -> controller.deleteSecretKey(k) },
+            currentStateProvider = { controller.secretsState.value }
+        ).isVisible = true
+    }
+
+    private fun triggerStemSeparationWithPrompt() {
+        controller.requestStemSeparation()
+        val st = controller.stemState.value
+        if (st.showAllStemsConfirmation && !showingAllStemsConfirmModal) {
+            showingAllStemsConfirmModal = true
+            try {
+                val ok = DesktopStemSeparationPanel.showAllStemsConfirmDialog(
+                    parent = this,
+                    estimatedCredits = st.pendingAllStemsEstimatedCredits,
+                    durationSec = st.pendingAudioDurationSec
+                )
+                if (ok) {
+                    controller.confirmSeparateAllStems()
+                } else {
+                    controller.dismissAllStemsConfirmation()
+                }
+            } finally {
+                showingAllStemsConfirmModal = false
+            }
+        } else if (st.errorMessage?.contains("DISBAND_API_KEY MISSING", ignoreCase = true) == true) {
+            openSecretsVaultDialog()
+        }
     }
 
     private fun chooseAndOpenWav() {

@@ -33,3 +33,10 @@
 - Implemented **Persistent Loop Playback** on both Android (`AudioPlaybackEngine.updateBufferHot(..., preserveLoopPlayback = true)`) and Linux Desktop (`LinuxSoundEngine.updateBufferHot`), surviving selection extractions, edits, undo/reset, and live DSP updates until `STOP`.
 - Implemented **Bidirectional Equal-Peer Session Handoff** (`SMH2`/`SMHR` codecs + `PUSH`/`GRAB` controls) transferring active song PCM, playhead, loop state, selections, FX, Stompbox, Sequencer/Looper, `A4` reference, station, and 64-Ch VMC rules cleanly between phones and desktop.
 - Verified via `DesktopStudioTest` (`gradle :desktop:test :desktop:installDist`), `VmcAndHandoffTest`, `Stage5ComposeConsoleTest`, `Stage6EqualPeerTest` (`gradle :app:testDebugUnitTest`), `compile_applet`, and `:app:assembleDebug`.
+
+## Stage 7: Disband AI Stem Separation & Secrets/Keys Vault
+**Status:** VERIFIED
+- Implemented persistent **Secrets & Keys Vault** accessible from both the Top Toolbar and Production Booth Hub on Android (`SecretsVaultRepository` AES-GCM encrypted DataStore + `.env` `BuildConfig.DISBAND_API_KEY`) and Linux Desktop (`DesktopSecretsVault` POSIX-`0600` store + `DISBAND_API_KEY` env fallback).
+- Implemented **Disband Stem Separation API Client** (`POST /separations?stems=...&formats=wav`, `GET /separations/{id}` with `Prefer: wait=20` polling, and WAV stem download) supporting granular selections (`Vocals Only`, `Vocals + Drums`, `Drums + Bass`, `Vocals/Drums/Bass/Guitar`, plus `Piano`, `Other`, `Instrumental`, and pro drum/vocal sub-stems).
+- Enforced credit-protection UX: when no specific stem set is chosen, triggering separation shows a Toast notification and requires explicit confirmation in an **All-Stems Confirmation Dialog** before invoking Disband for all 6 core stems.
+- Verified with `DisbandStemsAndSecretsTest` (`:app:testDebugUnitTest`) and `DesktopStemsAndSecretsTest` (`:desktop:test`) using loopback HTTP servers and Robolectric Compose UI interactions.

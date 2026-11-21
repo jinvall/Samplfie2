@@ -3,6 +3,7 @@ package com.example
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -50,10 +51,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.example.ui.components.AllStemsConfirmationDialog
+import com.example.ui.components.SecretsVaultDialog
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -147,6 +151,9 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
     val tunerState by viewModel.tunerState.collectAsStateWithLifecycle()
     val vmcState by viewModel.vmcState.collectAsStateWithLifecycle()
     val rigConfig by viewModel.rigConfig.collectAsStateWithLifecycle()
+    val secretsState by viewModel.secretsState.collectAsStateWithLifecycle()
+    val stemState by viewModel.stemState.collectAsStateWithLifecycle()
+    val showSecretsVault by viewModel.showSecretsVault.collectAsStateWithLifecycle()
     val fxRack by viewModel.fxRack.collectAsStateWithLifecycle()
     val stompbox by viewModel.stompbox.collectAsStateWithLifecycle()
     val editorState by viewModel.editorState.collectAsStateWithLifecycle()
@@ -160,6 +167,12 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
     val timelineState by viewModel.timelineState.collectAsStateWithLifecycle()
     val syncedPlayhead by viewModel.syncedPlayhead.collectAsStateWithLifecycle()
 
+    LaunchedEffect(viewModel) {
+        viewModel.toastEvents.collect { msg ->
+            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+        }
+    }
+
     BackHandler(enabled = selectedSpoke != StudioSpoke.BOOTH) {
         viewModel.selectSpoke(StudioSpoke.BOOTH)
     }
@@ -170,6 +183,24 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
     val activeBuf = editorState.processedBuffer ?: editorState.dryBuffer
     val hasAudio = (activeBuf != null && activeBuf.frameCount > 0) ||
         timelineState.tracks.any { it.clips.isNotEmpty() }
+
+    if (showSecretsVault) {
+        SecretsVaultDialog(
+            secretsState = secretsState,
+            onSaveSecret = { k, v, hint -> viewModel.saveSecretKey(k, v, hint) },
+            onDeleteSecret = { k -> viewModel.deleteSecretKey(k) },
+            onDismiss = { viewModel.setShowSecretsVault(false) }
+        )
+    }
+
+    if (stemState.showAllStemsConfirmation) {
+        AllStemsConfirmationDialog(
+            estimatedCredits = stemState.pendingAllStemsEstimatedCredits,
+            durationSec = stemState.pendingAudioDurationSec,
+            onConfirmAllStems = { viewModel.confirmSeparateAllStems() },
+            onDismiss = { viewModel.dismissAllStemsConfirmation() }
+        )
+    }
 
     if (showExportDialog) {
         AlertDialog(
@@ -247,7 +278,9 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                     isRecording = micTelemetry.isRecording,
                     hasAudio = hasAudio,
                     bpm = syncedPlayhead.bpm,
+                    hasDisbandKey = secretsState.hasDisbandKey,
                     onReturnToBooth = { viewModel.selectSpoke(StudioSpoke.BOOTH) },
+                    onOpenSecretsVault = { viewModel.setShowSecretsVault(true) },
                     onExportMp3Click = { showExportDialog = true },
                     modifier = Modifier.statusBarsPadding()
                 )
@@ -292,6 +325,8 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                         onImportAudioClick = openAudioPicker,
                         onExportMp3Click = { showExportDialog = true },
                         onStreamTxClick = { viewModel.streamActiveAudioOverNetwork() },
+                        hasDisbandKey = secretsState.hasDisbandKey,
+                        onOpenSecretsVault = { viewModel.setShowSecretsVault(true) },
                         onPushHandoffClick = { viewModel.pushSessionToPeer() }
                     )
                 }
@@ -345,6 +380,8 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                                 syncedPlayhead = syncedPlayhead,
                                 networkState = networkState,
                                 midiState = midiState,
+                                secretsState = secretsState,
+                                stemState = stemState,
                                 workspaceConfig = workspaceConfig,
                                 peerLabel = "${rigConfig.ipAddress}:${rigConfig.port}",
                                 onSelectSpoke = { viewModel.selectSpoke(it) },
@@ -363,6 +400,16 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                                 onApplyPendingHandoff = { viewModel.applyPendingHandoff() },
                                 onToggleRadialWheelSpoke = { viewModel.toggleRadialWheelSpoke(it) },
                                 onToggleDockSpokePinned = { viewModel.toggleDockSpokePinned(it) },
+                                onOpenSecretsVault = { viewModel.setShowSecretsVault(true) },
+                                onToggleDisbandStem = { viewModel.toggleDisbandStem(it) },
+                                onApplyStemPreset = { viewModel.applyStemPreset(it) },
+                                onSetStemSelectionOnly = { viewModel.setStemUseSelectionOnly(it) },
+                                onRequestStemSeparation = { viewModel.requestStemSeparation() },
+                                onCancelStemSeparation = { viewModel.cancelStemSeparation() },
+                                onLoadStemToDeck = { viewModel.loadSeparatedStemToDeck(it) },
+                                onSendStemToLooper = { stemId, slotId -> viewModel.sendSeparatedStemToLooper(stemId, slotId) },
+                                onAddStemToTimeline = { stemId, trackId -> viewModel.addSeparatedStemToTimeline(stemId, trackId) },
+                                onSendAllStemsToTimeline = { viewModel.sendAllSeparatedStemsToTimeline() },
                                 showWheel = !isWideStudioLayout
                             )
 

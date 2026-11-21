@@ -5,6 +5,10 @@ import com.samplfie.desktop.audio.DesktopPlaybackState
 import com.samplfie.desktop.model.DesktopStation
 import com.samplfie.desktop.model.DesktopWorkspaceConfig
 import com.samplfie.desktop.network.NetBridgeState
+import com.samplfie.desktop.stems.DesktopDisbandStem
+import com.samplfie.desktop.stems.DesktopSecretsState
+import com.samplfie.desktop.stems.DesktopStemPreset
+import com.samplfie.desktop.stems.DesktopStemState
 import com.samplfie.desktop.studio.DesktopSyncedPlayheadState
 import java.awt.BorderLayout
 import java.awt.Dimension
@@ -30,7 +34,17 @@ class ProductionBoothPanel(
     private val onPushHandoff: () -> Unit,
     private val onGrabHandoff: () -> Unit,
     private val onApplyPendingHandoff: () -> Unit,
-    private val onToggleSyncedPlay: () -> Unit
+    private val onToggleSyncedPlay: () -> Unit,
+    private val onOpenSecretsVault: () -> Unit = {},
+    private val onToggleDisbandStem: (DesktopDisbandStem) -> Unit = {},
+    private val onApplyStemPreset: (DesktopStemPreset) -> Unit = {},
+    private val onSetStemScopeSelectionOnly: (Boolean) -> Unit = {},
+    private val onRequestStemSeparation: () -> Unit = {},
+    private val onCancelStemSeparation: () -> Unit = {},
+    private val onLoadStemToDeck: (String) -> Unit = {},
+    private val onSendStemToLoop: (String, Int) -> Unit = { _, _ -> },
+    private val onAddStemToTrack: (String, Int) -> Unit = { _, _ -> },
+    private val onSendAllStemsToTracks: () -> Unit = {}
 ) : JPanel() {
 
     private var updating = false
@@ -62,6 +76,18 @@ class ProductionBoothPanel(
 
     private val navCheckboxes = mutableMapOf<DesktopStation, JCheckBox>()
     private val wheelCheckboxes = mutableMapOf<DesktopStation, JCheckBox>()
+    private val stemPanel = DesktopStemSeparationPanel(
+        onToggleStem = onToggleDisbandStem,
+        onApplyPreset = onApplyStemPreset,
+        onSetScopeSelectionOnly = onSetStemScopeSelectionOnly,
+        onRequestSeparate = onRequestStemSeparation,
+        onCancelSeparate = onCancelStemSeparation,
+        onOpenVault = onOpenSecretsVault,
+        onLoadStemToDeck = onLoadStemToDeck,
+        onSendStemToLoop = onSendStemToLoop,
+        onAddStemToTrack = onAddStemToTrack,
+        onSendAllToTracks = onSendAllStemsToTracks
+    )
 
     init {
         background = StudioTheme.ObsidianChassis
@@ -97,6 +123,7 @@ class ProductionBoothPanel(
                 add(StudioTheme.hardwareButton("GRAB SESSION FROM PEER", StudioTheme.AmberHot, filled = true) { onGrabHandoff() })
                 add(applyPendingBtn)
                 add(syncPlayBtn)
+                add(StudioTheme.hardwareButton("KEYS & SECRETS VAULT", StudioTheme.VioletMod) { onOpenSecretsVault() })
             }
             add(row1)
             add(row2)
@@ -133,6 +160,10 @@ class ProductionBoothPanel(
             add(grid, BorderLayout.CENTER)
         }
         root.add(launcherCard)
+        root.add(Box.createVerticalStrut(10))
+
+        // Disband AI Stem Separation Studio Console
+        root.add(stemPanel)
         root.add(Box.createVerticalStrut(10))
 
         // Workspace Customizer
@@ -187,7 +218,9 @@ class ProductionBoothPanel(
         ui: DesktopStudioUiState,
         play: DesktopPlaybackState,
         net: NetBridgeState,
-        sync: DesktopSyncedPlayheadState
+        sync: DesktopSyncedPlayheadState,
+        stemState: DesktopStemState = DesktopStemState(),
+        secretsState: DesktopSecretsState = DesktopSecretsState()
     ) {
         updating = true
         try {
@@ -213,6 +246,7 @@ class ProductionBoothPanel(
             syncPlayBtn.text = if (sync.isPlaying) "STOP SYNC ALL" else "SYNC ALL PLAY"
             val bufDur = ui.processedBuffer?.durationSeconds ?: 0f
             telemetryLabel.text = "DECK: ${"%.2f".format(bufDur)}s (${if (play.isLooping) "LOOP ON" else "LOOP OFF"}) • SYNC BAR ${sync.bar}.${sync.beat} @ ${sync.bpm.toInt()} BPM • ${ui.fxState.activeCount} FX • VMC RX ${net.vmcRxCount}/TX ${net.vmcTxCount}"
+            stemPanel.updateState(stemState, secretsState)
         } finally {
             updating = false
         }
