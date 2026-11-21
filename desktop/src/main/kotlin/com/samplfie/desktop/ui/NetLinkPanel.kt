@@ -15,15 +15,17 @@ import javax.swing.JPanel
 import javax.swing.JTextField
 
 /**
- * Bidirectional SMP2 Linux Audio Bridge & Rig Configuration Station.
- * Receives live TCP/UDP SMP2 audio packets streamed from the Samplfie2 Android app
- * directly into the desktop Signal Editor & Chromatic Tuner, or streams desktop audio out.
+ * Bidirectional Equal-Peer Network Bridge & Rig Configuration Station.
+ * Multiplexes SMP2 Audio Streams, VMC2 64-Channel MIDI Companion packets,
+ * and SMH2/SMHR Instant Session Handoff between Desktop & Android.
  */
 class NetLinkPanel(
     private val onUpdateConfig: (DesktopRigConfig.() -> DesktopRigConfig) -> Unit,
     private val onToggleListener: () -> Unit,
     private val onCaptureRxToEditor: () -> Unit,
-    private val onTransmitActive: () -> Unit
+    private val onTransmitActive: () -> Unit,
+    private val onPushHandoff: () -> Unit,
+    private val onGrabHandoff: () -> Unit
 ) : JPanel() {
 
     private var updating = false
@@ -55,21 +57,29 @@ class NetLinkPanel(
         font = StudioTheme.MonoFont
     }
 
-    private val listenBtn = StudioTheme.hardwareButton("START SMP2 RX LISTENER", StudioTheme.EmeraldSignal, filled = true) {
+    private val listenBtn = StudioTheme.hardwareButton("START SMP2/VMC2 RX LISTENER", StudioTheme.EmeraldSignal, filled = true) {
         applyFieldsToConfig()
         onToggleListener()
     }
-    private val captureBtn = StudioTheme.hardwareButton("LOAD RX STREAM -> EDITOR", StudioTheme.NeonCyan) {
+    private val captureBtn = StudioTheme.hardwareButton("LOAD RX STREAM -> DECK", StudioTheme.NeonCyan) {
         onCaptureRxToEditor()
     }
     private val txBtn = StudioTheme.hardwareButton("STREAM ACTIVE BUFFER OUT", StudioTheme.AmberHot) {
         applyFieldsToConfig()
         onTransmitActive()
     }
+    private val pushHandoffBtn = StudioTheme.hardwareButton("PUSH SESSION -> PEER (SMH2)", StudioTheme.EmeraldSignal, filled = true) {
+        applyFieldsToConfig()
+        onPushHandoff()
+    }
+    private val grabHandoffBtn = StudioTheme.hardwareButton("GRAB SESSION FROM PEER (SMHR)", StudioTheme.AmberHot, filled = true) {
+        applyFieldsToConfig()
+        onGrabHandoff()
+    }
 
     private val statusLabel = StudioTheme.hardwareLabel("IDLE", StudioTheme.NeonCyan, StudioTheme.MonoFont)
     private val rxStatsLabel = StudioTheme.hardwareLabel("RX: 0 PKTS • 0 BYTES", StudioTheme.EmeraldSignal, StudioTheme.MonoFont)
-    private val txStatsLabel = StudioTheme.hardwareLabel("TX: 0 PKTS • 0 BYTES", StudioTheme.AmberHot, StudioTheme.MonoFont)
+    private val txStatsLabel = StudioTheme.hardwareLabel("TX: 0 PKTS • VMC2 TX 0 / RX 0", StudioTheme.AmberHot, StudioTheme.MonoFont)
 
     init {
         background = StudioTheme.ObsidianChassis
@@ -79,7 +89,7 @@ class NetLinkPanel(
         val rxPanel = StudioTheme.hardwarePanel(StudioTheme.NeonCyan).apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             maximumSize = Dimension(Int.MAX_VALUE, 175)
-            add(StudioTheme.hardwareLabel("LINUX SMP2 RECEIVER (FROM SAMPLFIE2 ANDROID)", StudioTheme.NeonCyan, StudioTheme.TitleFont))
+            add(StudioTheme.hardwareLabel("LINUX PEER RECEIVER (SMP2 AUDIO + VMC2 64-CH MIDI + SMH2 HANDOFF)", StudioTheme.NeonCyan, StudioTheme.TitleFont))
             add(Box.createVerticalStrut(8))
 
             val row1 = JPanel(FlowLayout(FlowLayout.LEFT, 10, 4)).apply {
@@ -101,18 +111,24 @@ class NetLinkPanel(
 
         val txPanel = StudioTheme.hardwarePanel(StudioTheme.AmberHot).apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            maximumSize = Dimension(Int.MAX_VALUE, 140)
-            add(StudioTheme.hardwareLabel("TRANSMIT STREAM TO REMOTE RIG / ANDROID", StudioTheme.AmberHot, StudioTheme.TitleFont))
+            maximumSize = Dimension(Int.MAX_VALUE, 165)
+            add(StudioTheme.hardwareLabel("EQUAL PEER STREAMING & INSTANT SESSION HANDOFF", StudioTheme.AmberHot, StudioTheme.TitleFont))
             add(Box.createVerticalStrut(8))
             val row = JPanel(FlowLayout(FlowLayout.LEFT, 10, 4)).apply {
                 isOpaque = false
-                add(StudioTheme.hardwareLabel("TARGET IP:", StudioTheme.TextSecondary))
+                add(StudioTheme.hardwareLabel("PEER IP:", StudioTheme.TextSecondary))
                 add(txHostField.apply { preferredSize = Dimension(140, 30) })
-                add(StudioTheme.hardwareLabel("PORT:", StudioTheme.TextSecondary))
+                add(StudioTheme.hardwareLabel("PEER PORT:", StudioTheme.TextSecondary))
                 add(txPortField)
                 add(txBtn)
             }
+            val handoffRow = JPanel(FlowLayout(FlowLayout.LEFT, 10, 4)).apply {
+                isOpaque = false
+                add(pushHandoffBtn)
+                add(grabHandoffBtn)
+            }
             add(row)
+            add(handoffRow)
             add(txStatsLabel)
         }
         add(txPanel)
@@ -125,15 +141,9 @@ class NetLinkPanel(
             add(Box.createVerticalStrut(8))
             val row = JPanel(GridLayout(1, 3, 12, 0)).apply {
                 isOpaque = false
-                add(labeledCombo("SAMPLE RATE (Hz)", sampleRateBox) {
-                    applyFieldsToConfig()
-                })
-                add(labeledCombo("CHANNELS", channelsBox) {
-                    applyFieldsToConfig()
-                })
-                add(labeledCombo("PACKET BUFFER (FRAMES)", bufferBox) {
-                    applyFieldsToConfig()
-                })
+                add(labeledCombo("SAMPLE RATE (Hz)", sampleRateBox) { applyFieldsToConfig() })
+                add(labeledCombo("CHANNELS", channelsBox) { applyFieldsToConfig() })
+                add(labeledCombo("PACKET BUFFER (FRAMES)", bufferBox) { applyFieldsToConfig() })
             }
             add(row)
         }
@@ -166,10 +176,10 @@ class NetLinkPanel(
     fun updateState(ui: DesktopStudioUiState, net: NetBridgeState) {
         updating = true
         try {
-            listenBtn.text = if (net.isListening) "STOP SMP2 LISTENER" else "START SMP2 RX LISTENER"
+            listenBtn.text = if (net.isListening) "STOP PEER LISTENER" else "START SMP2/VMC2 RX LISTENER"
             statusLabel.text = "STATUS: ${net.statusText}"
-            rxStatsLabel.text = "RX: ${net.rxPackets} PKTS • ${net.rxBytes} BYTES • ${net.rxSampleRate}Hz ${net.rxChannels}CH"
-            txStatsLabel.text = "TX: ${net.txPackets} PKTS • ${net.txBytes} BYTES"
+            rxStatsLabel.text = "RX: ${net.rxPackets} PKTS • ${net.rxBytes} BYTES • ${net.rxSampleRate}Hz ${net.rxChannels}CH • LAST HANDOFF: ${net.lastHandoffSender ?: "NONE"}"
+            txStatsLabel.text = "TX: ${net.txPackets} PKTS • ${net.txBytes} BYTES • VMC2 TX ${net.vmcTxCount} / RX ${net.vmcRxCount}"
         } finally {
             updating = false
         }

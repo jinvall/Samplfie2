@@ -59,7 +59,9 @@ data class MicCaptureTelemetry(
  * Tactile Hold-to-Record AudioRecord engine.
  * Captures mic PCM audio while TAC button is held and flushes to a standard RIFF WAV file on release.
  */
-class MicCaptureEngine {
+class MicCaptureEngine(
+    private val onMonoFrame: (FloatArray, Int) -> Unit = { _, _ -> }
+) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val isCapturing = AtomicBoolean(false)
     private var captureJob: Job? = null
@@ -150,6 +152,17 @@ class MicCaptureEngine {
                         synchronized(lock) {
                             recordedChunks.add(floats)
                         }
+                        val mono = if (activeChannels > 1) {
+                            val frames = floats.size / activeChannels
+                            FloatArray(frames) { f ->
+                                var s = 0f
+                                for (c in 0 until activeChannels) s += floats[f * activeChannels + c]
+                                s / activeChannels
+                            }
+                        } else {
+                            floats
+                        }
+                        onMonoFrame(mono, activeSampleRate)
                         var peak = 0f
                         var sumSq = 0.0
                         for (s in floats) {

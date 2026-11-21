@@ -4,9 +4,15 @@ import com.samplfie.desktop.model.DesktopStation
 import com.samplfie.desktop.ui.ChromaticTunerPanel
 import com.samplfie.desktop.ui.CircularHubSidebar
 import com.samplfie.desktop.ui.FxAndStompPanel
+import com.samplfie.desktop.ui.InstrumentsSeqPanel
+import com.samplfie.desktop.ui.LiveStagePanel
 import com.samplfie.desktop.ui.NetLinkPanel
+import com.samplfie.desktop.ui.ProductionBoothPanel
+import com.samplfie.desktop.ui.SamplesLooperPanel
 import com.samplfie.desktop.ui.SignalEditorPanel
 import com.samplfie.desktop.ui.StudioTheme
+import com.samplfie.desktop.ui.TracksTimelinePanel
+import com.samplfie.desktop.ui.VmcMidiPanel
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Dimension
@@ -22,22 +28,20 @@ import javax.swing.JMenuBar
 import javax.swing.JMenuItem
 import javax.swing.JOptionPane
 import javax.swing.JPanel
+import javax.swing.JScrollPane
 import javax.swing.SwingUtilities
 import javax.swing.Timer
 import javax.swing.UIManager
 import javax.swing.filechooser.FileNameExtensionFilter
 
 /**
- * Main Linux-style Desktop Companion Frame matching Samplfie2 Android's circular studio workstation:
- * - Persistent Circular Production Hub sidebar (always on screen across every station)
- * - Signal & Audio Editor (Waveform, 48-band FFT, signal transforms & signal generator)
- * - Chromatic & Strobe Tuner (YIN pitch tracking, live mic / editor buffer / SMP2 stream)
- * - 12-Module DSP FX & Master Stompbox Processor
- * - Bidirectional SMP2 TCP/UDP Linux Audio Bridge
+ * Samplfie2 Linux Studio — Equal Peer Workstation with all Studio Spokes,
+ * Loop Persistence Through Edits/Extractions, Session Handoff, Chromatic YIN Tuner,
+ * and 64-Channel Mappable Virtual MIDI Controller (VMC).
  */
 class SamplfieDesktopFrame(
     private val controller: DesktopStudioController = DesktopStudioController()
-) : JFrame("Samplfie2 Linux Studio — Signal Editor & Chromatic Tuner") {
+) : JFrame("Samplfie2 Linux Studio — Equal Workstation & 64-Ch VMC") {
 
     private val cardLayout = CardLayout()
     private val cardHost = JPanel(cardLayout).apply {
@@ -45,7 +49,9 @@ class SamplfieDesktopFrame(
     }
 
     private val topStatusLabel = StudioTheme.hardwareLabel("READY", StudioTheme.NeonCyan, StudioTheme.MonoFont)
-    private val stationTitleLabel = StudioTheme.hardwareLabel("SIGNAL & AUDIO EDITOR", StudioTheme.TextPrimary, StudioTheme.TitleFont)
+    private val stationTitleLabel = StudioTheme.hardwareLabel("SIGNAL & WAV DECK EDITOR", StudioTheme.TextPrimary, StudioTheme.TitleFont)
+    private val navPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 2)).apply { isOpaque = false }
+    private var lastVisibleNav: List<DesktopStation> = emptyList()
 
     private val hubSidebar = CircularHubSidebar(
         onSelectStation = { controller.selectStation(it) },
@@ -54,9 +60,22 @@ class SamplfieDesktopFrame(
         onToggleLoop = { controller.soundEngine.setLooping(!controller.playbackState.value.isLooping) },
         onToggleMic = { controller.toggleMicRecording() },
         onToggleStompBypass = { controller.toggleMasterStompBypass() },
+        onPushHandoff = { controller.pushSessionToPeer() },
+        onGrabHandoff = { controller.grabSessionFromPeer() },
         onOpenWav = { chooseAndOpenWav() },
         onSaveWav = { chooseAndSaveWav() },
         onExportMp3 = { chooseAndExportMp3() }
+    )
+
+    private val boothPanel = ProductionBoothPanel(
+        onSelectStation = { controller.selectStation(it) },
+        onUpdateWorkspace = { controller.updateWorkspaceConfig(it) },
+        onTogglePinStation = { controller.toggleStationPinned(it) },
+        onToggleRadialSpoke = { controller.toggleRadialSpoke(it) },
+        onPushHandoff = { controller.pushSessionToPeer() },
+        onGrabHandoff = { controller.grabSessionFromPeer() },
+        onApplyPendingHandoff = { controller.applyPendingHandoff() },
+        onToggleSyncedPlay = { controller.arrangement.toggleSyncedTransport() }
     )
 
     private val editorPanel = SignalEditorPanel(
@@ -75,6 +94,76 @@ class SamplfieDesktopFrame(
         onGenerateSignal = { type, hz -> controller.generateTestSignal(type, hz) }
     )
 
+    private val samplesPanel = SamplesLooperPanel(
+        onToggleLooperPlay = { controller.arrangement.toggleLooperPlayback() },
+        onBpmChanged = { controller.arrangement.setBpm(it) },
+        onBounceLooperToDeck = { controller.bounceLooperToEditor() },
+        onSendDeckToSlot = { controller.sendEditorToLoopSlot(it) },
+        onToggleSlotActive = { controller.arrangement.toggleLoopSlotActive(it) },
+        onToggleSlotMute = { controller.arrangement.toggleLoopSlotMute(it) },
+        onCycleSlotBars = { slot, bars -> controller.arrangement.setLoopSlotBars(slot, bars) },
+        onClearSlot = { controller.arrangement.clearLoopSlot(it) },
+        onLoadSlotIntoRefiner = { controller.arrangement.loadLoopSlotIntoRefiner(it, controller.uiState.value.processedBuffer) },
+        onRefinerSelection = { s, e -> controller.arrangement.updateLoopRefinerSelection(s, e) },
+        onSnapZeroCross = { controller.arrangement.snapLoopSelectionZeroCross() },
+        onTrimLoop = { controller.arrangement.trimLoopRefiner() },
+        onApplyFades = { fin, fout -> controller.arrangement.applyLoopRefinerFades(fin, fout) },
+        onReverseLoop = { controller.arrangement.reverseLoopRefiner() },
+        onNormalizeLoop = { controller.arrangement.normalizeLoopRefiner() },
+        onRemoveDcLoop = { controller.arrangement.removeDcLoopRefiner() },
+        onResetLoop = { controller.arrangement.resetLoopRefiner() },
+        onAuditionLoop = { controller.auditionRefinerLoop() },
+        onCommitRefiner = { controller.arrangement.commitRefinerToSlot() },
+        onSendRefinerToDeck = { controller.sendRefinerToDeck() }
+    )
+
+    private val instrumentsPanel = InstrumentsSeqPanel(
+        onToggleSeqPlay = { controller.arrangement.toggleSequencerPlayback() },
+        onTriggerPad = { controller.triggerSeqPadOneShot(it) },
+        onToggleStep = { lane, step -> controller.arrangement.toggleSequencerStep(lane, step) },
+        onToggleLaneMute = { controller.arrangement.toggleSequencerLaneMute(it) },
+        onAssignDeckToLane = { controller.assignEditorToSeqLane(it) },
+        onSetBpm = { controller.arrangement.setBpm(it) },
+        onSetSwing = { controller.arrangement.setSequencerSwing(it) },
+        onBounceSeqToTimeline = { controller.bounceSequencerToTimeline() },
+        onRefreshMidi = { controller.refreshMidiPorts() },
+        onOpenVmcMapper = { controller.selectStation(DesktopStation.VMC) }
+    )
+
+    private val tracksPanel = TracksTimelinePanel(
+        onToggleSyncAll = { controller.arrangement.toggleSyncedTransport() },
+        onToggleTimelinePlay = { controller.arrangement.toggleTimelinePlayback() },
+        onSeekPlayheadSec = { controller.arrangement.seekSyncedPlayhead(it) },
+        onSetBpm = { controller.arrangement.setBpm(it) },
+        onAddDeckToTrack = { controller.addEditorClipToTimeline(it) },
+        onAddLooperMixToTrack2 = { controller.addLooperMixToTimeline() },
+        onAddSeqBeatToTrack3 = { controller.bounceSequencerToTimeline() },
+        onMixdownToDeck = { controller.bounceTimelineToEditor() },
+        onToggleMute = { controller.arrangement.toggleTimelineMute(it) },
+        onToggleSolo = { controller.arrangement.toggleTimelineSolo(it) },
+        onNudgeClip = { trackId, clipId, delta -> controller.arrangement.nudgeClip(trackId, clipId, delta) },
+        onRemoveClip = { trackId, clipId -> controller.arrangement.removeTimelineClip(trackId, clipId) }
+    )
+
+    private val fxPanel = FxAndStompPanel(
+        onApplyPreset = { controller.applyPreset(it) },
+        onUpdateFx = { controller.updateFx(it) },
+        onUpdateStomp = { controller.updateStomp(it) },
+        onToggleMasterStomp = { controller.toggleMasterStompBypass() }
+    )
+
+    private val livePanel = LiveStagePanel(
+        onSetLiveMode = { controller.setLiveSessionMode(it) },
+        onToggleStompBypass = { controller.toggleMasterStompBypass() },
+        onUpdateStomp = { controller.updateStomp(it) },
+        onXyDrag = { x, y -> controller.onStompXyDrag(x, y) },
+        onTapTempo = { controller.tapTempo() },
+        onToggleSyncedPlay = { controller.arrangement.toggleSyncedTransport() },
+        onExportWav = { chooseAndSaveWav() },
+        onExportMp3 = { chooseAndExportMp3() },
+        onPushHandoff = { controller.pushSessionToPeer() }
+    )
+
     private val tunerPanel = ChromaticTunerPanel(
         onSelectSource = { controller.setTunerSource(it) },
         onSelectPreset = { controller.setTuningPreset(it) },
@@ -85,26 +174,33 @@ class SamplfieDesktopFrame(
         }
     )
 
-    private val fxPanel = FxAndStompPanel(
-        onApplyPreset = { controller.applyPreset(it) },
-        onUpdateFx = { controller.updateFx(it) },
-        onUpdateStomp = { controller.updateStomp(it) },
-        onToggleMasterStomp = { controller.toggleMasterStompBypass() }
+    private val vmcPanel = VmcMidiPanel(
+        onSelectBank = { controller.vmcEngine.selectBank(it) },
+        onSelectChannel64 = { controller.vmcEngine.selectChannel64(it) },
+        onSetRouteMode = { controller.vmcEngine.setRouteMode(it) },
+        onEmitControl = { typ, num, norm, ch -> controller.vmcEngine.emitVirtualControl(typ, num, norm, ch) },
+        onArmLearnRule = { controller.vmcEngine.armLearnForRule(it) },
+        onArmLearnNew = { controller.vmcEngine.armLearnNewMapping(it) },
+        onUpsertRule = { controller.vmcEngine.upsertMapping(it) },
+        onRemoveRule = { controller.vmcEngine.removeMapping(it) },
+        onRefreshHardwareMidi = { controller.refreshMidiPorts() }
     )
 
     private val netPanel = NetLinkPanel(
         onUpdateConfig = { controller.updateRigConfig(it) },
         onToggleListener = { controller.toggleNetworkListener() },
         onCaptureRxToEditor = { controller.captureNetworkStreamToEditor() },
-        onTransmitActive = { controller.transmitActiveOverNetwork() }
+        onTransmitActive = { controller.transmitActiveOverNetwork() },
+        onPushHandoff = { controller.pushSessionToPeer() },
+        onGrabHandoff = { controller.grabSessionFromPeer() }
     )
 
     private val refreshTimer = Timer(50) { syncUi() }
 
     init {
         defaultCloseOperation = EXIT_ON_CLOSE
-        minimumSize = Dimension(1080, 740)
-        size = Dimension(1280, 820)
+        minimumSize = Dimension(1140, 760)
+        size = Dimension(1360, 860)
         background = StudioTheme.ObsidianChassis
         layout = BorderLayout()
 
@@ -112,9 +208,15 @@ class SamplfieDesktopFrame(
         add(buildTopHardwareRack(), BorderLayout.NORTH)
         add(hubSidebar, BorderLayout.WEST)
 
+        cardHost.add(boothPanel, DesktopStation.BOOTH.name)
         cardHost.add(editorPanel, DesktopStation.EDITOR.name)
-        cardHost.add(tunerPanel, DesktopStation.TUNER.name)
+        cardHost.add(samplesPanel, DesktopStation.SAMPLES.name)
+        cardHost.add(instrumentsPanel, DesktopStation.INSTRUMENTS.name)
+        cardHost.add(tracksPanel, DesktopStation.TRACKS.name)
         cardHost.add(fxPanel, DesktopStation.FX_STOMP.name)
+        cardHost.add(livePanel, DesktopStation.LIVE.name)
+        cardHost.add(tunerPanel, DesktopStation.TUNER.name)
+        cardHost.add(vmcPanel, DesktopStation.VMC.name)
         cardHost.add(netPanel, DesktopStation.NET_LINK.name)
         add(cardHost, BorderLayout.CENTER)
 
@@ -130,28 +232,43 @@ class SamplfieDesktopFrame(
         setLocationRelativeTo(null)
     }
 
-    private fun buildTopHardwareRack(): JPanel = JPanel(BorderLayout(12, 0)).apply {
+    private fun buildTopHardwareRack(): JPanel = JPanel(BorderLayout(8, 4)).apply {
         background = StudioTheme.GunmetalDeck
         border = BorderFactory.createCompoundBorder(
             BorderFactory.createMatteBorder(0, 0, 1, 0, StudioTheme.HairlineDivider),
             BorderFactory.createEmptyBorder(6, 12, 6, 12)
         )
-        val left = JPanel(FlowLayout(FlowLayout.LEFT, 12, 0)).apply {
+        val topRow = JPanel(BorderLayout(12, 0)).apply {
             isOpaque = false
-            add(StudioTheme.hardwareLabel("SAMPLFIE2 LINUX DESKTOP", StudioTheme.NeonCyan, StudioTheme.TitleFont))
-            add(stationTitleLabel)
-        }
-        val nav = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
-            isOpaque = false
-            DesktopStation.entries.forEach { st ->
-                add(StudioTheme.hardwareButton(st.shortLabel, StudioTheme.NeonCyan) {
-                    controller.selectStation(st)
-                })
+            val left = JPanel(FlowLayout(FlowLayout.LEFT, 10, 0)).apply {
+                isOpaque = false
+                add(StudioTheme.hardwareLabel("SAMPLFIE2 LINUX STUDIO", StudioTheme.NeonCyan, StudioTheme.TitleFont))
+                add(stationTitleLabel)
             }
+            add(left, BorderLayout.WEST)
+            add(topStatusLabel, BorderLayout.CENTER)
         }
-        add(left, BorderLayout.WEST)
-        add(topStatusLabel, BorderLayout.CENTER)
-        add(nav, BorderLayout.EAST)
+        val navScroll = JScrollPane(navPanel, JScrollPane.VERTICAL_SCROLLBAR_NEVER, JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED).apply {
+            border = null
+            isOpaque = false
+            viewport.isOpaque = false
+            preferredSize = Dimension(1200, 38)
+        }
+        add(topRow, BorderLayout.NORTH)
+        add(navScroll, BorderLayout.CENTER)
+    }
+
+    private fun rebuildNavButtons(visible: List<DesktopStation>) {
+        lastVisibleNav = visible
+        navPanel.removeAll()
+        val withBooth = if (visible.contains(DesktopStation.BOOTH)) visible else listOf(DesktopStation.BOOTH) + visible
+        withBooth.forEach { st ->
+            navPanel.add(StudioTheme.hardwareButton(st.shortLabel, ProductionBoothPanel.stationAccent(st)) {
+                controller.selectStation(st)
+            })
+        }
+        navPanel.revalidate()
+        navPanel.repaint()
     }
 
     private fun buildLinuxMenuBar(): JMenuBar = JMenuBar().apply {
@@ -179,9 +296,18 @@ class SamplfieDesktopFrame(
             add(JMenuItem("Peak Normalize (-0.35 dBFS)").apply { addActionListener { controller.normalizeSignal() } })
             add(JMenuItem("Remove DC Offset").apply { addActionListener { controller.removeDcOffset() } })
         }
+        val peerMenu = JMenu("Peer & VMC").apply {
+            foreground = StudioTheme.TextPrimary
+            add(JMenuItem("Push Session -> Peer (SMH2)").apply { addActionListener { controller.pushSessionToPeer() } })
+            add(JMenuItem("Grab Session From Peer (SMHR)").apply { addActionListener { controller.grabSessionFromPeer() } })
+            addSeparator()
+            add(JMenuItem("Open 64-Ch VMC Controller").apply { addActionListener { controller.selectStation(DesktopStation.VMC) } })
+            add(JMenuItem("Rescan Linux ALSA MIDI Ports").apply { addActionListener { controller.refreshMidiPorts() } })
+        }
         add(fileMenu)
         add(stationMenu)
         add(signalMenu)
+        add(peerMenu)
     }
 
     private fun syncUi() {
@@ -189,15 +315,31 @@ class SamplfieDesktopFrame(
         val play = controller.playbackState.value
         val mic = controller.micState.value
         val net = controller.netState.value
+        val looper = controller.looperState.value
+        val refiner = controller.loopRefinerState.value
+        val seq = controller.sequencerState.value
+        val tl = controller.timelineState.value
+        val sync = controller.syncedPlayhead.value
+        val vmc = controller.vmcState.value
+
+        if (ui.workspaceConfig.visibleStations != lastVisibleNav) {
+            rebuildNavButtons(ui.workspaceConfig.visibleStations)
+        }
 
         stationTitleLabel.text = "· ${ui.station.fullTitle}"
         topStatusLabel.text = ui.statusLine
         cardLayout.show(cardHost, ui.station.name)
 
         hubSidebar.updateState(ui, play, mic, net)
+        boothPanel.updateState(ui, play, net, sync)
         editorPanel.updateState(ui, play)
-        tunerPanel.updateState(ui)
+        samplesPanel.updateState(looper, refiner)
+        instrumentsPanel.updateState(seq, vmc)
+        tracksPanel.updateState(tl, sync)
         fxPanel.updateState(ui)
+        livePanel.updateState(ui, sync)
+        tunerPanel.updateState(ui)
+        vmcPanel.updateState(vmc)
         netPanel.updateState(ui, net)
     }
 
@@ -236,7 +378,6 @@ class SamplfieDesktopFrame(
 }
 
 fun main() {
-    // Enable crisp anti-aliased fonts and Linux GTK Look & Feel hints where available
     System.setProperty("awt.useSystemAAFontSettings", "on")
     System.setProperty("swing.aatext", "true")
     SwingUtilities.invokeLater {

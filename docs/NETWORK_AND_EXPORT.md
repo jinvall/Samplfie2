@@ -1,29 +1,18 @@
-# Samplfie2 Import, Network Streaming & Local WAV/MP3 Export
+# Samplfie2 Import, Network Bridge (`SMP2`/`VMC2`/`SMH2`) & Local Export
 
-## Universal Audio Import (`AudioImporter`)
-- Uses the zero-permission Android SAF `ActivityResultContracts.OpenDocument(arrayOf("audio/*"))` picker.
-- Supports RIFF `.wav` directly and decodes `.mp3`, `.aac`/`.m4a`, `.ogg`, `.flac`, `.opus`, and other device-supported audio formats via `MediaExtractor` + `MediaCodec`.
-- Resamples to the active rig sample rate, writes an editable `.wav` take into the session directory, and opens directly in the **DECK** spoke.
+## Universal Audio Import
+- **Android (`AudioImporter`)**: Zero-permission SAF `ActivityResultContracts.OpenDocument(arrayOf("audio/*"))` picker decoding `.wav`, `.mp3`, `.aac`/`.m4a`, `.ogg`, `.flac`, `.opus` via `MediaExtractor` + `MediaCodec`, resampling to active rig rate, and saving an editable `.wav` take into the session directory.
+- **Linux Desktop (`DesktopWavCodec`)**: Native file chooser importing RIFF `.wav` files cleanly into the Signal Editor Deck with zero-crossing snap, fades, reverse, DC fix, normalize, and selection extract.
 
-## Rig & Network Link Configuration (`RigConfig`)
-Persisted via Jetpack `DataStore` Preferences (`samplfie2_rig_prefs`):
-- **IP Address**: Target host IPv4 or hostname (default `192.168.1.100`).
-- **Port**: `1..65535` (default `9000`).
-- **Protocol**: `TCP` (`java.net.Socket`) or `UDP` (`java.net.DatagramSocket`).
-- **Sample Rate**: `22050`, `44100`, `48000`, `96000` Hz (default `44100`).
-- **Channels**: `1` (Mono) or `2` (Stereo) (default `1`).
-- **Buffer Size**: `256`, `512`, `1024`, `2048`, `4096` frames per packet (default `1024`).
+## Rig & Peer Network Configuration
+- **IP / Host**, **TX Port** (default `9000` on Android, `9001` on Desktop or user-set), **RX Bind Port** (default `9001` on Android, `9000` on Desktop), **Node Name**, **Protocol** (`TCP` or `UDP`), **Sample Rate** (`22050–96000 Hz`), **Channels** (`1`/`2`), **Buffer Size** (`256–4096`), **MP3 Bitrate** (`128–320 kbps`), **Auto-Accept Handoff**, and **Auto-Resume Playback**.
 
-### Wire Packet Format (`SMP2`)
-20-byte big-endian/LE framed header followed by 16-bit LE PCM payload:
-- Magic: `"SMP2"` (`0x53 0x4D 0x50 0x32`)
-- Sequence number (`UInt32` LE), Sample rate (`UInt32` LE), Channels (`UInt16` LE), Payload bytes (`UInt16` LE), Peak flags (`UInt32` LE), and PCM frames.
+## Multiplexed Wire Protocols (20-Byte LE Frame Headers)
+All 4 protocols multiplex seamlessly on the same TCP `ServerSocket` or UDP `DatagramSocket` port:
+1. **`SMP2`** (`AudioStream`): 20-byte header (`magic="SMP2"`, `seq`, `sampleRate`, `channels`, `payloadBytes`, `peakScaled`) + 16-bit LE PCM chunks for live peer playback/capture/tuning.
+2. **`VMC2`** (`Virtual MIDI Companion`): 20-byte header (`magic="VMC2"`, `channel64` `1..64`, `msgType` code `0..5`, `data1` CC/Note `0..127`, `data2` velocity/value `0..127`, `normalizedBits` IEEE-754 float) enabling either workstation to act as a live 64-channel MIDI controller for the other.
+3. **`SMH2`** (`Session Handoff Snapshot`): Chunked frames (`sessionId`, `chunkIdx`, `totalChunks`, `totalSize`, `chunkLen`) carrying UTF-8 session metadata (`senderName`, `stationKey`, `bpm`, `swing`, `isPlaying`, `isLooping`, `playheadFraction`, `selectionStart/End`, `playSelectionOnly`, `a4ReferenceHz`, all 12 `fx.*` & `stomp.*` states, `seqLaneMasks`, `looperActiveMask`, `looperBars`, 64-ch `vmcMappings`) + full 16-bit PCM Deck `.wav` audio.
+4. **`SMHR`** (`Session Handoff Request`): 20-byte request carrying requester `replyPort` so pressing `GRAB <- PEER` pulls an immediate `SMH2` snapshot back from the remote workstation.
 
-## Local Device Export (`WavExporter` & `Mp3Exporter`)
-- **`.WAV` Export**: Writes standard RIFF PCM 16-bit `.wav` files via `WavExporter.saveWavToDevice`.
-- **`.MP3` Export**: Encodes MPEG-1 Layer III (`128–320` kbps CBR) via pure-Java LAME (`de.sciss:jump3r:1.0.5`).
-- Saves into `Music/Samplfie2/` using `MediaStore.Audio.Media` on Android 10+ (API 29+) with automatic app-external `Music/Samplfie2/` fallback on legacy or headless environments.
-
-## Desktop Linux Bridge & Export (`:desktop`)
-- **`Smp2NetworkNode`**: Listens on any configured TCP (`ServerSocket`) or UDP (`DatagramSocket`) port to receive `SMP2` frames streamed from the Android **LIVE** spoke, route incoming frames directly to the **Chromatic Tuner** (`SMP2_STREAM`), and capture received frames directly into the **Signal Editor** buffer—or transmit processed desktop audio back to Android or another studio host.
-- **Desktop Export**: Uses `DesktopWavCodec` and `DesktopMp3Exporter` (`de.sciss:jump3r`) with Swing file choosers for direct `.wav` / `.mp3` read/write on Linux filesystems.
+## Local Device Export (`.WAV` & `.MP3`)
+- Writes `.WAV` (RIFF PCM 16-bit) and `.MP3` (MPEG-1 Layer III via `de.sciss:jump3r:1.0.5`) to `Music/Samplfie2/` via `MediaStore` on Android 10+ (or app-external fallback) and `~/Music/Samplfie2/` on Linux Desktop.

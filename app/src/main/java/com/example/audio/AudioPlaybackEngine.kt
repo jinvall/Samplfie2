@@ -56,13 +56,16 @@ data class PlaybackState(
 
 /**
  * Low-latency AudioTrack streaming player supporting real-time FX buffer hot-swapping,
- * selection-bounded looping, playhead scrubbing, and live FFT telemetry.
+ * persistent loop playback across edits & extractions, playhead scrubbing, and live FFT telemetry.
  */
-class AudioPlaybackEngine {
+class AudioPlaybackEngine(
+    private val onLiveChunkForTuner: (FloatArray, Int) -> Unit = { _, _ -> }
+) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val activeBufferRef = AtomicReference<AudioBuffer?>(null)
     private val isPlayingFlag = AtomicBoolean(false)
     private val isLoopingFlag = AtomicBoolean(false)
+    private val playSelectionOnlyFlag = AtomicBoolean(false)
 
     @Volatile
     private var selectionStartFraction = 0f
@@ -82,26 +85,51 @@ class AudioPlaybackEngine {
     val state: StateFlow<PlaybackState> = _state.asStateFlow()
 
     fun setBuffer(buffer: AudioBuffer?, bufferSizeFrames: Int = chunkSizeFrames) {
+        updateBufferHot(buffer, bufferSizeFrames, preserveLoopPlayback = false)
+    }
+
+    fun updateBufferHot(
+        buffer: AudioBuffer?,
+        bufferSizeFrames: Int = chunkSizeFrames,
+        preserveLoopPlayback: Boolean = false
+    ) {
         chunkSizeFrames = bufferSizeFrames.coerceIn(256, 4096)
         val old = activeBufferRef.getAndSet(buffer)
         val total = buffer?.frameCount ?: 0
-        if (old?.sampleRate != buffer?.sampleRate || old?.channels != buffer?.channels) {
+        val wasPlayingLoop = preserveLoopPlayback && isPlayingFlag.get() && isLoopingFlag.get()
+
+        if (total <= 0) {
             currentFrameCursor = 0
-        } else if (total > 0) {
-            currentFrameCursor = currentFrameCursor.coerceIn(0, total - 1)
+        } else if (old != null && old.frameCount > 0 && currentFrameCursor > 0) {
+            val prevFrac = (currentFrameCursor.toFloat() / old.frameCount.toFloat()).coerceIn(0f, 1f)
+            currentFrameCursor = (prevFrac * total).toInt().coerceIn(0, total - 1)
         } else {
-            currentFrameCursor = 0
+            currentFrameCursor = currentFrameCursor.coerceIn(0, max(0, total - 1))
         }
+
         _state.value = _state.value.copy(
             totalFrames = total,
             currentFrame = currentFrameCursor,
             playheadFraction = if (total > 0) currentFrameCursor.toFloat() / total else 0f
         )
+
+        if (wasPlayingLoop && buffer != null && buffer.frameCount > 0) {
+            if (playJob == null || playJob?.isActive != true) {
+                play(onlySelection = playSelectionOnlyFlag.get())
+            }
+        }
     }
 
-    fun setSelectionBounds(startFraction: Float, endFraction: Float) {
+    fun setSelectionBounds(startFraction: Float, endFraction: Float, onlySelection: Boolean? = null) {
         selectionStartFraction = min(startFraction, endFraction).coerceIn(0f, 1f)
         selectionEndFraction = max(startFraction, endFraction).coerceIn(0f, 1f)
+        if (onlySelection != null) {
+            playSelectionOnlyFlag.set(onlySelection)
+        }
+    }
+
+    fun setPlaySelectionOnly(onlySelection: Boolean) {
+        playSelectionOnlyFlag.set(onlySelection)
     }
 
     fun setLooping(loop: Boolean) {
@@ -122,7 +150,7 @@ class AudioPlaybackEngine {
         )
     }
 
-    fun togglePlay(onlySelection: Boolean = false) {
+    fun togglePlay(onlySelection: Boolean = playSelectionOnlyFlag.get()) {
         if (isPlayingFlag.get()) {
             pause()
         } else {
@@ -133,6 +161,7 @@ class AudioPlaybackEngine {
     fun play(onlySelection: Boolean = false) {
         val initialBuffer = activeBufferRef.get() ?: return
         if (initialBuffer.frameCount == 0) return
+        playSelectionOnlyFlag.set(onlySelection)
 
         if (isPlayingFlag.get()) {
             pause()
@@ -159,58 +188,40 @@ class AudioPlaybackEngine {
         _state.value = _state.value.copy(isPlaying = true)
 
         playJob = scope.launch {
-            val channelMask = if (initialBuffer.channels == 2) {
-                AudioFormat.CHANNEL_OUT_STEREO
-            } else {
-                AudioFormat.CHANNEL_OUT_MONO
-            }
-            val minBufBytes = AudioTrack.getMinBufferSize(
-                initialBuffer.sampleRate,
-                channelMask,
-                AudioFormat.ENCODING_PCM_16BIT
-            ).coerceAtLeast(1024)
-            val trackBufBytes = max(minBufBytes, chunkSizeFrames * initialBuffer.channels * 2)
-
             var track: AudioTrack? = null
+            var openSampleRate = -1
+            var openChannels = -1
             try {
-                track = AudioTrack.Builder()
-                    .setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                            .build()
-                    )
-                    .setAudioFormat(
-                        AudioFormat.Builder()
-                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                            .setSampleRate(initialBuffer.sampleRate)
-                            .setChannelMask(channelMask)
-                            .build()
-                    )
-                    .setBufferSizeInBytes(trackBufBytes)
-                    .setTransferMode(AudioTrack.MODE_STREAM)
-                    .build()
-
-                track.play()
-
                 while (isPlayingFlag.get()) {
                     val buf = activeBufferRef.get() ?: break
                     if (buf.frameCount == 0) break
 
-                    val activeStart = if (onlySelection) {
+                    if (buf.sampleRate != openSampleRate || buf.channels != openChannels) {
+                        runCatching {
+                            track?.pause()
+                            track?.flush()
+                            track?.release()
+                        }
+                        track = openAudioTrackOrNull(buf.sampleRate, buf.channels)
+                        openSampleRate = buf.sampleRate
+                        openChannels = buf.channels
+                    }
+
+                    val selMode = playSelectionOnlyFlag.get()
+                    val activeStart = if (selMode) {
                         (selectionStartFraction * buf.frameCount).toInt()
                             .coerceIn(0, max(0, buf.frameCount - 1))
                     } else {
                         0
                     }
-                    val activeEnd = if (onlySelection) {
+                    val activeEnd = if (selMode) {
                         (selectionEndFraction * buf.frameCount).toInt()
                             .coerceIn(activeStart + 1, buf.frameCount)
                     } else {
                         buf.frameCount
                     }
 
-                    if (currentFrameCursor >= activeEnd) {
+                    if (currentFrameCursor >= activeEnd || currentFrameCursor < activeStart) {
                         if (isLoopingFlag.get()) {
                             currentFrameCursor = activeStart
                         } else {
@@ -221,16 +232,46 @@ class AudioPlaybackEngine {
                     }
 
                     val framesToWrite = min(chunkSizeFrames, activeEnd - currentFrameCursor)
-                    if (framesToWrite <= 0) break
+                    if (framesToWrite <= 0) {
+                        if (isLoopingFlag.get()) {
+                            currentFrameCursor = activeStart
+                            continue
+                        } else {
+                            break
+                        }
+                    }
 
                     val sampleStart = currentFrameCursor * buf.channels
                     val sampleEnd = (sampleStart + framesToWrite * buf.channels).coerceAtMost(buf.samples.size)
+                    if (sampleStart >= buf.samples.size) {
+                        currentFrameCursor = activeStart
+                        continue
+                    }
                     val slice = buf.samples.copyOfRange(sampleStart, sampleEnd)
 
                     val shorts = ShortArray(slice.size) { i ->
                         (slice[i].coerceIn(-1f, 1f) * 32767f).toInt().coerceIn(-32768, 32767).toShort()
                     }
-                    track.write(shorts, 0, shorts.size)
+                    if (track != null) {
+                        track.write(shorts, 0, shorts.size)
+                    } else {
+                        val ms = ((framesToWrite * 1000L) / buf.sampleRate.coerceAtLeast(8000)).coerceIn(5L, 45L)
+                        Thread.sleep(ms)
+                    }
+
+                    val monoChunk = if (buf.channels > 1) {
+                        FloatArray(framesToWrite) { f ->
+                            var s = 0f
+                            for (c in 0 until buf.channels) {
+                                val idx = f * buf.channels + c
+                                if (idx < slice.size) s += slice[idx]
+                            }
+                            s / buf.channels
+                        }
+                    } else {
+                        slice
+                    }
+                    onLiveChunkForTuner(monoChunk, buf.sampleRate)
 
                     var peak = 0f
                     var sumSq = 0.0
@@ -243,6 +284,9 @@ class AudioPlaybackEngine {
                     val spectrum = AudioAnalyzer.computeSpectrumBands(buf, currentFrameCursor, 512, 32)
 
                     currentFrameCursor += framesToWrite
+                    if (currentFrameCursor >= activeEnd && isLoopingFlag.get()) {
+                        currentFrameCursor = activeStart
+                    }
                     val frac = currentFrameCursor.toFloat() / buf.frameCount.toFloat()
 
                     _state.value = _state.value.copy(
@@ -258,14 +302,13 @@ class AudioPlaybackEngine {
             } catch (_: Exception) {
                 isPlayingFlag.set(false)
             } finally {
-                try {
+                runCatching {
                     track?.pause()
                     track?.flush()
                     track?.release()
-                } catch (_: Exception) {
                 }
                 _state.value = _state.value.copy(
-                    isPlaying = false,
+                    isPlaying = isPlayingFlag.get(),
                     livePeak = 0f,
                     liveRms = 0f,
                     playheadFraction = activeBufferRef.get()?.let { b ->
@@ -275,6 +318,34 @@ class AudioPlaybackEngine {
             }
         }
     }
+
+    private fun openAudioTrackOrNull(sampleRate: Int, channels: Int): AudioTrack? = runCatching {
+        val channelMask = if (channels == 2) AudioFormat.CHANNEL_OUT_STEREO else AudioFormat.CHANNEL_OUT_MONO
+        val minBufBytes = AudioTrack.getMinBufferSize(
+            sampleRate,
+            channelMask,
+            AudioFormat.ENCODING_PCM_16BIT
+        ).coerceAtLeast(1024)
+        val trackBufBytes = max(minBufBytes, chunkSizeFrames * channels * 2)
+        AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(sampleRate)
+                    .setChannelMask(channelMask)
+                    .build()
+            )
+            .setBufferSizeInBytes(trackBufBytes)
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .build()
+            .apply { play() }
+    }.getOrNull()
 
     fun pause() {
         isPlayingFlag.set(false)

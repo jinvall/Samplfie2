@@ -102,12 +102,18 @@ fun LiveSpokeScreen(
     onUpdateConfig: (RigConfig.() -> RigConfig) -> Unit,
     onStreamTx: () -> Unit,
     onStopStream: () -> Unit,
+    onToggleListener: () -> Unit = {},
+    onCaptureRxToDeck: () -> Unit = {},
+    onPushHandoff: () -> Unit = {},
+    onGrabHandoff: () -> Unit = {},
     onExportWav: (String) -> Unit,
     onExportMp3: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var ipText by remember(rigConfig.ipAddress) { mutableStateOf(rigConfig.ipAddress) }
     var portText by remember(rigConfig.port) { mutableStateOf(rigConfig.port.toString()) }
+    var bindPortText by remember(rigConfig.bindPort) { mutableStateOf(rigConfig.bindPort.toString()) }
+    var nodeNameText by remember(rigConfig.nodeName) { mutableStateOf(rigConfig.nodeName) }
     var releaseName by remember { mutableStateOf("samplfie2_release") }
 
     val activeAccent = when (stompbox.liveMode) {
@@ -428,6 +434,100 @@ fun LiveSpokeScreen(
                     text = if (networkState.isTransmitting) " STOP NETWORK TX" else " EXPORT OVER ${rigConfig.protocol.label} STREAM",
                     color = ObsidianChassis,
                     style = MaterialTheme.typography.labelMedium
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+            Text("EQUAL PEER RX LISTENER & SESSION HANDOFF", style = MaterialTheme.typography.labelMedium, color = VioletMod)
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = nodeNameText,
+                    onValueChange = { next ->
+                        nodeNameText = next
+                        onUpdateConfig { copy(nodeName = next) }
+                    },
+                    label = { Text("NODE NAME") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = VioletMod,
+                        unfocusedBorderColor = HairlineDivider,
+                        focusedLabelColor = VioletMod,
+                        unfocusedLabelColor = TextSecondary
+                    ),
+                    modifier = Modifier
+                        .weight(1.7f)
+                        .testTag("config_node_name_input")
+                )
+                OutlinedTextField(
+                    value = bindPortText,
+                    onValueChange = { next ->
+                        bindPortText = next.filter { it.isDigit() }.take(5)
+                        val parsed = bindPortText.toIntOrNull()
+                        if (parsed != null && parsed in 1..65535) {
+                            onUpdateConfig { copy(bindPort = parsed) }
+                        }
+                    },
+                    label = { Text("RX BIND") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = VioletMod,
+                        unfocusedBorderColor = HairlineDivider,
+                        focusedLabelColor = VioletMod,
+                        unfocusedLabelColor = TextSecondary
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("config_bind_port_input")
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                HardwareChipToggle(
+                    label = if (networkState.isListening) "RX ON :${rigConfig.bindPort}" else "START RX :${rigConfig.bindPort}",
+                    selected = networkState.isListening,
+                    onClick = onToggleListener,
+                    accentColor = EmeraldSignal,
+                    modifier = Modifier.testTag("rig_listener_button")
+                )
+                HardwareChipToggle(
+                    label = "LOAD RX -> DECK",
+                    selected = networkState.rxPackets > 0L,
+                    onClick = onCaptureRxToDeck,
+                    accentColor = NeonCyan,
+                    modifier = Modifier.testTag("rig_capture_rx_button")
+                )
+                HardwareChipToggle(
+                    label = "PUSH HANDOFF",
+                    selected = false,
+                    onClick = onPushHandoff,
+                    accentColor = VioletMod,
+                    modifier = Modifier.testTag("rig_push_handoff_button")
+                )
+                HardwareChipToggle(
+                    label = "GRAB HANDOFF",
+                    selected = false,
+                    onClick = onGrabHandoff,
+                    accentColor = AmberHot,
+                    modifier = Modifier.testTag("rig_grab_handoff_button")
+                )
+                HardwareChipToggle(
+                    label = if (rigConfig.autoAcceptIncomingHandoff) "AUTO-ACCEPT ON" else "AUTO-ACCEPT OFF",
+                    selected = rigConfig.autoAcceptIncomingHandoff,
+                    onClick = { onUpdateConfig { copy(autoAcceptIncomingHandoff = !autoAcceptIncomingHandoff) } },
+                    accentColor = EmeraldSignal
+                )
+                HardwareChipToggle(
+                    label = if (rigConfig.autoResumeOnHandoff) "AUTO-PLAY ON" else "AUTO-PLAY OFF",
+                    selected = rigConfig.autoResumeOnHandoff,
+                    onClick = { onUpdateConfig { copy(autoResumeOnHandoff = !autoResumeOnHandoff) } },
+                    accentColor = AmberHot
                 )
             }
 

@@ -71,6 +71,8 @@ fun InstrumentsSpokeScreen(
     onSetSwing: (Float) -> Unit,
     onBounceSequencerToTimeline: () -> Unit,
     onRefreshMidi: () -> Unit,
+    onOpenVmc: () -> Unit = {},
+    onOpenTuner: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val laneColors = listOf(NeonCyan, TacCoral, AmberHot, EmeraldSignal)
@@ -289,6 +291,23 @@ fun InstrumentsSpokeScreen(
                 style = MaterialTheme.typography.labelSmall,
                 color = TextMuted
             )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                HardwareChipToggle(
+                    label = "OPEN 64-CH VMC",
+                    selected = false,
+                    onClick = onOpenVmc,
+                    accentColor = VioletMod,
+                    modifier = Modifier.testTag("inst_open_vmc_button")
+                )
+                HardwareChipToggle(
+                    label = "OPEN TUNER",
+                    selected = false,
+                    onClick = onOpenTuner,
+                    accentColor = AmberHot,
+                    modifier = Modifier.testTag("inst_open_tuner_button")
+                )
+            }
 
             if (midiState.connectedDevices.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(8.dp))

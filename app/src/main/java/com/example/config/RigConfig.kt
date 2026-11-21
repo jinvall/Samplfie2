@@ -8,13 +8,19 @@ enum class NetworkProtocol(val label: String) {
 data class RigConfig(
     val ipAddress: String = "192.168.1.100",
     val port: Int = 9000,
+    val bindPort: Int = 9001,
     val protocol: NetworkProtocol = NetworkProtocol.UDP,
     val sampleRate: Int = 44100,
     val channels: Int = 1,
     val bufferSize: Int = 1024,
-    val mp3BitrateKbps: Int = 192
+    val mp3BitrateKbps: Int = 192,
+    val a4ReferenceHz: Double = 440.0,
+    val nodeName: String = "ANDROID WORKSTATION",
+    val autoResumeOnHandoff: Boolean = true,
+    val autoAcceptIncomingHandoff: Boolean = true
 ) {
     fun isValidPort(): Boolean = port in 1..65535
+    fun isValidBindPort(): Boolean = bindPort in 1..65535
 
     fun isValidIpOrHost(): Boolean {
         val trimmed = ipAddress.trim()

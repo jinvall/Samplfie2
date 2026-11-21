@@ -1,17 +1,21 @@
 package com.samplfie.desktop.model
 
-import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.sin
 import kotlin.math.sqrt
 
-enum class DesktopStation(val shortLabel: String, val fullTitle: String) {
-    EDITOR("EDITOR", "SIGNAL & AUDIO EDITOR"),
-    TUNER("TUNER", "CHROMATIC & STROBE TUNER"),
-    FX_STOMP("FX & STOMP", "12-FX & MASTER STOMPBOX"),
-    NET_LINK("NET LINK", "SMP2 LINUX AUDIO BRIDGE")
+enum class DesktopStation(val shortLabel: String, val fullTitle: String, val badge: String) {
+    BOOTH("BOOTH", "PRODUCTION BOOTH", "HUB"),
+    EDITOR("DECK", "SIGNAL & WAV DECK EDITOR", "AUDIO"),
+    SAMPLES("SAMPLES", "LOOPER & SAMPLE REFINER", "LOOPS"),
+    INSTRUMENTS("INST", "16-STEP SEQ & MIDI", "SYNTH"),
+    TRACKS("TRACKS", "SYNCED TRACK TIMELINE", "SYNC"),
+    FX_STOMP("FX RACK", "12-MODULE PRO DSP RACK", "DSP"),
+    LIVE("LIVE", "LIVE STOMPBOX & RELEASE", "STAGE"),
+    TUNER("TUNER", "CHROMATIC & STROBE TUNER", "PITCH"),
+    VMC("VMC 64", "VIRTUAL MIDI CONTROLLER (64CH)", "MIDI"),
+    NET_LINK("NET SYNC", "SMP2 / HANDOFF PEER BRIDGE", "LINK")
 }
 
 enum class VisualizerMode(val label: String) {
@@ -32,6 +36,12 @@ enum class SignalWaveformType(val label: String) {
 enum class NetworkProtocol(val label: String) {
     UDP("UDP"),
     TCP("TCP")
+}
+
+enum class DesktopLiveMode(val title: String, val subtitle: String, val accentTag: String) {
+    STAGE_DJ("STAGE DJ", "Live club & festival performance console", "LIVE STAGE"),
+    LIVE_REC("LIVE REC", "Low-latency field & booth tracking", "LIVE CAPTURE"),
+    STUDIO_RELEASE("STUDIO RELEASE", "Final collaborative audio master & bounce", "RELEASE")
 }
 
 enum class TuningPreset(val label: String, val notes: List<Pair<String, Double>>) {
@@ -86,6 +96,24 @@ data class DesktopRigConfig(
     val txPort: Int = 9001,
     val mp3BitrateKbps: Int = 192,
     val a4ReferenceHz: Double = 440.0
+)
+
+data class DesktopWorkspaceConfig(
+    val nodeName: String = "LINUX DESKTOP RIG",
+    val visibleStations: List<DesktopStation> = DesktopStation.entries.toList(),
+    val radialWheelStations: List<DesktopStation> = listOf(
+        DesktopStation.EDITOR,
+        DesktopStation.SAMPLES,
+        DesktopStation.INSTRUMENTS,
+        DesktopStation.TUNER,
+        DesktopStation.LIVE,
+        DesktopStation.VMC,
+        DesktopStation.TRACKS,
+        DesktopStation.FX_STOMP
+    ),
+    val autoResumeOnHandoff: Boolean = true,
+    val autoAcceptIncomingHandoff: Boolean = true,
+    val syncWorkspaceOnHandoff: Boolean = true
 )
 
 data class DesktopAudioBuffer(
@@ -307,7 +335,12 @@ data class DesktopStompState(
     val killTime: Boolean = false,
     val toneTilt: Float = 0f,
     val dynamicsTrimDb: Float = 0f,
-    val masterWetMix: Float = 1f
+    val masterWetMix: Float = 1f,
+    val modScale: Float = 1f,
+    val spaceScale: Float = 1f,
+    val xyPadX: Float = 0.5f,
+    val xyPadY: Float = 0.5f,
+    val liveMode: DesktopLiveMode = DesktopLiveMode.STAGE_DJ
 )
 
 enum class DesktopPreset(val label: String) {

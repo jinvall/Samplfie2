@@ -28,13 +28,23 @@ import com.example.export.WavExporter
 import com.example.midi.MidiControllerManager
 import com.example.midi.MidiEvent
 import com.example.midi.MidiState
+import com.example.midi.VmcEngine
+import com.example.midi.VmcEngineState
+import com.example.midi.VmcMappingRule
+import com.example.midi.VmcMsgType
+import com.example.midi.VmcRouteMode
+import com.example.midi.VmcTarget
 import com.example.network.NetworkAudioTransmitter
 import com.example.network.NetworkLinkState
+import com.example.network.SessionHandoffSnapshot
 import com.example.studio.LooperState
 import com.example.studio.SequencerState
 import com.example.studio.StudioEngine
 import com.example.studio.SyncedPlayheadState
 import com.example.studio.TimelineState
+import com.example.tuner.PitchDetector
+import com.example.tuner.TunerInputSource
+import com.example.tuner.TuningPreset
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -59,9 +69,44 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
     private val takesDir = File(appContext.filesDir, "takes").apply { mkdirs() }
 
     private val rigRepository = RigConfigRepository(appContext)
-    private val micEngine = MicCaptureEngine()
-    private val playbackEngine = AudioPlaybackEngine()
-    private val networkTransmitter = NetworkAudioTransmitter()
+    private val micEngine: MicCaptureEngine = MicCaptureEngine { mono, sr ->
+        if (_tunerState.value.source == TunerInputSource.LIVE_MIC) {
+            analyzeSamplesForTuner(mono, sr)
+        }
+    }
+    private val playbackEngine: AudioPlaybackEngine = AudioPlaybackEngine { mono, sr ->
+        if (_tunerState.value.source == TunerInputSource.DECK_BUFFER && playbackEngine.state.value.isPlaying) {
+            analyzeSamplesForTuner(mono, sr)
+        }
+    }
+    val vmcEngine: VmcEngine = VmcEngine(
+        onExecuteTarget = { target, norm -> executeVmcTarget(target, norm) },
+        onTransmitPeerVmc = { pkt -> networkTransmitter.sendVmcEvent(pkt, _rigConfig.value) }
+    )
+    private val networkTransmitter: NetworkAudioTransmitter = NetworkAudioTransmitter(
+        onStreamChunkForTuner = { mono, sr ->
+            if (_tunerState.value.source == TunerInputSource.SMP2_STREAM) {
+                analyzeSamplesForTuner(mono, sr)
+            }
+        },
+        onVmcEventReceived = { pkt -> vmcEngine.processIncomingEvent(pkt, fromPeer = true) },
+        onSessionHandoffReceived = { snap ->
+            viewModelScope.launch(Dispatchers.Main) {
+                if (_rigConfig.value.autoAcceptIncomingHandoff) {
+                    applySessionHandoff(snap)
+                } else {
+                    _editorState.value = _editorState.value.copy(
+                        pendingHandoff = snap,
+                        statusBanner = "HANDOFF READY FROM ${snap.senderName} — TAP APPLY"
+                    )
+                }
+            }
+        },
+        onHandoffRequestedByPeer = { host, replyPort ->
+            val snap = captureSessionSnapshot()
+            networkTransmitter.sendSessionHandoff(snap, _rigConfig.value.protocol, host, replyPort)
+        }
+    )
     private val midiController = MidiControllerManager(appContext)
     private val studioEngine = StudioEngine()
 
@@ -75,6 +120,12 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
 
     private val _selectedSpoke = MutableStateFlow(StudioSpoke.BOOTH)
     val selectedSpoke: StateFlow<StudioSpoke> = _selectedSpoke.asStateFlow()
+
+    private val _workspaceConfig = MutableStateFlow(WorkspaceConfig())
+    val workspaceConfig: StateFlow<WorkspaceConfig> = _workspaceConfig.asStateFlow()
+
+    private val _tunerState = MutableStateFlow(TunerUiState())
+    val tunerState: StateFlow<TunerUiState> = _tunerState.asStateFlow()
 
     private val _rigConfig = MutableStateFlow(RigConfig())
     val rigConfig: StateFlow<RigConfig> = _rigConfig.asStateFlow()
@@ -95,6 +146,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
     val playbackState: StateFlow<PlaybackState> = playbackEngine.state
     val networkState: StateFlow<NetworkLinkState> = networkTransmitter.state
     val midiState: StateFlow<MidiState> = midiController.state
+    val vmcState: StateFlow<VmcEngineState> = vmcEngine.state
     val looperState: StateFlow<LooperState> = studioEngine.looperState
     val sequencerState: StateFlow<SequencerState> = studioEngine.sequencerState
     val timelineState: StateFlow<TimelineState> = studioEngine.timelineState
@@ -115,51 +167,23 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
     private fun observeMidiEvents() {
         viewModelScope.launch {
             midiController.events.collect { event ->
+                vmcEngine.processAndroidHardwareMidi(event, busIndex = 0)
                 when (event) {
                     is MidiEvent.NoteOn -> {
-                        when (event.note) {
-                            in 36..39 -> studioEngine.toggleLoopSlotActive(event.note - 36)
-                            in 40..43 -> triggerSequencerLaneOneShot(event.note - 40)
-                            in 48..72 -> {
-                                _editorState.value.processedBuffer ?: return@collect
-                                val semitones = (event.note - 60).toFloat()
-                                updateFxRack {
-                                    copy(
-                                        pitchSpeed = pitchSpeed.copy(
-                                            enabled = true,
-                                            pitchSemitones = semitones
-                                        )
+                        if (event.note in 48..72) {
+                            _editorState.value.processedBuffer ?: return@collect
+                            val semitones = (event.note - 60).toFloat()
+                            updateFxRack {
+                                copy(
+                                    pitchSpeed = pitchSpeed.copy(
+                                        enabled = true,
+                                        pitchSemitones = semitones
                                     )
-                                }
-                                playbackEngine.seekToFraction(0f)
-                                playbackEngine.play(onlySelection = _editorState.value.playSelectionOnly)
+                                )
                             }
+                            playbackEngine.seekToFraction(0f)
+                            playbackEngine.play(onlySelection = _editorState.value.playSelectionOnly)
                         }
-                    }
-                    is MidiEvent.ControlChange -> {
-                        val norm = event.value / 127f
-                        when (event.controller) {
-                            1, 74 -> updateFxRack {
-                                copy(wah = wah.copy(enabled = true, centerFreqHz = 350f + norm * 1850f))
-                            }
-                            71 -> updateFxRack {
-                                copy(overdrive = overdrive.copy(enabled = true, drive = 1f + norm * 16f))
-                            }
-                            91 -> updateFxRack {
-                                copy(reverb = reverb.copy(enabled = true, mix = norm))
-                            }
-                            93 -> updateFxRack {
-                                copy(echo = echo.copy(enabled = true, mix = norm))
-                            }
-                            7 -> updateFxRack {
-                                copy(gain = gain.copy(enabled = true, gainDb = -12f + norm * 24f))
-                            }
-                        }
-                    }
-                    MidiEvent.TransportStart -> studioEngine.startSyncedTransport()
-                    MidiEvent.TransportStop -> {
-                        studioEngine.stopSyncedTransport()
-                        playbackEngine.stop()
                     }
                     MidiEvent.ClockTick -> {
                         midiController.state.value.syncedBpm?.let { bpm ->
@@ -174,6 +198,30 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
 
     fun selectSpoke(spoke: StudioSpoke) {
         _selectedSpoke.value = spoke
+        if (spoke == StudioSpoke.TUNER && _tunerState.value.source == TunerInputSource.DECK_BUFFER) {
+            analyzeActiveBufferWindowForTuner()
+        }
+    }
+
+    fun toggleRadialWheelSpoke(spoke: StudioSpoke) {
+        val cur = _workspaceConfig.value.radialWheelSpokes.toMutableList()
+        if (cur.contains(spoke)) {
+            if (cur.size > 4) cur.remove(spoke)
+        } else if (cur.size < 8) {
+            cur.add(spoke)
+        }
+        _workspaceConfig.value = _workspaceConfig.value.copy(radialWheelSpokes = cur)
+    }
+
+    fun toggleDockSpokePinned(spoke: StudioSpoke) {
+        if (spoke == StudioSpoke.BOOTH) return
+        val cur = _workspaceConfig.value.pinnedDockSpokes.toMutableList()
+        if (cur.contains(spoke)) {
+            if (cur.size > 4) cur.remove(spoke)
+        } else {
+            cur.add(spoke)
+        }
+        _workspaceConfig.value = _workspaceConfig.value.copy(pinnedDockSpokes = cur)
     }
 
     fun setVisualizerMode(mode: VisualizerMode) {
@@ -284,9 +332,12 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    private fun loadNewRawBuffer(buffer: AudioBuffer, banner: String) {
+    private fun loadNewRawBuffer(buffer: AudioBuffer, banner: String, preserveLoopPlayback: Boolean = false) {
         undoStack.clear()
-        playbackEngine.stop()
+        val keepLoop = preserveLoopPlayback && playbackEngine.state.value.isPlaying && playbackEngine.state.value.isLooping
+        if (!keepLoop) {
+            playbackEngine.stop()
+        }
         _editorState.value = _editorState.value.copy(
             rawBuffer = buffer,
             dryBuffer = buffer,
@@ -295,9 +346,9 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
             canUndo = false,
             statusBanner = banner
         )
-        playbackEngine.setSelectionBounds(0f, 1f)
+        playbackEngine.setSelectionBounds(0f, 1f, _editorState.value.playSelectionOnly)
         studioEngine.setSequencerSampleForLane(0, buffer)
-        reprocessFxChain(buffer)
+        reprocessFxChain(buffer, preserveLoopPlayback = keepLoop)
     }
 
     private fun refreshSavedTakes() {
@@ -324,7 +375,10 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         val lo = minOf(start, end).coerceIn(0f, 0.98f)
         val hi = maxOf(start, end).coerceIn(lo + 0.02f, 1f)
         _editorState.value = _editorState.value.copy(selectionStart = lo, selectionEnd = hi)
-        playbackEngine.setSelectionBounds(lo, hi)
+        playbackEngine.setSelectionBounds(lo, hi, _editorState.value.playSelectionOnly)
+        if (_tunerState.value.source == TunerInputSource.DECK_BUFFER) {
+            analyzeActiveBufferWindowForTuner()
+        }
     }
 
     fun extractSelection() {
@@ -335,46 +389,57 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
 
         undoStack.addLast(currentDry)
         val extracted = currentDry.extractSelection(start, end)
-        playbackEngine.stop()
+        val keepLoop = playbackEngine.state.value.isPlaying && playbackEngine.state.value.isLooping
+        if (!keepLoop) {
+            playbackEngine.stop()
+        }
         _editorState.value = _editorState.value.copy(
             dryBuffer = extracted,
             selectionStart = 0f,
             selectionEnd = 1f,
             canUndo = undoStack.isNotEmpty(),
-            statusBanner = "EXTRACTED ${"%.2f".format(extracted.durationSeconds)}s SELECTION"
+            statusBanner = "EXTRACTED ${"%.2f".format(extracted.durationSeconds)}s${if (keepLoop) " • LOOP PERSISTING" else ""}"
         )
-        playbackEngine.setSelectionBounds(0f, 1f)
+        playbackEngine.setSelectionBounds(0f, 1f, _editorState.value.playSelectionOnly)
         studioEngine.setSequencerSampleForLane(0, extracted)
-        reprocessFxChain(extracted)
+        reprocessFxChain(extracted, preserveLoopPlayback = keepLoop)
     }
 
     fun undoExtraction() {
         val prev = undoStack.removeLastOrNull() ?: return
-        playbackEngine.stop()
+        val keepLoop = playbackEngine.state.value.isPlaying && playbackEngine.state.value.isLooping
+        if (!keepLoop) {
+            playbackEngine.stop()
+        }
         _editorState.value = _editorState.value.copy(
             dryBuffer = prev,
             selectionStart = 0f,
             selectionEnd = 1f,
             canUndo = undoStack.isNotEmpty(),
-            statusBanner = "RESTORED PREVIOUS EDIT"
+            statusBanner = if (keepLoop) "RESTORED PREVIOUS EDIT (LOOP ACTIVE)" else "RESTORED PREVIOUS EDIT"
         )
-        playbackEngine.setSelectionBounds(0f, 1f)
-        reprocessFxChain(prev)
+        playbackEngine.setSelectionBounds(0f, 1f, _editorState.value.playSelectionOnly)
+        studioEngine.setSequencerSampleForLane(0, prev)
+        reprocessFxChain(prev, preserveLoopPlayback = keepLoop)
     }
 
     fun resetToOriginalTake() {
         val raw = _editorState.value.rawBuffer ?: return
         undoStack.clear()
-        playbackEngine.stop()
+        val keepLoop = playbackEngine.state.value.isPlaying && playbackEngine.state.value.isLooping
+        if (!keepLoop) {
+            playbackEngine.stop()
+        }
         _editorState.value = _editorState.value.copy(
             dryBuffer = raw,
             selectionStart = 0f,
             selectionEnd = 1f,
             canUndo = false,
-            statusBanner = "RESET TO ORIGINAL .WAV"
+            statusBanner = if (keepLoop) "RESET TO ORIGINAL .WAV (LOOP ACTIVE)" else "RESET TO ORIGINAL .WAV"
         )
-        playbackEngine.setSelectionBounds(0f, 1f)
-        reprocessFxChain(raw)
+        playbackEngine.setSelectionBounds(0f, 1f, _editorState.value.playSelectionOnly)
+        studioEngine.setSequencerSampleForLane(0, raw)
+        reprocessFxChain(raw, preserveLoopPlayback = keepLoop)
     }
 
     // --- PLAYBACK REVIEW ---
@@ -383,33 +448,39 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
     fun stopPlayback() = playbackEngine.stop()
     fun toggleLoop() = playbackEngine.setLooping(!playbackEngine.state.value.isLooping)
     fun togglePlaySelectionOnly() {
-        _editorState.value = _editorState.value.copy(playSelectionOnly = !_editorState.value.playSelectionOnly)
+        val next = !_editorState.value.playSelectionOnly
+        _editorState.value = _editorState.value.copy(playSelectionOnly = next)
+        playbackEngine.setPlaySelectionOnly(next)
     }
     fun seekPlayhead(fraction: Float) = playbackEngine.seekToFraction(fraction)
 
     // --- 12-MODULE FX RACK & LIVE STOMPBOX MASTER PROCESSOR ---
 
     fun updateFxRack(transform: FxRackState.() -> FxRackState) {
+        val keepLoop = playbackEngine.state.value.isPlaying && playbackEngine.state.value.isLooping
         _fxRack.value = _fxRack.value.transform()
-        _editorState.value.dryBuffer?.let { reprocessFxChain(it) }
+        _editorState.value.dryBuffer?.let { reprocessFxChain(it, preserveLoopPlayback = keepLoop) }
     }
 
     fun applyFxPreset(preset: FxPreset) {
+        val keepLoop = playbackEngine.state.value.isPlaying && playbackEngine.state.value.isLooping
         _fxRack.value = FxPresets.build(preset)
-        _editorState.value.dryBuffer?.let { reprocessFxChain(it) }
+        _editorState.value.dryBuffer?.let { reprocessFxChain(it, preserveLoopPlayback = keepLoop) }
         _editorState.value = _editorState.value.copy(statusBanner = "PRESET: ${preset.label}")
     }
 
     fun toggleMasterBypass() = updateFxRack { copy(masterBypass = !masterBypass) }
 
     fun updateStompbox(transform: StompboxMasterState.() -> StompboxMasterState) {
+        val keepLoop = playbackEngine.state.value.isPlaying && playbackEngine.state.value.isLooping
         _stompbox.value = _stompbox.value.transform()
-        _editorState.value.dryBuffer?.let { reprocessFxChain(it) }
+        _editorState.value.dryBuffer?.let { reprocessFxChain(it, preserveLoopPlayback = keepLoop) }
     }
 
     fun toggleStompboxBypass() = updateStompbox { copy(engaged = !engaged) }
 
     fun setLiveSessionMode(mode: LiveSessionMode) {
+        val keepLoop = playbackEngine.state.value.isPlaying && playbackEngine.state.value.isLooping
         _stompbox.value = _stompbox.value.copy(liveMode = mode)
         when (mode) {
             LiveSessionMode.STAGE_DJ -> {
@@ -425,7 +496,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
                 _editorState.value = _editorState.value.copy(statusBanner = "LIVE MODE: COLLAB STUDIO RELEASE")
             }
         }
-        _editorState.value.dryBuffer?.let { reprocessFxChain(it) }
+        _editorState.value.dryBuffer?.let { reprocessFxChain(it, preserveLoopPlayback = keepLoop) }
     }
 
     fun onStompXyDrag(x: Float, y: Float) {
@@ -455,7 +526,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         lastTapMs = now
     }
 
-    private fun reprocessFxChain(dry: AudioBuffer) {
+    private fun reprocessFxChain(dry: AudioBuffer, preserveLoopPlayback: Boolean = false) {
         fxRenderJob?.cancel()
         val rack = _fxRack.value
         val stomp = _stompbox.value
@@ -474,7 +545,14 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
                     staticSpectrum = spectrum,
                     isProcessingFx = false
                 )
-                playbackEngine.setBuffer(processed, _rigConfig.value.bufferSize)
+                playbackEngine.updateBufferHot(
+                    processed,
+                    _rigConfig.value.bufferSize,
+                    preserveLoopPlayback = preserveLoopPlayback
+                )
+                if (_tunerState.value.source == TunerInputSource.DECK_BUFFER) {
+                    analyzeActiveBufferWindowForTuner()
+                }
             }
         }
     }
@@ -755,6 +833,236 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
 
     fun stopNetworkStream() = networkTransmitter.stopTransmission()
 
+    fun toggleNetworkListener() {
+        if (networkTransmitter.state.value.isListening) {
+            networkTransmitter.stopListening()
+        } else {
+            val cfg = _rigConfig.value
+            networkTransmitter.startListening(cfg.protocol, cfg.bindPort)
+        }
+    }
+
+    fun captureReceivedAudioToDeck() {
+        val buf = networkTransmitter.captureReceivedBuffer("SMP2_PEER_RX") ?: run {
+            _editorState.value = _editorState.value.copy(statusBanner = "NO SMP2 STREAM BUFFERED YET")
+            return
+        }
+        loadNewRawBuffer(buf, "LOADED PEER STREAM (${"%.2f".format(buf.durationSeconds)}s)")
+        _selectedSpoke.value = StudioSpoke.DECK
+    }
+
+    // --- EQUAL PEER SESSION HANDOFF ---
+
+    fun captureSessionSnapshot(): SessionHandoffSnapshot {
+        val ed = _editorState.value
+        val play = playbackEngine.state.value
+        val cfg = _rigConfig.value
+        val seqMasks = studioEngine.sequencerState.value.lanes.map { lane ->
+            var mask = 0
+            for (i in lane.steps.indices) if (lane.steps[i]) mask = mask or (1 shl i)
+            mask
+        }
+        var loopMask = 0
+        val loopBars = studioEngine.looperState.value.slots.mapIndexed { idx, s ->
+            if (s.isActive) loopMask = loopMask or (1 shl idx)
+            s.bars
+        }
+        return SessionHandoffSnapshot(
+            senderName = cfg.nodeName,
+            stationKey = _selectedSpoke.value.name,
+            bpm = studioEngine.syncedPlayhead.value.bpm,
+            swing = studioEngine.sequencerState.value.swing,
+            isPlaying = play.isPlaying,
+            isLooping = play.isLooping,
+            playheadFraction = play.playheadFraction,
+            selectionStart = ed.selectionStart,
+            selectionEnd = ed.selectionEnd,
+            playSelectionOnly = ed.playSelectionOnly,
+            a4ReferenceHz = cfg.a4ReferenceHz,
+            fxRack = _fxRack.value,
+            stompbox = _stompbox.value,
+            seqLaneMasks = seqMasks,
+            looperActiveMask = loopMask,
+            looperBars = loopBars,
+            vmcMappings = vmcEngine.state.value.mappings,
+            buffer = ed.dryBuffer
+        )
+    }
+
+    fun pushSessionToPeer() {
+        val cfg = _rigConfig.value
+        if (!cfg.isValidIpOrHost() || !cfg.isValidPort()) {
+            _editorState.value = _editorState.value.copy(statusBanner = "SET VALID PEER IP & PORT FOR HANDOFF")
+            return
+        }
+        val snap = captureSessionSnapshot()
+        networkTransmitter.sendSessionHandoff(snap, cfg.protocol, cfg.ipAddress, cfg.port)
+        _editorState.value = _editorState.value.copy(statusBanner = "PUSHED SESSION -> ${cfg.ipAddress}:${cfg.port}")
+    }
+
+    fun grabSessionFromPeer() {
+        val cfg = _rigConfig.value
+        if (!networkTransmitter.state.value.isListening) {
+            networkTransmitter.startListening(cfg.protocol, cfg.bindPort)
+        }
+        networkTransmitter.requestSessionFromPeer(cfg)
+        _editorState.value = _editorState.value.copy(statusBanner = "REQUESTED SESSION FROM ${cfg.ipAddress}:${cfg.port}")
+    }
+
+    fun applyPendingHandoff() {
+        val snap = _editorState.value.pendingHandoff ?: return
+        applySessionHandoff(snap)
+    }
+
+    fun applySessionHandoff(snap: SessionHandoffSnapshot) {
+        playbackEngine.stop()
+        studioEngine.setBpm(snap.bpm)
+        studioEngine.setSequencerSwing(snap.swing)
+        snap.seqLaneMasks.forEachIndexed { idx, mask -> studioEngine.applySequencerPatternMask(idx, mask) }
+        snap.looperBars.forEachIndexed { idx, bars ->
+            studioEngine.setLoopSlotBars(idx, bars)
+            studioEngine.setLoopSlotActive(idx, ((snap.looperActiveMask shr idx) and 1) == 1)
+        }
+        if (snap.vmcMappings.isNotEmpty()) {
+            vmcEngine.replaceMappings(snap.vmcMappings)
+        }
+
+        val spoke = SessionHandoffSnapshot.mapStationKeyToAndroid(snap.stationKey)
+        val incomingDry = snap.buffer ?: _editorState.value.dryBuffer
+        _fxRack.value = snap.fxRack
+        _stompbox.value = snap.stompbox
+        updateRigConfig { copy(a4ReferenceHz = snap.a4ReferenceHz.coerceIn(430.0, 450.0)) }
+
+        playbackEngine.setLooping(snap.isLooping)
+        playbackEngine.setSelectionBounds(snap.selectionStart, snap.selectionEnd, snap.playSelectionOnly)
+
+        _editorState.value = _editorState.value.copy(
+            selectionStart = snap.selectionStart,
+            selectionEnd = snap.selectionEnd,
+            playSelectionOnly = snap.playSelectionOnly,
+            pendingHandoff = null
+        )
+
+        if (incomingDry != null && incomingDry.frameCount > 0) {
+            undoStack.clear()
+            _editorState.value = _editorState.value.copy(rawBuffer = incomingDry, dryBuffer = incomingDry, canUndo = false)
+            reprocessFxChain(incomingDry, preserveLoopPlayback = false)
+            playbackEngine.seekToFraction(snap.playheadFraction)
+            if (snap.isPlaying && _rigConfig.value.autoResumeOnHandoff) {
+                playbackEngine.play(onlySelection = snap.playSelectionOnly)
+            }
+        }
+        _editorState.value = _editorState.value.copy(
+            statusBanner = "PICKED UP SESSION FROM ${snap.senderName} -> ${spoke.shortLabel}"
+        )
+        _selectedSpoke.value = spoke
+    }
+
+    // --- 64-CHANNEL VMC MIDI CONTROLLER ---
+
+    fun vmcSelectBank(bankIndex: Int) = vmcEngine.selectBank(bankIndex)
+    fun vmcSelectChannel64(ch64: Int) = vmcEngine.selectChannel64(ch64)
+    fun vmcSetRouteMode(mode: VmcRouteMode) = vmcEngine.setRouteMode(mode)
+    fun vmcEmitControl(msgType: VmcMsgType, number: Int, normalized: Float, ch64: Int = vmcEngine.state.value.activeChannel64) =
+        vmcEngine.emitVirtualControl(msgType, number, normalized, ch64)
+    fun vmcArmLearnRule(ruleId: String?) = vmcEngine.armLearnForRule(ruleId)
+    fun vmcArmLearnNew(target: VmcTarget) = vmcEngine.armLearnNewMapping(target)
+    fun vmcUpsertRule(rule: VmcMappingRule) = vmcEngine.upsertMapping(rule)
+    fun vmcRemoveRule(ruleId: String) = vmcEngine.removeMapping(ruleId)
+
+    private fun executeVmcTarget(target: VmcTarget, norm: Float) {
+        when (target) {
+            VmcTarget.DECK_PLAY_PAUSE -> togglePlay()
+            VmcTarget.DECK_STOP -> stopPlayback()
+            VmcTarget.DECK_LOOP_TOGGLE -> toggleLoop()
+            VmcTarget.SYNC_ALL_PLAY -> toggleSyncedTransport()
+            VmcTarget.BPM_TEMPO -> setStudioBpm(60f + norm * 120f)
+            VmcTarget.STOMP_BYPASS -> toggleStompboxBypass()
+            VmcTarget.STOMP_WET_MIX -> updateStompbox { copy(engaged = true, masterWetMix = norm) }
+            VmcTarget.STOMP_TONE_TILT -> updateStompbox { copy(engaged = true, toneTilt = norm * 2f - 1f) }
+            VmcTarget.STOMP_DYNAMICS -> updateStompbox { copy(engaged = true, dynamicsTrimDb = -6f + norm * 12f) }
+            VmcTarget.STOMP_MOD_SCALE -> updateStompbox { copy(engaged = true, modScale = 0.2f + norm * 1.6f) }
+            VmcTarget.STOMP_SPACE_SCALE -> updateStompbox { copy(engaged = true, spaceScale = 0.2f + norm * 1.6f) }
+            VmcTarget.FX_DRIVE -> updateFxRack { copy(overdrive = overdrive.copy(enabled = true, drive = 1f + norm * 15f)) }
+            VmcTarget.FX_WAH_FREQ -> updateFxRack { copy(wah = wah.copy(enabled = true, centerFreqHz = 280f + norm * 2200f)) }
+            VmcTarget.FX_PHASER_MIX -> updateFxRack { copy(phaser = phaser.copy(enabled = true, mix = norm)) }
+            VmcTarget.FX_FLANGER_MIX -> updateFxRack { copy(flanger = flanger.copy(enabled = true, mix = norm)) }
+            VmcTarget.FX_CHORUS_MIX -> updateFxRack { copy(chorus = chorus.copy(enabled = true, mix = norm)) }
+            VmcTarget.FX_ROTARY_RATE -> updateFxRack { copy(rotarySpeaker = rotarySpeaker.copy(enabled = true, rateHz = 0.5f + norm * 9.5f)) }
+            VmcTarget.FX_ECHO_MIX -> updateFxRack { copy(echo = echo.copy(enabled = true, mix = norm)) }
+            VmcTarget.FX_DELAY_MIX -> updateFxRack { copy(delay = delay.copy(enabled = true, mix = norm)) }
+            VmcTarget.FX_REVERB_MIX -> updateFxRack { copy(reverb = reverb.copy(enabled = true, mix = norm)) }
+            VmcTarget.FX_PITCH_SEMI -> updateFxRack { copy(pitchSpeed = pitchSpeed.copy(enabled = true, pitchSemitones = -12f + norm * 24f)) }
+            VmcTarget.LOOPER_SLOT_A -> studioEngine.toggleLoopSlotActive(0)
+            VmcTarget.LOOPER_SLOT_B -> studioEngine.toggleLoopSlotActive(1)
+            VmcTarget.LOOPER_SLOT_C -> studioEngine.toggleLoopSlotActive(2)
+            VmcTarget.LOOPER_SLOT_D -> studioEngine.toggleLoopSlotActive(3)
+            VmcTarget.SEQ_PAD_1 -> triggerSequencerLaneOneShot(0)
+            VmcTarget.SEQ_PAD_2 -> triggerSequencerLaneOneShot(1)
+            VmcTarget.SEQ_PAD_3 -> triggerSequencerLaneOneShot(2)
+            VmcTarget.SEQ_PAD_4 -> triggerSequencerLaneOneShot(3)
+            VmcTarget.SEQ_PLAY_TOGGLE -> studioEngine.toggleSequencerPlayback()
+            VmcTarget.TIMELINE_PLAY_TOGGLE -> studioEngine.toggleTimelinePlayback()
+            VmcTarget.SESSION_HANDOFF_PUSH -> pushSessionToPeer()
+        }
+    }
+
+    // --- CHROMATIC & STROBE YIN TUNER ---
+
+    fun setTunerSource(source: TunerInputSource) {
+        _tunerState.value = _tunerState.value.copy(source = source)
+        if (source == TunerInputSource.DECK_BUFFER) {
+            analyzeActiveBufferWindowForTuner()
+        }
+    }
+
+    fun setTuningPreset(preset: TuningPreset) {
+        _tunerState.value = _tunerState.value.copy(preset = preset)
+    }
+
+    fun setA4Reference(hz: Double) {
+        val clamped = hz.coerceIn(430.0, 450.0)
+        updateRigConfig { copy(a4ReferenceHz = clamped) }
+        if (_tunerState.value.source == TunerInputSource.DECK_BUFFER) {
+            analyzeActiveBufferWindowForTuner()
+        }
+    }
+
+    fun analyzeActiveBufferWindowForTuner() {
+        val buf = activeOutputBuffer() ?: return
+        if (buf.frameCount < 512) return
+        val ed = _editorState.value
+        val slice = buf.extractSelection(ed.selectionStart, ed.selectionEnd)
+        val mono = slice.toMonoSamples()
+        val windowSize = minOf(4096, mono.size)
+        val start = maxOf(0, (mono.size - windowSize) / 2)
+        val window = mono.copyOfRange(start, start + windowSize)
+        analyzeSamplesForTuner(window, buf.sampleRate)
+    }
+
+    private fun analyzeSamplesForTuner(monoSamples: FloatArray, sampleRate: Int) {
+        val reading = PitchDetector.detectPitch(
+            monoSamples = monoSamples,
+            sampleRate = sampleRate,
+            a4ReferenceHz = _rigConfig.value.a4ReferenceHz
+        )
+        _tunerState.value = _tunerState.value.copy(reading = reading)
+    }
+
+    fun playTunerReferencePitch(freqHz: Double) {
+        val sr = _rigConfig.value.sampleRate
+        val frames = (sr * 0.7f).toInt()
+        val samples = FloatArray(frames)
+        for (i in 0 until frames) {
+            val t = i.toFloat() / sr
+            val env = (1f - exp(-t * 30f)) * exp(-t * 3.0f)
+            samples[i] = (sin(2.0 * PI * freqHz * t) * 0.48 * env).toFloat()
+        }
+        playbackEngine.setBuffer(AudioBuffer(samples, sr, 1, "REF_${freqHz.toInt()}Hz"), _rigConfig.value.bufferSize)
+        playbackEngine.setLooping(false)
+        playbackEngine.play(onlySelection = false)
+    }
+
     fun exportAsMp3(fileNameBase: String) {
         val buf = activeOutputBuffer() ?: run {
             _editorState.value = _editorState.value.copy(statusBanner = "NO AUDIO TO EXPORT AS MP3")
@@ -836,7 +1144,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         super.onCleared()
         micEngine.release()
         playbackEngine.release()
-        networkTransmitter.stopTransmission()
+        networkTransmitter.release()
         midiController.release()
         studioEngine.release()
     }

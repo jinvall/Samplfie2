@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.ElectricBolt
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Loop
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Piano
 import androidx.compose.material.icons.filled.PlayArrow
@@ -68,6 +69,7 @@ import com.example.studio.SyncedPlayheadState
 import com.example.studio.TimelineState
 import com.example.ui.EditorState
 import com.example.ui.StudioSpoke
+import com.example.ui.WorkspaceConfig
 import com.example.ui.theme.AmberHot
 import com.example.ui.theme.ElevatedBezel
 import com.example.ui.theme.EmeraldSignal
@@ -101,6 +103,8 @@ internal fun spokeAccent(spoke: StudioSpoke): Color = when (spoke) {
     StudioSpoke.LIVE -> TacCoral
     StudioSpoke.TRACKS -> MagentaFx
     StudioSpoke.FX_RACK -> VioletMod
+    StudioSpoke.TUNER -> AmberHot
+    StudioSpoke.VMC -> VioletMod
 }
 
 internal fun buildStudioSpokes(
@@ -110,68 +114,98 @@ internal fun buildStudioSpokes(
     timelineState: TimelineState,
     fxRack: FxRackState,
     stompbox: StompboxMasterState,
-    midiState: MidiState
+    midiState: MidiState,
+    wheelSpokes: List<StudioSpoke> = WorkspaceConfig().radialWheelSpokes
 ): List<SpokeDescriptor> {
     val activeBuf = editorState.processedBuffer ?: editorState.dryBuffer
     val activeLoops = looperState.slots.count { it.isActive && it.buffer != null }
     val activeTracks = timelineState.tracks.count { it.clips.isNotEmpty() }
+    val list = wheelSpokes.filter { it != StudioSpoke.BOOTH }.ifEmpty { WorkspaceConfig().radialWheelSpokes }
+    val stepDeg = 360.0 / list.size.coerceAtLeast(1)
 
-    return listOf(
-        SpokeDescriptor(
-            spoke = StudioSpoke.DECK,
-            title = "DECK",
-            subtitle = if (activeBuf != null && activeBuf.frameCount > 0) "${"%.1f".format(activeBuf.durationSeconds)}s WAV" else "MIC / IMPORT",
-            angleDeg = -90.0,
-            accent = NeonCyan,
-            icon = Icons.Filled.GraphicEq
-        ),
-        SpokeDescriptor(
-            spoke = StudioSpoke.SAMPLES,
-            title = "SAMPLES",
-            subtitle = "$activeLoops/4 LOOPS",
-            angleDeg = -30.0,
-            accent = EmeraldSignal,
-            icon = Icons.Filled.Loop
-        ),
-        SpokeDescriptor(
-            spoke = StudioSpoke.INSTRUMENTS,
-            title = "INST",
-            subtitle = "${sequencerState.bpm.toInt()} BPM • MIDI ${midiState.connectedDevices.size}",
-            angleDeg = 30.0,
-            accent = AmberHot,
-            icon = Icons.Filled.Piano
-        ),
-        SpokeDescriptor(
-            spoke = StudioSpoke.LIVE,
-            title = "LIVE",
-            subtitle = stompbox.liveMode.accentTag,
-            angleDeg = 90.0,
-            accent = TacCoral,
-            icon = Icons.Filled.ElectricBolt
-        ),
-        SpokeDescriptor(
-            spoke = StudioSpoke.TRACKS,
-            title = "TRACKS",
-            subtitle = "$activeTracks TRK SYNC",
-            angleDeg = 150.0,
-            accent = MagentaFx,
-            icon = Icons.Filled.ViewTimeline
-        ),
-        SpokeDescriptor(
-            spoke = StudioSpoke.FX_RACK,
-            title = "FX RACK",
-            subtitle = "${fxRack.activeCount}/12 ACTIVE",
-            angleDeg = 210.0,
-            accent = VioletMod,
-            icon = Icons.Filled.Tune
-        )
-    )
+    return list.mapIndexed { idx, spoke ->
+        val angle = -90.0 + idx * stepDeg
+        when (spoke) {
+            StudioSpoke.DECK -> SpokeDescriptor(
+                spoke = StudioSpoke.DECK,
+                title = "DECK",
+                subtitle = if (activeBuf != null && activeBuf.frameCount > 0) "${"%.1f".format(activeBuf.durationSeconds)}s WAV" else "MIC / IMPORT",
+                angleDeg = angle,
+                accent = NeonCyan,
+                icon = Icons.Filled.GraphicEq
+            )
+            StudioSpoke.SAMPLES -> SpokeDescriptor(
+                spoke = StudioSpoke.SAMPLES,
+                title = "SAMPLES",
+                subtitle = "$activeLoops/4 LOOPS",
+                angleDeg = angle,
+                accent = EmeraldSignal,
+                icon = Icons.Filled.Loop
+            )
+            StudioSpoke.INSTRUMENTS -> SpokeDescriptor(
+                spoke = StudioSpoke.INSTRUMENTS,
+                title = "INST",
+                subtitle = "${sequencerState.bpm.toInt()} BPM",
+                angleDeg = angle,
+                accent = AmberHot,
+                icon = Icons.Filled.Piano
+            )
+            StudioSpoke.TUNER -> SpokeDescriptor(
+                spoke = StudioSpoke.TUNER,
+                title = "TUNER",
+                subtitle = "YIN 440",
+                angleDeg = angle,
+                accent = AmberHot,
+                icon = Icons.Filled.MusicNote
+            )
+            StudioSpoke.LIVE -> SpokeDescriptor(
+                spoke = StudioSpoke.LIVE,
+                title = "LIVE",
+                subtitle = stompbox.liveMode.accentTag,
+                angleDeg = angle,
+                accent = TacCoral,
+                icon = Icons.Filled.ElectricBolt
+            )
+            StudioSpoke.VMC -> SpokeDescriptor(
+                spoke = StudioSpoke.VMC,
+                title = "VMC 64",
+                subtitle = "64CH MIDI",
+                angleDeg = angle,
+                accent = VioletMod,
+                icon = Icons.Filled.Piano
+            )
+            StudioSpoke.TRACKS -> SpokeDescriptor(
+                spoke = StudioSpoke.TRACKS,
+                title = "TRACKS",
+                subtitle = "$activeTracks TRK SYNC",
+                angleDeg = angle,
+                accent = MagentaFx,
+                icon = Icons.Filled.ViewTimeline
+            )
+            StudioSpoke.FX_RACK -> SpokeDescriptor(
+                spoke = StudioSpoke.FX_RACK,
+                title = "FX RACK",
+                subtitle = "${fxRack.activeCount}/12 FX",
+                angleDeg = angle,
+                accent = VioletMod,
+                icon = Icons.Filled.Tune
+            )
+            StudioSpoke.BOOTH -> SpokeDescriptor(
+                spoke = StudioSpoke.BOOTH,
+                title = "BOOTH",
+                subtitle = "HUB",
+                angleDeg = angle,
+                accent = NeonCyan,
+                icon = Icons.Filled.GraphicEq
+            )
+        }
+    }
 }
 
 /**
  * Reusable 360-degree Circular Studio Wheel:
  * Musician's center-seat view where Master Production Control sits in the center hub
- * and the 6 studio stations radiate around it on illuminated signal spokes.
+ * and the customizable studio stations (up to 8 spokes incl. TUNER & VMC 64) radiate around it.
  */
 @Composable
 fun CircularStudioWheel(
@@ -188,6 +222,7 @@ fun CircularStudioWheel(
     midiState: MidiState,
     onSelectSpoke: (StudioSpoke) -> Unit,
     onToggleSyncedPlay: () -> Unit,
+    wheelSpokes: List<StudioSpoke> = WorkspaceConfig().radialWheelSpokes,
     maxWheelDp: Float = 420f,
     tagPrefix: String = "",
     modifier: Modifier = Modifier
@@ -199,7 +234,8 @@ fun CircularStudioWheel(
         timelineState = timelineState,
         fxRack = fxRack,
         stompbox = stompbox,
-        midiState = midiState
+        midiState = midiState,
+        wheelSpokes = wheelSpokes
     )
     val livePeak = if (micTelemetry.isRecording) micTelemetry.peakLevel else playbackState.livePeak
 
@@ -208,19 +244,19 @@ fun CircularStudioWheel(
             .fillMaxWidth()
             .testTag("${tagPrefix}circular_studio_wheel")
     ) {
-        val cappedWheel = if (maxWidth < 360.dp) min(maxWheelDp, 252f) else maxWheelDp
+        val cappedWheel = if (maxWidth < 360.dp) min(maxWheelDp, 260f) else maxWheelDp
         val wheelSize: Dp = min(maxWidth.value, cappedWheel).dp
         val nodeSize: Dp = when {
-            wheelSize < 280.dp -> 68.dp
-            wheelSize < 340.dp -> 80.dp
-            else -> 92.dp
+            wheelSize < 280.dp -> 60.dp
+            wheelSize < 340.dp -> 74.dp
+            else -> 88.dp
         }
         val hubSize: Dp = when {
-            wheelSize < 280.dp -> 88.dp
-            wheelSize < 340.dp -> 114.dp
-            else -> 128.dp
+            wheelSize < 280.dp -> 82.dp
+            wheelSize < 340.dp -> 106.dp
+            else -> 124.dp
         }
-        val orbitRadiusDp = (wheelSize - nodeSize) * 0.45f
+        val orbitRadiusDp = (wheelSize - nodeSize) * 0.46f
 
         Box(
             modifier = Modifier
@@ -493,6 +529,8 @@ fun CircularStudioHub(
     syncedPlayhead: SyncedPlayheadState,
     networkState: NetworkLinkState,
     midiState: MidiState,
+    workspaceConfig: WorkspaceConfig = WorkspaceConfig(),
+    peerLabel: String = "127.0.0.1:9000",
     onSelectSpoke: (StudioSpoke) -> Unit,
     onToggleSyncedPlay: () -> Unit,
     onToggleDeckPlay: () -> Unit,
@@ -504,6 +542,11 @@ fun CircularStudioHub(
     onExportWavClick: () -> Unit,
     onExportMp3Click: () -> Unit,
     onStreamTxClick: () -> Unit,
+    onPushHandoffClick: () -> Unit = {},
+    onGrabHandoffClick: () -> Unit = {},
+    onApplyPendingHandoff: () -> Unit = {},
+    onToggleRadialWheelSpoke: (StudioSpoke) -> Unit = {},
+    onToggleDockSpokePinned: (StudioSpoke) -> Unit = {},
     showWheel: Boolean = true,
     modifier: Modifier = Modifier
 ) {
@@ -579,9 +622,66 @@ fun CircularStudioHub(
                     timelineState = timelineState,
                     syncedPlayhead = syncedPlayhead,
                     midiState = midiState,
+                    wheelSpokes = workspaceConfig.radialWheelSpokes,
                     onSelectSpoke = onSelectSpoke,
                     onToggleSyncedPlay = onToggleSyncedPlay,
                     modifier = Modifier.padding(6.dp)
+                )
+            }
+        }
+
+        // Equal Peer Session Handoff & Companion VMC/Tuner Station Launcher
+        HardwarePanel(
+            borderColor = VioletMod.copy(alpha = 0.5f),
+            modifier = Modifier.testTag("booth_handoff_panel")
+        ) {
+            Text(
+                text = "EQUAL PEER HANDOFF & COMPANION TOOLS ($peerLabel)",
+                style = MaterialTheme.typography.labelMedium,
+                color = TextSecondary
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                HardwareChipToggle(
+                    label = "PUSH -> PEER",
+                    selected = false,
+                    onClick = onPushHandoffClick,
+                    accentColor = EmeraldSignal,
+                    modifier = Modifier.testTag("booth_push_handoff_button")
+                )
+                HardwareChipToggle(
+                    label = "GRAB <- PEER",
+                    selected = false,
+                    onClick = onGrabHandoffClick,
+                    accentColor = NeonCyan,
+                    modifier = Modifier.testTag("booth_grab_handoff_button")
+                )
+                if (editorState.pendingHandoff != null) {
+                    HardwareChipToggle(
+                        label = "APPLY HANDOFF",
+                        selected = true,
+                        onClick = onApplyPendingHandoff,
+                        accentColor = AmberHot,
+                        modifier = Modifier.testTag("booth_apply_handoff_button")
+                    )
+                }
+                HardwareChipToggle(
+                    label = "YIN TUNER",
+                    selected = false,
+                    onClick = { onSelectSpoke(StudioSpoke.TUNER) },
+                    accentColor = AmberHot,
+                    modifier = Modifier.testTag("booth_open_tuner_button")
+                )
+                HardwareChipToggle(
+                    label = "VMC 64-CH MIDI",
+                    selected = false,
+                    onClick = { onSelectSpoke(StudioSpoke.VMC) },
+                    accentColor = VioletMod,
+                    modifier = Modifier.testTag("booth_open_vmc_button")
                 )
             }
         }
@@ -686,6 +786,49 @@ fun CircularStudioHub(
                         selected = stompbox.liveMode == mode,
                         onClick = { onSelectLiveMode(mode) },
                         accentColor = if (mode == LiveSessionMode.STAGE_DJ) TacCoral else if (mode == LiveSessionMode.LIVE_REC) NeonCyan else EmeraldSignal
+                    )
+                }
+            }
+        }
+
+        // Workspace Customizer (Dock & Radial Spoke Toggles)
+        HardwarePanel(modifier = Modifier.testTag("booth_customizer_panel")) {
+            Text(
+                text = "CUSTOMIZE DOCK & WHEEL SPOKES",
+                style = MaterialTheme.typography.labelMedium,
+                color = TextSecondary
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text("PINNED BOTTOM DOCK SPOKES", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+            Spacer(modifier = Modifier.height(4.dp))
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                StudioSpoke.entries.filter { it != StudioSpoke.BOOTH }.forEach { spoke ->
+                    HardwareChipToggle(
+                        label = spoke.shortLabel,
+                        selected = workspaceConfig.pinnedDockSpokes.contains(spoke),
+                        onClick = { onToggleDockSpokePinned(spoke) },
+                        accentColor = spokeAccent(spoke)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("RADIAL 360° WHEEL SPOKES (4–8)", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+            Spacer(modifier = Modifier.height(4.dp))
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                StudioSpoke.entries.filter { it != StudioSpoke.BOOTH }.forEach { spoke ->
+                    HardwareChipToggle(
+                        label = spoke.shortLabel,
+                        selected = workspaceConfig.radialWheelSpokes.contains(spoke),
+                        onClick = { onToggleRadialWheelSpoke(spoke) },
+                        accentColor = spokeAccent(spoke)
                     )
                 }
             }

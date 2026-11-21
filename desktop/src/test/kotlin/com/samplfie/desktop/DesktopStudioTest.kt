@@ -3,11 +3,17 @@ package com.samplfie.desktop
 import com.samplfie.desktop.audio.DesktopMp3Exporter
 import com.samplfie.desktop.audio.DesktopWavCodec
 import com.samplfie.desktop.audio.SignalAnalyzer
+import com.samplfie.desktop.midi.VmcEventPacket
+import com.samplfie.desktop.midi.VmcMappingRule
+import com.samplfie.desktop.midi.VmcMsgType
+import com.samplfie.desktop.midi.VmcTarget
+import com.samplfie.desktop.model.DesktopLiveMode
 import com.samplfie.desktop.model.DesktopPreset
 import com.samplfie.desktop.model.DesktopRigConfig
 import com.samplfie.desktop.model.DesktopStation
 import com.samplfie.desktop.model.NetworkProtocol
 import com.samplfie.desktop.model.SignalWaveformType
+import com.samplfie.desktop.network.SessionHandoffSnapshot
 import com.samplfie.desktop.network.Smp2NetworkNode
 import com.samplfie.desktop.tuner.PitchDetector
 import java.io.File
@@ -71,6 +77,37 @@ class DesktopStudioTest {
         ctrl.undoEdit()
         ctrl.resetToOriginal()
         assertEquals(initialFrames, ctrl.uiState.value.dryBuffer!!.frameCount)
+        ctrl.shutdown()
+    }
+
+    @Test
+    fun `loop playback persists through edits, selection extractions, undo, and fx updates until stop`() {
+        val ctrl = DesktopStudioController()
+        ctrl.generateTestSignal(SignalWaveformType.SAWTOOTH, 220.0)
+        ctrl.soundEngine.setLooping(true)
+        ctrl.soundEngine.startPlayback()
+
+        assertTrue(ctrl.playbackState.value.isPlaying)
+        assertTrue(ctrl.playbackState.value.isLooping)
+
+        ctrl.updateSelection(0.15f, 0.75f)
+        ctrl.extractSelection()
+        assertTrue("Loop must keep playing after selection extraction", ctrl.playbackState.value.isPlaying)
+        assertTrue(ctrl.playbackState.value.isLooping)
+
+        ctrl.reverseSignal()
+        ctrl.normalizeSignal()
+        ctrl.updateFx { copy(overdriveEnabled = true, driveAmount = 6f, reverbEnabled = true, reverbMix = 0.4f) }
+        ctrl.updateStomp { copy(engaged = true, toneTilt = 0.3f) }
+        assertTrue("Loop must keep playing through signal edits and FX updates", ctrl.playbackState.value.isPlaying)
+        assertTrue(ctrl.playbackState.value.isLooping)
+
+        ctrl.undoEdit()
+        assertTrue("Loop must keep playing after undo", ctrl.playbackState.value.isPlaying)
+
+        ctrl.soundEngine.stopPlayback()
+        assertFalse(ctrl.playbackState.value.isPlaying)
+        ctrl.shutdown()
     }
 
     @Test
@@ -100,6 +137,124 @@ class DesktopStudioTest {
 
         tmpDir.deleteRecursively()
         ctrl.shutdown()
+    }
+
+    @Test
+    fun `samples looper refiner, sequencer, and synced timeline work cleanly`() {
+        val ctrl = DesktopStudioController()
+        ctrl.generateTestSignal(SignalWaveformType.TRIANGLE, 196.0)
+        ctrl.sendEditorToLoopSlot(0)
+        ctrl.arrangement.snapLoopSelectionZeroCross()
+        ctrl.arrangement.normalizeLoopRefiner()
+        ctrl.arrangement.commitRefinerToSlot()
+        ctrl.arrangement.toggleLoopSlotActive(0)
+
+        val looperMix = ctrl.arrangement.bounceLooperMixdown(44100)
+        assertTrue(looperMix.frameCount > 1000)
+
+        ctrl.arrangement.toggleSequencerStep(0, 0)
+        val beatMix = ctrl.arrangement.renderSequenceToBuffer(1, 44100)
+        assertTrue(beatMix.frameCount > 1000)
+
+        ctrl.addEditorClipToTimeline(0)
+        ctrl.bounceSequencerToTimeline()
+        assertTrue(ctrl.timelineState.value.tracks[0].clips.isNotEmpty())
+        assertTrue(ctrl.timelineState.value.tracks[2].clips.isNotEmpty())
+        ctrl.shutdown()
+    }
+
+    @Test
+    fun `64 channel vmc engine handles buses 1 to 4, midi learn, and peer vmc2 transport`() {
+        val freePort = ServerSocket(0).use { it.localPort }
+        val receiverCtrl = DesktopStudioController()
+        val senderCtrl = DesktopStudioController()
+
+        receiverCtrl.updateRigConfig { copy(protocol = NetworkProtocol.TCP, bindPort = freePort) }
+        receiverCtrl.toggleNetworkListener()
+        senderCtrl.updateRigConfig { copy(protocol = NetworkProtocol.TCP, txHost = "127.0.0.1", txPort = freePort) }
+        Thread.sleep(150)
+
+        // Verify 64-ch bank math (Bank 3, Bus 4 CH 4 = Global CH 52)
+        senderCtrl.vmcEngine.selectChannel64(52)
+        assertEquals(3, senderCtrl.vmcState.value.selectedBank)
+        assertEquals(52, senderCtrl.vmcState.value.activeChannel64)
+
+        // Test MIDI Learn for new mapping on CH 52
+        senderCtrl.vmcEngine.armLearnNewMapping(VmcTarget.FX_CHORUS_MIX)
+        senderCtrl.vmcEngine.processIncomingEvent(VmcEventPacket(52, VmcMsgType.CC, 22, 100, 0.78f), fromPeer = false)
+        assertTrue(senderCtrl.vmcState.value.mappings.any { it.channel64 == 52 && it.number == 22 && it.target == VmcTarget.FX_CHORUS_MIX })
+
+        // Transmit CH17 Drive CC71 over VMC2 to peer receiver
+        senderCtrl.vmcEngine.emitVirtualControl(VmcMsgType.CC, 71, 0.9f, channel64 = 17)
+
+        val deadline = System.currentTimeMillis() + 3500
+        while (System.currentTimeMillis() < deadline && receiverCtrl.netState.value.vmcRxCount == 0L) {
+            Thread.sleep(30)
+        }
+        assertTrue(receiverCtrl.netState.value.vmcRxCount >= 1L)
+        assertTrue(receiverCtrl.uiState.value.fxState.overdriveEnabled)
+
+        senderCtrl.shutdown()
+        receiverCtrl.shutdown()
+    }
+
+    @Test
+    fun `bidirectional smh2 session handoff and smhr pull request transfer full state over tcp`() {
+        val portA = ServerSocket(0).use { it.localPort }
+        val portB = ServerSocket(0).use { it.localPort }
+
+        val ctrlA = DesktopStudioController()
+        val ctrlB = DesktopStudioController()
+
+        ctrlA.updateRigConfig { copy(protocol = NetworkProtocol.TCP, bindPort = portA, txHost = "127.0.0.1", txPort = portB) }
+        ctrlB.updateRigConfig { copy(protocol = NetworkProtocol.TCP, bindPort = portB, txHost = "127.0.0.1", txPort = portA) }
+        ctrlA.toggleNetworkListener()
+        ctrlB.toggleNetworkListener()
+        Thread.sleep(150)
+
+        ctrlA.generateTestSignal(SignalWaveformType.SQUARE, 330.0)
+        ctrlA.soundEngine.setLooping(true)
+        ctrlA.soundEngine.startPlayback()
+        ctrlA.updateSelection(0.22f, 0.78f)
+        ctrlA.applyPreset(DesktopPreset.ACID_WAH)
+        ctrlA.setLiveSessionMode(DesktopLiveMode.STAGE_DJ)
+        ctrlA.selectStation(DesktopStation.VMC)
+        ctrlA.vmcEngine.upsertMapping(VmcMappingRule("custom_64", 64, VmcMsgType.CC, 88, VmcTarget.FX_DELAY_MIX))
+
+        ctrlA.pushSessionToPeer()
+
+        val deadline = System.currentTimeMillis() + 4000
+        while (System.currentTimeMillis() < deadline && ctrlB.uiState.value.station != DesktopStation.VMC) {
+            Thread.sleep(40)
+        }
+
+        val stateB = ctrlB.uiState.value
+        assertEquals(DesktopStation.VMC, stateB.station)
+        assertEquals(3, stateB.fxState.activeCount)
+        assertEquals(DesktopLiveMode.STAGE_DJ, stateB.stompState.liveMode)
+        assertEquals(0.22f, stateB.selectionStart, 0.01f)
+        assertEquals(0.78f, stateB.selectionEnd, 0.01f)
+        assertTrue(ctrlB.playbackState.value.isLooping)
+        assertTrue(ctrlB.playbackState.value.isPlaying)
+        assertTrue(ctrlB.vmcState.value.mappings.any { it.id == "custom_64" && it.channel64 == 64 })
+
+        // Verify wire round-trip station key mapping for Android/Desktop parity
+        assertEquals(DesktopStation.EDITOR, SessionHandoffSnapshot.mapStationKeyToDesktop("DECK"))
+        assertEquals(DesktopStation.TUNER, SessionHandoffSnapshot.mapStationKeyToDesktop("TUNER"))
+
+        // Now modify ctrlB and let ctrlA grab (pull) via SMHR!
+        ctrlB.soundEngine.stopPlayback()
+        ctrlB.selectStation(DesktopStation.TRACKS)
+        ctrlA.grabSessionFromPeer()
+
+        val deadline2 = System.currentTimeMillis() + 4000
+        while (System.currentTimeMillis() < deadline2 && ctrlA.uiState.value.station != DesktopStation.TRACKS) {
+            Thread.sleep(40)
+        }
+        assertEquals(DesktopStation.TRACKS, ctrlA.uiState.value.station)
+
+        ctrlA.shutdown()
+        ctrlB.shutdown()
     }
 
     @Test

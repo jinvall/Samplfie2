@@ -3,33 +3,33 @@
 ## Stage 1: Project Identity, Manifest, Dependencies, Theme & Launcher Icon
 **Status:** PASSED
 - Configured `Samplfie2` in `metadata.json`, `settings.gradle.kts`, `strings.xml`, and `applicationId = "com.aistudio.samplfie2.djxkmq"`.
-- Generated custom adaptive launcher icon & mipmap PNGs; removed template `.webp` files.
-- Installed local fonts (`Space Grotesk`, `JetBrains Mono`, `Inter`) via `font-util`.
+- Generated custom adaptive launcher icon & mipmap PNGs and local TTF fonts (`Space Grotesk`, `JetBrains Mono`, `Inter`).
 - Verified via `ExampleRobolectricTest`.
 
 ## Stage 2: Core Audio Engine, WAV Codec & Real-Time Analyzer
 **Status:** PASSED
-- Implemented `AudioBuffer` (including loop refinement math), `WavCodec`, `AudioImporter` (`MediaExtractor`/`MediaCodec` -> `.wav`), `AudioAnalyzer` (Waveform Peaks + Radix-2 FFT), `MicCaptureEngine`, and `AudioPlaybackEngine`.
+- Implemented `AudioBuffer`, `WavCodec`, `AudioImporter` (`MediaExtractor`/`MediaCodec` -> `.wav`), `AudioAnalyzer` (Waveform Peaks + Radix-2 FFT), `MicCaptureEngine`, and `AudioPlaybackEngine`.
 - Verified via `AudioCoreTest` (`gradle :app:testDebugUnitTest`).
 
 ## Stage 3: Expanded 12-Module Audio DSP FX Rack & Stompbox Master Processor
 **Status:** PASSED
-- Expanded all 12 audio processors (`Noise Removal`, `Pitch & Speed`, `Gain & Dynamics`, `Overdrive`, `Wah` 3-mode, `Phaser` 4/6/8-stage, `Flanger`, `Chorus` 2-4v, `Rotary Speaker` fast/brake/drive, `Echo` wow/flutter/sat, `Delay` BPM sync/filters, `Reverb` ER/width/lowcut) plus `StompboxMasterState` (`killDrive`/`killMod`/`killTime`, `toneTilt`, `dynamicsTrimDb`, `masterWetMix`).
-- Verified across Mono & Stereo via `DspEngineTest` (`gradle :app:testDebugUnitTest`).
+- Expanded all 12 audio processors + `StompboxMasterState` across Mono & Stereo.
+- Verified via `DspEngineTest` (`gradle :app:testDebugUnitTest`).
 
 ## Stage 4: Rig Config, TCP/UDP Streaming, WAV/MP3 Export, MIDI & Synced Studio Engine
 **Status:** PASSED
-- Implemented `RigConfig` + `RigConfigRepository` (DataStore), `NetworkAudioTransmitter` (`SMP2` TCP/UDP), `WavExporter`, `Mp3Exporter` (`jump3r` + `MediaStore`), `MidiControllerManager` (`MidiManager`), and `StudioEngine` with `SyncedPlayheadState` across Looper, Sequencer, and Track Timeline.
-- Verified via `Stage4StudioNetworkExportTest` (`gradle :app:testDebugUnitTest`).
+- Implemented `RigConfig`, `NetworkAudioTransmitter` (`SMP2`), `WavExporter`, `Mp3Exporter` (`jump3r`), `MidiControllerManager`, and `StudioEngine` with `SyncedPlayheadState`.
+- Verified via `Stage4StudioNetworkExportTest`.
 
-## Stage 5: Circular Studio Production Booth Hub, 6 Radial Spokes, Loop Refiner & Live Stompbox
+## Stage 5: Circular Studio Production Booth Hub, Radial Spokes, Loop Refiner & Live Stompbox
 **Status:** PASSED
-- Redesigned main navigation around the **Circular Production Booth Hub** (`CircularStudioHub` / `CircularStudioWheel`) and 6 radial device spokes: **DECK**, **SAMPLES** (with integrated **Loop Refinement Editor**), **INSTRUMENTS** (16-step seq, pads, MIDI), **TRACKS** (globally synced playhead), **FX RACK** (12 expanded modules), and **LIVE** (`StompboxMiniProcessor` + `Stage DJ` / `Live Rec` / `Studio Release` modes + Rig/Export hub).
-- Added persistent **Master Production Control Hub** (`DockedCircularProductionHub` with expandable inline 360° wheel on portrait stations, and `WideCircularProductionSidebar` on wide/tablet layouts) so master sync transport, beat/VU dial, deck audition, tap BPM, stomp bypass, universal import, and network TX stay on screen across every station spoke.
-- Verified end-to-end via `Stage5ComposeConsoleTest` (`gradle :app:testDebugUnitTest`), `compile_applet`, and zero `TODO`/placeholder scan.
+- Built Circular Production Booth Hub & persistent Master Hub (`DockedCircularProductionHub` & `WideCircularProductionSidebar`) connecting `DECK`, `SAMPLES` (Looper + Loop Refinement Editor), `INSTRUMENTS` (16-step Seq, Pads, MIDI), `TRACKS` (globally synced playhead), `FX RACK`, and `LIVE` (`StompboxMiniProcessor` + `Stage DJ`/`Live Rec`/`Studio Release` profiles).
+- Verified via `Stage5ComposeConsoleTest`.
 
-## Stage 6: Linux Desktop Audio, Signal Editor, Chromatic Tuner & SMP2 Bridge (`:desktop`)
+## Stage 6: Linux Desktop Workstation, Full Equal-Peer Parity, Loop Persistence, Tuner & 64-Ch VMC
 **Status:** VERIFIED
-- Built `:desktop` Kotlin JVM Gradle module (`com.samplfie.desktop`) with a Linux Java2D/Swing GUI mirroring the Samplfie2 Android dark hardware chassis, neon accents, and persistent **CircularHubSidebar** 360° wheel.
-- Implemented **Signal Editor** (dual waveform + 48-band FFT scope, selection extract, zero-crossing snap, fades, reverse, DC fix, normalize, undo/reset, signal generator, ALSA/PulseAudio/PipeWire mic/playback, WAV/MP3 export), **Chromatic Tuner** (YIN `32–2200 Hz`, circular strobe/cents dial, `A4` calibration, instrument presets & reference tone pads), **12-FX + Stompbox** station, and bidirectional **SMP2 TCP/UDP Net Link** + Linux `.desktop`/launcher scripts.
-- Verified via `DesktopStudioTest` (`gradle :desktop:test`), `:desktop:installDist`, Android `:app:testDebugUnitTest`, and `compile_applet`.
+- Built `:desktop` Linux workstation (`com.samplfie.desktop`) with **all 10 studio spokes** (`BOOTH`, `EDITOR`, `SAMPLES`, `INSTRUMENTS`, `TRACKS`, `FX_STOMP`, `LIVE`, `TUNER`, `VMC`, `NET_LINK`), customizable station strip & radial wheel, zero removals of original editor/tuner functionality.
+- Added **YIN Chromatic & Strobe Tuner** (`TunerSpokeScreen`) and **64-Channel Virtual MIDI Controller (`VmcSpokeScreen` / `VmcMidiPanel`)** with 4 buses × 16 channels (`CH 1..64`), MIDI Learn, hardware MIDI bridging, and live `VMC2` companion control across Android & Linux Desktop.
+- Implemented **Persistent Loop Playback** on both Android (`AudioPlaybackEngine.updateBufferHot(..., preserveLoopPlayback = true)`) and Linux Desktop (`LinuxSoundEngine.updateBufferHot`), surviving selection extractions, edits, undo/reset, and live DSP updates until `STOP`.
+- Implemented **Bidirectional Equal-Peer Session Handoff** (`SMH2`/`SMHR` codecs + `PUSH`/`GRAB` controls) transferring active song PCM, playhead, loop state, selections, FX, Stompbox, Sequencer/Looper, `A4` reference, station, and 64-Ch VMC rules cleanly between phones and desktop.
+- Verified via `DesktopStudioTest` (`gradle :desktop:test :desktop:installDist`), `VmcAndHandoffTest`, `Stage5ComposeConsoleTest`, `Stage6EqualPeerTest` (`gradle :app:testDebugUnitTest`), `compile_applet`, and `:app:assembleDebug`.

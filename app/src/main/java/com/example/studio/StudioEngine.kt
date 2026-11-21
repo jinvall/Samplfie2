@@ -250,6 +250,13 @@ class StudioEngine {
         _looperState.value = _looperState.value.copy(slots = updated)
     }
 
+    fun setLoopSlotActive(slotId: Int, active: Boolean) {
+        val updated = _looperState.value.slots.map { slot ->
+            if (slot.id == slotId) slot.copy(isActive = active && slot.buffer != null) else slot
+        }
+        _looperState.value = _looperState.value.copy(slots = updated)
+    }
+
     fun toggleLoopSlotMute(slotId: Int) {
         val updated = _looperState.value.slots.map { slot ->
             if (slot.id == slotId) slot.copy(isMuted = !slot.isMuted) else slot
@@ -469,6 +476,18 @@ class StudioEngine {
             if (lane.id == laneId) {
                 val copySteps = lane.steps.copyOf()
                 copySteps[stepIndex] = !copySteps[stepIndex]
+                lane.copy(steps = copySteps)
+            } else {
+                lane
+            }
+        }
+        _sequencerState.value = _sequencerState.value.copy(lanes = updated)
+    }
+
+    fun applySequencerPatternMask(laneId: Int, stepMask: Int) {
+        val updated = _sequencerState.value.lanes.map { lane ->
+            if (lane.id == laneId) {
+                val copySteps = BooleanArray(16) { i -> ((stepMask shr i) and 1) == 1 }
                 lane.copy(steps = copySteps)
             } else {
                 lane

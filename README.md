@@ -1,32 +1,34 @@
 # Samplfie2
 
-**Samplfie2** is a Kotlin + Jetpack Compose live DJ performance studio built around a **Circular Production Booth Hub-and-Spoke** workstation featuring universal audio import (`.wav`/`.mp3`/`.aac`/`.ogg`/`.flac` decoded to editable `.wav`), tactile TAC mic capture, real-time waveform & FFT spectrum visualization, 12 expanded pro audio DSP FX, a **Samples Loop Refinement Editor**, a 16-step Sequencer & Android MIDI rig, a **globally synced multi-track Playhead**, a **Live Stompbox Master Multi-FX Processor**, and local/network release export.
+**Samplfie2** is an equal-peer Kotlin DJ performance and studio production system spanning **Android (Kotlin + Jetpack Compose)** and **Linux Desktop (Kotlin + Java2D/Swing)**. Both workstations share the exact same **Circular Production Booth Hub-and-Spoke** architecture, 12-module audio DSP FX rack, Mini Stompbox Master Multi-FX Processor, YIN Chromatic Tuner, customizable studio spokes, persistent loop playback through edits/extractions, a **64-Channel Virtual MIDI Controller (`VMC`)**, and live **`SMH2`/`VMC2`/`SMP2` Equal-Peer Session Handoff**.
 
-## Circular Studio Topology
-- **Production Booth (`BOOTH` & Persistent Master Hub)**: Center-seat circular studio view where **Master Production Control** remains on screen across every station spoke (`DockedCircularProductionHub` with expandable inline 360° wheel on phones, and permanently docked `WideCircularProductionSidebar` on tablets/landscape), providing live beat/bar dial, synced master transport, deck play/pause, tap BPM, stomp bypass, VU metering, universal audio import, and one-tap radial spokes connecting every studio workstation:
-  1. **DECK (`DECK`)**: Press-and-hold **TAC** mic capture, universal SAF `OpenDocument` audio import -> `.wav`, dual-layer waveform & 32-band Radix-2 FFT spectrum visualizer (`WAVE` / `FFT` / `DUAL`), draggable `IN`/`OUT` selection markers, **EXTRACT**, **UNDO**, **RESET**, and continuous `AudioTrack` transport review (`PLAY/PAUSE`, `STOP`, `LOOP`, `SEL`, `A/B BYPASS`).
-  2. **SAMPLES (`SAMPLES`)**: 4-slot Looper (`1/2/4` bars, mute/active), local `.wav` take bank, and an integrated **Loop Sample Refinement Editor** (zero-crossing snap, loop trim, fade in/out, reverse, DC offset removal, peak normalize, pitch tune, continuous loop audition, commit back to loop slot or Deck).
-  3. **INSTRUMENTS (`INST`)**: 16-step Sequencer (`Sample` + synthesized `808 Kick`, `909 Snare`, `Hi-Hat`), BPM (`60–180`), Groove Swing, live trigger pads, and real `android.media.midi.MidiManager` Note/CC/Clock hardware control.
-  4. **TRACKS (`TRACKS`)**: 4-track arrangement timeline with a **globally synced playhead** across tracks, looper, and sequencer, clip nudging, mute/solo, interactive scrubbing beat ruler, and master mixdown.
-  5. **FX RACK (`FX`)**: Expanded parameter control across all 12 pure-Kotlin DSP FX modules + presets (`Bypass`, `Clean Mic`, `Dub Siren`, `Acid Wah`, `Rotary Club`, `Lo-Fi Vinyl`, `Master Glue`).
-  6. **LIVE (`LIVE`)**: Houses the die-cast **Mini Stompbox Master Multi-FX Processor** (`Dynamics Trim`, `DJ Tone Tilt EQ`, `Mod Scale`, `Space Scale`, `Master Wet Mix`, `Drive/Mod/Time Kill` switches, interactive `X/Y Live Pad`, `Tap Tempo`, and `Stomp Bypass`) plus tailored console profiles for **Stage DJ Performance**, **Live Recording**, and **Final Collaborative Audio Studio Release**, alongside local `.WAV`/`.MP3` export and TCP/UDP network streaming config.
+## Equal, Customizable Peer Workstations (Android & Linux Desktop)
+Picking up where you left off between phone and desktop works bidirectionally over TCP/UDP:
+- **Session Handoff (`PUSH -> PEER` / `GRAB <- PEER`)**: Transfers the complete active song `.wav` PCM, playhead fraction, loop flag, playing state, IN/OUT selection, BPM/swing, 12 FX rack parameters, Stompbox X/Y & kill switches, looper & sequencer patterns, YIN `A4` reference calibration, 64-channel VMC mapping table, and active station/spoke.
+- **Persistent Loop Playback**: On both Android and Linux Desktop, whenever a track/sample is actively playing with **LOOP** enabled, playback persists uninterrupted through waveform slicing/extractions, linear fades, reverse, DC offset removal, peak normalization, undo/reset, and live DSP/Stompbox tweaks until **STOP** (or **PAUSE**) is pressed.
+- **Customizable Spoke Layout**: Both Android (**BOOTH** customizer card) and Linux Desktop (`Workspace` toolbar/booth controls) let musicians customize which stations appear in their navigation bar and on their 360° Circular Studio Wheel.
 
-## Linux Desktop Companion (`:desktop`)
-A companion **Linux Desktop Audio, Signal Editor & Chromatic Tuner** (`com.samplfie.desktop`) built with Kotlin + Java2D/Swing using the exact same dark hardware aesthetic and persistent **Circular Studio Hub Sidebar** as the Android app:
-- **SIGNAL EDITOR (`EDITOR`)**: Native Linux mic capture (`javax.sound.sampled` ALSA/PulseAudio/PipeWire), `.WAV` import/export & `.MP3` (`jump3r`) export, interactive dual-layer waveform + 48-band Radix-2 FFT spectrum scopes, zero-crossing snap, IN/OUT extract, linear fades, reverse, DC offset removal, peak normalize, undo/reset, and calibrated test-signal generator (`SINE`, `SQUARE`, `SAWTOOTH`, `TRIANGLE`, `CHIRP`, `NOISE`).
-- **CHROMATIC TUNER (`TUNER`)**: Pure-Kotlin YIN pitch detector (`32 Hz – 2200 Hz`) with circular Java2D strobe/cents dial (`-50¢..+50¢`), configurable `A4` calibration (`432–448 Hz`), input switching (`LIVE_MIC`, `DECK_BUFFER`, `SMP2_STREAM`), instrument presets (`Guitar Standard`, `Drop D`, `Bass 4`, `Ukulele`, `Violin`, `Chromatic`), and clickable reference pitch tone pads.
-- **FX + STOMP (`FX_STOMP`)**: Matching 12-module DSP chain + presets and Master Stompbox (`Drive/Mod/Time Kill`, `Dynamics Trim`, `Tone Tilt`, `Mod/Space Scale`, `Master Wet`).
-- **NET LINK (`NET_LINK`)**: Bidirectional `SMP2`-framed TCP/UDP bridge to stream audio directly between the Android app and Linux desktop, plus sample rate, channel, and buffer controls.
+## Circular Studio Hub & 10 Peer Spokes (`BOOTH` Hub + Stations)
+1. **PRODUCTION BOOTH (`BOOTH`)**: Central 360° workstation diagram (`CircularStudioHub` / `ProductionBoothPanel`), Session Handoff (`PUSH`/`GRAB`/`APPLY`), Dock/Wheel customizer, global tap BPM, VU metering, universal import, and quick export.
+2. **CAPTURE & WAV DECK / SIGNAL EDITOR (`DECK` / `EDITOR`)**: Hold-to-record **TAC** capture / Linux mic capture, universal audio import (`.wav`/`.mp3`/`.aac`/`.ogg`/`.flac` decoded to `.wav` on Android; `.wav` on Desktop), waveform + FFT spectrum visualizer (`WAVE`/`FFT`/`DUAL`), `IN`/`OUT` selection markers, zero-crossing snap, fades, reverse, DC fix, peak normalize, **EXTRACT**, **UNDO**, **RESET**, and loop-persistent audition.
+3. **SAMPLES & LOOP REFINER (`SAMPLES`)**: 4-slot Looper (`1/2/4` bars, mute/active, bounce mixdown) + integrated **Loop Sample Refinement Editor** (start/end selection, zero-crossing snap, fade in/out, reverse, normalize, DC offset removal, pitch/speed tune, loop audition, commit to slot or send to Deck).
+4. **INSTRUMENTS (`INST`)**: 16-Step Sequencer (`Sample` + synthesized `808 Kick`, `909 Snare`, `Hi-Hat`), BPM (`60–180`), Groove Swing, live trigger pads, and hardware MIDI bridging (`MidiManager` on Android, `javax.sound.midi` 4-bus interface on Linux Desktop).
+5. **TRACKS (`TRACKS`)**: 4-track arrangement timeline with a **globally synced playhead** synchronized across Tracks, Sequencer, and Looper, plus clip nudging, track mute/solo, beat-ruler scrubbing, and master mixdown.
+6. **FX RACK (`FX` / `FX_STOMP`)**: 12 pure-Kotlin mono/stereo DSP processors (`Noise Gate`, `Pitch & Speed`, `Gain & Normalize`, `Overdrive`, `Wah`, `Phaser`, `Flanger`, `Chorus`, `Rotary Speaker`, `Echo`, `BPM-Sync Delay`, `Reverb`) + quick presets (`Bypass`, `Clean Mic`, `Dub Siren`, `Acid Wah`, `Rotary Club`, `Lo-Fi Vinyl`, `Studio Master`).
+7. **LIVE (`LIVE`)**: Die-cast **Mini Stompbox Master Multi-FX Processor** (`Dynamics Trim`, `DJ Tone Tilt EQ`, `Mod Scale`, `Space Scale`, `Master Wet Mix`, `Drive/Mod/Time Kill` switches, interactive `X/Y Live Pad`, `Tap Tempo`, `Stomp Bypass`), workflow profiles (`Stage DJ`, `Live Recording`, `Studio Release`), `.WAV`/`.MP3` export, and peer network configuration.
+8. **CHROMATIC TUNER (`TUNER`)**: Pure-Kotlin YIN pitch detector (`32 Hz – 2200 Hz`) with arc/strobe gauge, `-50¢..+50¢` meter, configurable `A4` calibration (`430–450 Hz`), source switching (`DECK_BUFFER`, `LIVE_MIC`, `SMP2_STREAM`), instrument presets, and audible reference tone generator pads.
+9. **64-CHANNEL VMC (`VMC`)**: Mappable **64-Channel Virtual MIDI Controller** (`4 Buses × 16 Channels = CH 1..64` plus `CH 0 = ANY`), MIDI Learn, virtual performance pads & CC faders, local/peer/hybrid routing modes, hardware MIDI bridging, and live `VMC2` control packets between phone and Linux desktop.
+10. **NET LINK (`NET_LINK` on Desktop / Network Matrix in `LIVE` on Android)**: Configurable IP, TX Port, RX Bind Port, Sample Rate, Channels, Buffer Size, `TCP`/`UDP` mode, live `SMP2` RX capture into Deck, and `SMH2`/`SMHR` handoff status.
 
-### Launching on Linux
+### Launching Linux Desktop Workstation
 ```bash
 ./scripts/launch-linux-studio.sh
-# Or build/run directly via Gradle:
+# Or run via Gradle:
 gradle :desktop:run
 ```
 
 ## Documentation Index
 - [Architecture Overview](docs/ARCHITECTURE.md)
 - [DSP, Stompbox & Real-Time Visualization Reference](docs/DSP_REFERENCE.md)
-- [Network Streaming & Local WAV/MP3 Export Reference](docs/NETWORK_AND_EXPORT.md)
+- [Network Streaming, VMC2, Session Handoff & Export Reference](docs/NETWORK_AND_EXPORT.md)
 - [Build Stages & Verification Log](docs/STAGES_AND_CHANGELOG.md)

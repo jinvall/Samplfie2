@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.ElectricBolt
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Loop
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Piano
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.ViewTimeline
@@ -77,6 +78,8 @@ import com.example.ui.screens.InstrumentsSpokeScreen
 import com.example.ui.screens.LiveSpokeScreen
 import com.example.ui.screens.SamplesSpokeScreen
 import com.example.ui.screens.TracksSpokeScreen
+import com.example.ui.screens.TunerSpokeScreen
+import com.example.ui.screens.VmcSpokeScreen
 import com.example.ui.theme.EmeraldSignal
 import com.example.ui.theme.GunmetalDeck
 import com.example.ui.theme.HairlineDivider
@@ -140,6 +143,9 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
     }
 
     val selectedSpoke by viewModel.selectedSpoke.collectAsStateWithLifecycle()
+    val workspaceConfig by viewModel.workspaceConfig.collectAsStateWithLifecycle()
+    val tunerState by viewModel.tunerState.collectAsStateWithLifecycle()
+    val vmcState by viewModel.vmcState.collectAsStateWithLifecycle()
     val rigConfig by viewModel.rigConfig.collectAsStateWithLifecycle()
     val fxRack by viewModel.fxRack.collectAsStateWithLifecycle()
     val stompbox by viewModel.stompbox.collectAsStateWithLifecycle()
@@ -250,6 +256,7 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                 if (!isWideStudioLayout) {
                     StudioSpokeBottomDock(
                         selectedSpoke = selectedSpoke,
+                        dockSpokes = workspaceConfig.pinnedDockSpokes,
                         onSelectSpoke = { viewModel.selectSpoke(it) },
                         modifier = Modifier.navigationBarsPadding()
                     )
@@ -276,6 +283,7 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                         networkState = networkState,
                         midiState = midiState,
                         hasAudio = hasAudio,
+                        workspaceConfig = workspaceConfig,
                         onSelectSpoke = { viewModel.selectSpoke(it) },
                         onToggleSyncedPlay = { viewModel.toggleSyncedTransport() },
                         onToggleDeckPlay = { viewModel.togglePlay() },
@@ -283,7 +291,8 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                         onToggleStompBypass = { viewModel.toggleStompboxBypass() },
                         onImportAudioClick = openAudioPicker,
                         onExportMp3Click = { showExportDialog = true },
-                        onStreamTxClick = { viewModel.streamActiveAudioOverNetwork() }
+                        onStreamTxClick = { viewModel.streamActiveAudioOverNetwork() },
+                        onPushHandoffClick = { viewModel.pushSessionToPeer() }
                     )
                 }
 
@@ -307,6 +316,7 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                             networkState = networkState,
                             midiState = midiState,
                             hasAudio = hasAudio,
+                            workspaceConfig = workspaceConfig,
                             onSelectSpoke = { viewModel.selectSpoke(it) },
                             onToggleSyncedPlay = { viewModel.toggleSyncedTransport() },
                             onToggleDeckPlay = { viewModel.togglePlay() },
@@ -335,6 +345,8 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                                 syncedPlayhead = syncedPlayhead,
                                 networkState = networkState,
                                 midiState = midiState,
+                                workspaceConfig = workspaceConfig,
+                                peerLabel = "${rigConfig.ipAddress}:${rigConfig.port}",
                                 onSelectSpoke = { viewModel.selectSpoke(it) },
                                 onToggleSyncedPlay = { viewModel.toggleSyncedTransport() },
                                 onToggleDeckPlay = { viewModel.togglePlay() },
@@ -346,6 +358,11 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                                 onExportWavClick = { viewModel.exportAsWav("samplfie2_booth") },
                                 onExportMp3Click = { showExportDialog = true },
                                 onStreamTxClick = { viewModel.streamActiveAudioOverNetwork() },
+                                onPushHandoffClick = { viewModel.pushSessionToPeer() },
+                                onGrabHandoffClick = { viewModel.grabSessionFromPeer() },
+                                onApplyPendingHandoff = { viewModel.applyPendingHandoff() },
+                                onToggleRadialWheelSpoke = { viewModel.toggleRadialWheelSpoke(it) },
+                                onToggleDockSpokePinned = { viewModel.toggleDockSpokePinned(it) },
                                 showWheel = !isWideStudioLayout
                             )
 
@@ -427,7 +444,9 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                                 onTriggerLanePad = { viewModel.triggerSequencerLaneOneShot(it) },
                                 onSetSwing = { viewModel.setSequencerSwing(it) },
                                 onBounceSequencerToTimeline = { viewModel.bounceSequencerToTimeline() },
-                                onRefreshMidi = { viewModel.refreshMidiDevices() }
+                                onRefreshMidi = { viewModel.refreshMidiDevices() },
+                                onOpenVmc = { viewModel.selectSpoke(StudioSpoke.VMC) },
+                                onOpenTuner = { viewModel.selectSpoke(StudioSpoke.TUNER) }
                             )
 
                             StudioSpoke.TRACKS -> TracksSpokeScreen(
@@ -488,8 +507,35 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                                 onUpdateConfig = { viewModel.updateRigConfig(it) },
                                 onStreamTx = { viewModel.streamActiveAudioOverNetwork() },
                                 onStopStream = { viewModel.stopNetworkStream() },
+                                onToggleListener = { viewModel.toggleNetworkListener() },
+                                onCaptureRxToDeck = { viewModel.captureReceivedAudioToDeck() },
+                                onPushHandoff = { viewModel.pushSessionToPeer() },
+                                onGrabHandoff = { viewModel.grabSessionFromPeer() },
                                 onExportWav = { viewModel.exportAsWav(it) },
                                 onExportMp3 = { viewModel.exportAsMp3(it) }
+                            )
+
+                            StudioSpoke.TUNER -> TunerSpokeScreen(
+                                tunerState = tunerState,
+                                a4ReferenceHz = rigConfig.a4ReferenceHz,
+                                hasDeckAudio = hasAudio,
+                                onSelectSource = { viewModel.setTunerSource(it) },
+                                onSelectPreset = { viewModel.setTuningPreset(it) },
+                                onSetA4Reference = { viewModel.setA4Reference(it) },
+                                onAnalyzeDeckWindow = { viewModel.analyzeActiveBufferWindowForTuner() },
+                                onPlayReferenceNote = { viewModel.playTunerReferencePitch(it) }
+                            )
+
+                            StudioSpoke.VMC -> VmcSpokeScreen(
+                                vmcState = vmcState,
+                                onSelectBank = { viewModel.vmcSelectBank(it) },
+                                onSelectChannel64 = { viewModel.vmcSelectChannel64(it) },
+                                onSetRouteMode = { viewModel.vmcSetRouteMode(it) },
+                                onEmitControl = { type, num, norm, ch -> viewModel.vmcEmitControl(type, num, norm, ch) },
+                                onArmLearnRule = { viewModel.vmcArmLearnRule(it) },
+                                onArmLearnNew = { viewModel.vmcArmLearnNew(it) },
+                                onUpsertRule = { viewModel.vmcUpsertRule(it) },
+                                onRemoveRule = { viewModel.vmcRemoveRule(it) }
                             )
                         }
                     }
@@ -502,9 +548,11 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
 @Composable
 private fun StudioSpokeBottomDock(
     selectedSpoke: StudioSpoke,
+    dockSpokes: List<StudioSpoke>,
     onSelectSpoke: (StudioSpoke) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val visibleDock = dockSpokes.ifEmpty { StudioSpoke.entries }
     Surface(
         modifier = modifier.fillMaxWidth(),
         color = GunmetalDeck,
@@ -518,7 +566,7 @@ private fun StudioSpokeBottomDock(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            StudioSpoke.entries.forEach { spoke ->
+            visibleDock.forEach { spoke ->
                 val isSelected = selectedSpoke == spoke
                 Surface(
                     modifier = Modifier
@@ -565,4 +613,6 @@ private fun spokeIcon(spoke: StudioSpoke) = when (spoke) {
     StudioSpoke.TRACKS -> Icons.Filled.ViewTimeline
     StudioSpoke.FX_RACK -> Icons.Filled.Tune
     StudioSpoke.LIVE -> Icons.Filled.ElectricBolt
+    StudioSpoke.TUNER -> Icons.Filled.MusicNote
+    StudioSpoke.VMC -> Icons.Filled.Piano
 }

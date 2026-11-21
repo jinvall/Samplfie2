@@ -70,6 +70,7 @@ import com.example.studio.SyncedPlayheadState
 import com.example.studio.TimelineState
 import com.example.ui.EditorState
 import com.example.ui.StudioSpoke
+import com.example.ui.WorkspaceConfig
 import com.example.ui.theme.AmberHot
 import com.example.ui.theme.BrushedPanel
 import com.example.ui.theme.EmeraldSignal
@@ -106,6 +107,7 @@ fun DockedCircularProductionHub(
     networkState: NetworkLinkState,
     midiState: MidiState,
     hasAudio: Boolean,
+    workspaceConfig: WorkspaceConfig = WorkspaceConfig(),
     onSelectSpoke: (StudioSpoke) -> Unit,
     onToggleSyncedPlay: () -> Unit,
     onToggleDeckPlay: () -> Unit,
@@ -126,7 +128,8 @@ fun DockedCircularProductionHub(
         timelineState = timelineState,
         fxRack = fxRack,
         stompbox = stompbox,
-        midiState = midiState
+        midiState = midiState,
+        wheelSpokes = workspaceConfig.radialWheelSpokes
     )
 
     Surface(
@@ -400,6 +403,7 @@ fun DockedCircularProductionHub(
                         timelineState = timelineState,
                         syncedPlayhead = syncedPlayhead,
                         midiState = midiState,
+                        wheelSpokes = workspaceConfig.radialWheelSpokes,
                         onSelectSpoke = { spoke ->
                             wheelExpanded = false
                             onSelectSpoke(spoke)
@@ -495,6 +499,7 @@ fun WideCircularProductionSidebar(
     networkState: NetworkLinkState,
     midiState: MidiState,
     hasAudio: Boolean,
+    workspaceConfig: WorkspaceConfig = WorkspaceConfig(),
     onSelectSpoke: (StudioSpoke) -> Unit,
     onToggleSyncedPlay: () -> Unit,
     onToggleDeckPlay: () -> Unit,
@@ -503,6 +508,7 @@ fun WideCircularProductionSidebar(
     onImportAudioClick: () -> Unit,
     onExportMp3Click: () -> Unit,
     onStreamTxClick: () -> Unit,
+    onPushHandoffClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val livePeak = if (micTelemetry.isRecording) micTelemetry.peakLevel else playbackState.livePeak
@@ -533,13 +539,21 @@ fun WideCircularProductionSidebar(
                     style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
                     color = NeonCyan
                 )
-                HardwareChipToggle(
-                    label = "BOOTH",
-                    selected = selectedSpoke == StudioSpoke.BOOTH,
-                    onClick = { onSelectSpoke(StudioSpoke.BOOTH) },
-                    accentColor = NeonCyan,
-                    modifier = Modifier.testTag("wide_booth_hub_button")
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    HardwareChipToggle(
+                        label = "HANDOFF",
+                        selected = false,
+                        onClick = onPushHandoffClick,
+                        accentColor = EmeraldSignal
+                    )
+                    HardwareChipToggle(
+                        label = "BOOTH",
+                        selected = selectedSpoke == StudioSpoke.BOOTH,
+                        onClick = { onSelectSpoke(StudioSpoke.BOOTH) },
+                        accentColor = NeonCyan,
+                        modifier = Modifier.testTag("wide_booth_hub_button")
+                    )
+                }
             }
 
             CircularStudioWheel(
@@ -554,6 +568,7 @@ fun WideCircularProductionSidebar(
                 timelineState = timelineState,
                 syncedPlayhead = syncedPlayhead,
                 midiState = midiState,
+                wheelSpokes = workspaceConfig.radialWheelSpokes,
                 onSelectSpoke = onSelectSpoke,
                 onToggleSyncedPlay = onToggleSyncedPlay,
                 maxWheelDp = 316f

@@ -129,6 +129,18 @@ object WavCodec {
         return out
     }
 
+    fun pcm16BytesToFloats(bytes: ByteArray): FloatArray {
+        val count = bytes.size / 2
+        val out = FloatArray(count)
+        for (i in 0 until count) {
+            val lo = bytes[i * 2].toInt() and 0xFF
+            val hi = bytes[i * 2 + 1].toInt()
+            val sample = ((hi shl 8) or lo).toShort()
+            out[i] = (sample.toFloat() / 32768f).coerceIn(-1f, 1f)
+        }
+        return out
+    }
+
     private fun decodeSamples(
         bytes: ByteArray,
         offset: Int,

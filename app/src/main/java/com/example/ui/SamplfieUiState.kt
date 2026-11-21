@@ -4,11 +4,16 @@ import com.example.audio.AudioBuffer
 import com.example.audio.WaveformPeaks
 import com.example.export.ExportedAudioResult
 import com.example.export.ExportedMp3Result
+import com.example.network.SessionHandoffSnapshot
+import com.example.tuner.TunerInputSource
+import com.example.tuner.TunerReading
+import com.example.tuner.TuningPreset
 import java.io.File
 
 /**
  * Circular studio hub-and-spoke device topology:
- * BOOTH is the central hub; 6 specialized spokes radiate around it.
+ * BOOTH is the central hub; 9 equal studio spokes (including TUNER and 64-Ch VMC) radiate around it.
+ * Dock visibility and radial wheel spoke placement are customizable in Production Booth.
  */
 enum class StudioSpoke(
     val shortLabel: String,
@@ -21,7 +26,9 @@ enum class StudioSpoke(
     INSTRUMENTS("INST", "16-STEP SEQ & MIDI", "SYNTH"),
     TRACKS("TRACKS", "SYNCED TRACK TIMELINE", "SYNC"),
     FX_RACK("FX", "12-MODULE PRO DSP RACK", "DSP"),
-    LIVE("LIVE", "LIVE STOMPBOX & RELEASE", "STAGE")
+    LIVE("LIVE", "LIVE STOMPBOX & RELEASE", "STAGE"),
+    TUNER("TUNER", "CHROMATIC & STROBE TUNER", "PITCH"),
+    VMC("VMC", "VMC 64-CH MIDI MAPPER", "MIDI")
 }
 
 enum class VisualizerMode(val label: String) {
@@ -29,6 +36,34 @@ enum class VisualizerMode(val label: String) {
     SPECTRUM("FFT"),
     DUAL("DUAL")
 }
+
+data class WorkspaceConfig(
+    val pinnedDockSpokes: List<StudioSpoke> = listOf(
+        StudioSpoke.BOOTH,
+        StudioSpoke.DECK,
+        StudioSpoke.SAMPLES,
+        StudioSpoke.INSTRUMENTS,
+        StudioSpoke.TRACKS,
+        StudioSpoke.FX_RACK,
+        StudioSpoke.LIVE
+    ),
+    val radialWheelSpokes: List<StudioSpoke> = listOf(
+        StudioSpoke.DECK,
+        StudioSpoke.SAMPLES,
+        StudioSpoke.INSTRUMENTS,
+        StudioSpoke.TUNER,
+        StudioSpoke.LIVE,
+        StudioSpoke.VMC,
+        StudioSpoke.TRACKS,
+        StudioSpoke.FX_RACK
+    )
+)
+
+data class TunerUiState(
+    val source: TunerInputSource = TunerInputSource.DECK_BUFFER,
+    val preset: TuningPreset = TuningPreset.CHROMATIC,
+    val reading: TunerReading = TunerReading()
+)
 
 data class SavedTakeItem(
     val name: String,
@@ -54,7 +89,8 @@ data class EditorState(
     val savedTakes: List<SavedTakeItem> = emptyList(),
     val lastExport: ExportedMp3Result? = null,
     val lastLocalExport: ExportedAudioResult? = null,
-    val isExporting: Boolean = false
+    val isExporting: Boolean = false,
+    val pendingHandoff: SessionHandoffSnapshot? = null
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -76,7 +112,8 @@ data class EditorState(
             savedTakes == other.savedTakes &&
             lastExport == other.lastExport &&
             lastLocalExport == other.lastLocalExport &&
-            isExporting == other.isExporting
+            isExporting == other.isExporting &&
+            pendingHandoff == other.pendingHandoff
     }
 
     override fun hashCode(): Int {
@@ -98,6 +135,7 @@ data class EditorState(
         result = 31 * result + (lastExport?.hashCode() ?: 0)
         result = 31 * result + (lastLocalExport?.hashCode() ?: 0)
         result = 31 * result + isExporting.hashCode()
+        result = 31 * result + (pendingHandoff?.hashCode() ?: 0)
         return result
     }
 }

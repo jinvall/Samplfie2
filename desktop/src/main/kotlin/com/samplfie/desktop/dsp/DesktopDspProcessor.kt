@@ -43,15 +43,17 @@ object DesktopDspProcessor {
             buf = applyWah(buf, fx.wahFreqHz, sr)
         }
         if (!stomp.engaged || !stomp.killMod) {
-            if (fx.phaserEnabled) buf = applyPhaser(buf, fx.phaserMix, sr)
-            if (fx.flangerEnabled) buf = applyFlanger(buf, fx.flangerMix, sr)
-            if (fx.chorusEnabled) buf = applyChorus(buf, fx.chorusMix, sr)
-            if (fx.rotaryEnabled) buf = applyRotary(buf, fx.rotaryRateHz, sr)
+            val mScale = if (stomp.engaged) stomp.modScale.coerceIn(0f, 1.8f) else 1f
+            if (fx.phaserEnabled) buf = applyPhaser(buf, (fx.phaserMix * mScale).coerceIn(0f, 1f), sr)
+            if (fx.flangerEnabled) buf = applyFlanger(buf, (fx.flangerMix * mScale).coerceIn(0f, 1f), sr)
+            if (fx.chorusEnabled) buf = applyChorus(buf, (fx.chorusMix * mScale).coerceIn(0f, 1f), sr)
+            if (fx.rotaryEnabled) buf = applyRotary(buf, fx.rotaryRateHz * mScale.coerceAtLeast(0.25f), sr)
         }
         if (!stomp.engaged || !stomp.killTime) {
-            if (fx.echoEnabled) buf = applyEcho(buf, fx.echoDelayMs, fx.echoFeedback, fx.echoMix, sr)
-            if (fx.delayEnabled) buf = applyDelay(buf, fx.delayTimeMs, fx.delayMix, sr)
-            if (fx.reverbEnabled) buf = applyReverb(buf, fx.reverbSize, fx.reverbMix, sr)
+            val sScale = if (stomp.engaged) stomp.spaceScale.coerceIn(0f, 1.8f) else 1f
+            if (fx.echoEnabled) buf = applyEcho(buf, fx.echoDelayMs, fx.echoFeedback, (fx.echoMix * sScale).coerceIn(0f, 1f), sr)
+            if (fx.delayEnabled) buf = applyDelay(buf, fx.delayTimeMs, (fx.delayMix * sScale).coerceIn(0f, 1f), sr)
+            if (fx.reverbEnabled) buf = applyReverb(buf, fx.reverbSize, (fx.reverbMix * sScale).coerceIn(0f, 1f), sr)
         }
         if (fx.gainEnabled) {
             buf = applyGain(buf, fx.gainDb, fx.normalize)

@@ -1,9 +1,8 @@
 package com.samplfie.desktop.audio
 
 import com.samplfie.desktop.model.DesktopAudioBuffer
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
 import javax.sound.sampled.DataLine
@@ -39,10 +38,10 @@ data class DesktopMicState(
 
 /**
  * Native Linux ALSA / PulseAudio / PipeWire Java Sound engine supporting:
- * - Playback review of DesktopAudioBuffer with loop/selection bounds & live FFT telemetry
+ * - Hot-swappable DesktopAudioBuffer playback that persists uninterrupted across edits & extractions when looping
  * - Live microphone capture into editable WAV buffers
  * - Live microphone streaming into the Chromatic Tuner
- * - Reference tuning tone synthesis
+ * - Reference tuning tones & one-shot pad auditioning without stopping deck loop playback
  */
 class LinuxSoundEngine(
     private val onLiveSamplesForTuner: (FloatArray, Int) -> Unit = { _, _ -> }
@@ -53,12 +52,22 @@ class LinuxSoundEngine(
     private val _micState = MutableStateFlow(DesktopMicState())
     val micState: StateFlow<DesktopMicState> = _micState.asStateFlow()
 
-    private var buffer: DesktopAudioBuffer? = null
+    private val bufferRef = AtomicReference<DesktopAudioBuffer?>(null)
+
+    @Volatile
     private var selectionStart = 0f
+
+    @Volatile
     private var selectionEnd = 1f
+
+    @Volatile
     private var playSelectionOnly = false
 
+    @Volatile
+    private var cursorFrame = 0
+
     private val playingFlag = AtomicBoolean(false)
+    private val loopingFlag = AtomicBoolean(false)
     private var playThread: Thread? = null
 
     private val micRunning = AtomicBoolean(false)
@@ -66,16 +75,47 @@ class LinuxSoundEngine(
     private val recordedSamples = mutableListOf<Float>()
     private var recordedSampleRate = 44100
 
-    fun setBuffer(newBuf: DesktopAudioBuffer?) {
-        stopPlayback()
-        buffer = newBuf
-        _playbackState.value = _playbackState.value.copy(
-            playheadFraction = 0f,
-            livePeak = 0f,
-            liveRms = 0f,
-            liveSpectrum = SignalAnalyzer.computeSpectrumBands(newBuf, 0, 1024, 48)
-        )
+    /**
+     * Updates the playback buffer. When [preserveLoopPlayback] is true and a loop is currently playing,
+     * the buffer is hot-swapped seamlessly so loop playback survives edits, FX changes, and extractions until STOP is pressed.
+     */
+    fun updateBufferHot(newBuf: DesktopAudioBuffer?, preserveLoopPlayback: Boolean = false) {
+        val oldBuf = bufferRef.getAndSet(newBuf)
+        val wasLoopingAndPlaying = preserveLoopPlayback && playingFlag.get() && loopingFlag.get()
+        if (!wasLoopingAndPlaying) {
+            stopPlayback()
+            cursorFrame = 0
+            _playbackState.value = _playbackState.value.copy(
+                playheadFraction = 0f,
+                livePeak = 0f,
+                liveRms = 0f,
+                liveSpectrum = SignalAnalyzer.computeSpectrumBands(newBuf, 0, 1024, 48)
+            )
+            return
+        }
+
+        if (newBuf == null || newBuf.frameCount == 0) {
+            stopPlayback()
+            return
+        }
+
+        val total = newBuf.frameCount
+        cursorFrame = cursorFrame.coerceIn(0, total - 1)
+        val formatChanged = oldBuf?.sampleRate != newBuf.sampleRate || oldBuf.channels != newBuf.channels
+        if (formatChanged) {
+            // Restart stream smoothly on new audio format while preserving loop & playing state
+            playingFlag.set(false)
+            runCatching { playThread?.join(120) }
+            startPlayback()
+        } else {
+            _playbackState.value = _playbackState.value.copy(
+                playheadFraction = cursorFrame.toFloat() / total.coerceAtLeast(1),
+                liveSpectrum = SignalAnalyzer.computeSpectrumBands(newBuf, cursorFrame, 1024, 48)
+            )
+        }
     }
+
+    fun setBuffer(newBuf: DesktopAudioBuffer?) = updateBufferHot(newBuf, preserveLoopPlayback = false)
 
     fun setSelection(start: Float, end: Float, onlySelection: Boolean) {
         selectionStart = min(start, end).coerceIn(0f, 1f)
@@ -84,13 +124,15 @@ class LinuxSoundEngine(
     }
 
     fun setLooping(loop: Boolean) {
+        loopingFlag.set(loop)
         _playbackState.value = _playbackState.value.copy(isLooping = loop)
     }
 
     fun seekTo(fraction: Float) {
         val clamped = fraction.coerceIn(0f, 1f)
-        val b = buffer
-        val frame = ((b?.frameCount ?: 0) * clamped).toInt()
+        val b = bufferRef.get()
+        val frame = ((b?.frameCount ?: 0) * clamped).toInt().coerceIn(0, max(0, (b?.frameCount ?: 1) - 1))
+        cursorFrame = frame
         _playbackState.value = _playbackState.value.copy(
             playheadFraction = clamped,
             liveSpectrum = SignalAnalyzer.computeSpectrumBands(b, frame, 1024, 48)
@@ -106,50 +148,68 @@ class LinuxSoundEngine(
     }
 
     fun startPlayback() {
-        val b = buffer ?: return
-        if (b.frameCount == 0) return
+        val initial = bufferRef.get() ?: return
+        if (initial.frameCount == 0) return
         if (playingFlag.getAndSet(true)) return
 
         _playbackState.value = _playbackState.value.copy(isPlaying = true)
         playThread = thread(isDaemon = true, name = "SamplfieDesktopPlay") {
             var line: SourceDataLine? = null
+            var openedRate = initial.sampleRate
+            var openedChannels = initial.channels
             try {
-                val fmt = AudioFormat(b.sampleRate.toFloat(), 16, b.channels, true, false)
-                val info = DataLine.Info(SourceDataLine::class.java, fmt)
-                if (AudioSystem.isLineSupported(info)) {
-                    line = (AudioSystem.getLine(info) as SourceDataLine).apply {
-                        open(fmt, 4096)
-                        start()
-                    }
-                }
+                line = openOutputLine(openedRate, openedChannels)
 
-                val startFrame = if (playSelectionOnly) {
-                    (selectionStart * b.frameCount).toInt().coerceIn(0, b.frameCount - 1)
-                } else {
-                    (_playbackState.value.playheadFraction * b.frameCount).toInt()
-                        .coerceIn(0, max(0, b.frameCount - 1))
-                }
-                val endFrame = if (playSelectionOnly) {
-                    (selectionEnd * b.frameCount).toInt().coerceIn(startFrame + 1, b.frameCount)
-                } else {
-                    b.frameCount
-                }
-
-                var cursor = startFrame
                 val chunkFrames = 1024
-                val frameMs = (chunkFrames * 1000L) / b.sampleRate.coerceAtLeast(8000)
-
                 while (playingFlag.get()) {
-                    if (cursor >= endFrame) {
-                        if (_playbackState.value.isLooping) {
-                            cursor = startFrame
+                    val b = bufferRef.get() ?: break
+                    if (b.frameCount == 0) break
+
+                    if (b.sampleRate != openedRate || b.channels != openedChannels) {
+                        runCatching { line?.drain(); line?.stop(); line?.close() }
+                        openedRate = b.sampleRate
+                        openedChannels = b.channels
+                        line = openOutputLine(openedRate, openedChannels)
+                    }
+
+                    val startFrame = if (playSelectionOnly) {
+                        (selectionStart * b.frameCount).toInt().coerceIn(0, b.frameCount - 1)
+                    } else {
+                        0
+                    }
+                    val endFrame = if (playSelectionOnly) {
+                        (selectionEnd * b.frameCount).toInt().coerceIn(startFrame + 1, b.frameCount)
+                    } else {
+                        b.frameCount
+                    }
+
+                    if (cursorFrame < startFrame) {
+                        cursorFrame = startFrame
+                    }
+                    if (cursorFrame >= endFrame) {
+                        if (loopingFlag.get()) {
+                            cursorFrame = startFrame
                         } else {
                             break
                         }
                     }
-                    val count = min(chunkFrames, endFrame - cursor)
-                    val slice = b.samples.copyOfRange(cursor * b.channels, (cursor + count) * b.channels)
+
+                    val curPos = cursorFrame.coerceIn(startFrame, max(startFrame, endFrame - 1))
+                    val count = min(chunkFrames, endFrame - curPos)
+                    if (count <= 0) {
+                        if (loopingFlag.get()) {
+                            cursorFrame = startFrame
+                            continue
+                        } else {
+                            break
+                        }
+                    }
+                    val sampleLo = (curPos * b.channels).coerceIn(0, b.samples.size)
+                    val sampleHi = ((curPos + count) * b.channels).coerceIn(sampleLo, b.samples.size)
+                    val slice = b.samples.copyOfRange(sampleLo, sampleHi)
                     val pcm = DesktopWavCodec.floatToPcm16Bytes(slice)
+                    val frameMs = (count * 1000L) / b.sampleRate.coerceAtLeast(8000)
+
                     if (line != null) {
                         line.write(pcm, 0, pcm.size)
                     } else {
@@ -165,14 +225,18 @@ class LinuxSoundEngine(
                     }
                     val rms = sqrt(sq / max(1, slice.size)).toFloat()
                     val monoChunk = if (b.channels > 1) {
-                        FloatArray(count) { i -> 0.5f * (slice[i * 2] + slice[i * 2 + 1]) }
+                        val monoLen = slice.size / b.channels
+                        FloatArray(monoLen) { i -> 0.5f * (slice[i * 2] + slice[i * 2 + 1]) }
                     } else {
                         slice
                     }
-                    onLiveSamplesForTuner(monoChunk, b.sampleRate)
+                    if (monoChunk.isNotEmpty()) {
+                        onLiveSamplesForTuner(monoChunk, b.sampleRate)
+                    }
 
-                    cursor += count
-                    val frac = cursor.toFloat() / b.frameCount.coerceAtLeast(1)
+                    val nextCursor = curPos + count
+                    cursorFrame = if (nextCursor >= endFrame && loopingFlag.get()) startFrame else nextCursor
+                    val frac = cursorFrame.toFloat() / b.frameCount.coerceAtLeast(1)
                     _playbackState.value = _playbackState.value.copy(
                         playheadFraction = frac.coerceIn(0f, 1f),
                         livePeak = peak,
@@ -181,7 +245,6 @@ class LinuxSoundEngine(
                     )
                 }
             } catch (_: Exception) {
-                // Graceful fallback if audio output line is busy or unavailable in headless Linux
             } finally {
                 playingFlag.set(false)
                 runCatching { line?.drain(); line?.stop(); line?.close() }
@@ -194,6 +257,18 @@ class LinuxSoundEngine(
         }
     }
 
+    private fun openOutputLine(sampleRate: Int, channels: Int): SourceDataLine? {
+        return runCatching {
+            val fmt = AudioFormat(sampleRate.toFloat(), 16, channels, true, false)
+            val info = DataLine.Info(SourceDataLine::class.java, fmt)
+            if (!AudioSystem.isLineSupported(info)) return null
+            (AudioSystem.getLine(info) as SourceDataLine).apply {
+                open(fmt, 4096)
+                start()
+            }
+        }.getOrNull()
+    }
+
     fun pausePlayback() {
         playingFlag.set(false)
         _playbackState.value = _playbackState.value.copy(isPlaying = false)
@@ -202,12 +277,34 @@ class LinuxSoundEngine(
     fun stopPlayback() {
         playingFlag.set(false)
         runCatching { playThread?.join(180) }
+        cursorFrame = 0
         _playbackState.value = _playbackState.value.copy(
             isPlaying = false,
             playheadFraction = 0f,
             livePeak = 0f,
             liveRms = 0f
         )
+    }
+
+    fun playOneShot(buf: DesktopAudioBuffer) {
+        if (buf.frameCount == 0) return
+        thread(isDaemon = true, name = "SamplfieDesktopOneShot") {
+            val pcm = DesktopWavCodec.floatToPcm16Bytes(buf.samples)
+            try {
+                val fmt = AudioFormat(buf.sampleRate.toFloat(), 16, buf.channels, true, false)
+                val info = DataLine.Info(SourceDataLine::class.java, fmt)
+                if (AudioSystem.isLineSupported(info)) {
+                    (AudioSystem.getLine(info) as SourceDataLine).use { line ->
+                        line.open(fmt, 4096)
+                        line.start()
+                        line.write(pcm, 0, pcm.size)
+                        line.drain()
+                        line.stop()
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }
     }
 
     fun playReferenceTone(freqHz: Double, durationMs: Int = 700, sampleRate: Int = 44100) {
@@ -232,7 +329,6 @@ class LinuxSoundEngine(
                     }
                 }
             } catch (_: Exception) {
-                // Ignore in headless Linux
             }
         }
     }
@@ -281,11 +377,8 @@ class LinuxSoundEngine(
                         var peak = 0f
                         for (s in floats) peak = max(peak, abs(s))
 
-                        // Accumulate >= 2048 samples for accurate bass pitch detection
                         for (s in floats) {
-                            if (rollingFill < rollingTuner.size) {
-                                rollingTuner[rollingFill++] = s
-                            }
+                            if (rollingFill < rollingTuner.size) rollingTuner[rollingFill++] = s
                         }
                         if (rollingFill >= 2048) {
                             onLiveSamplesForTuner(rollingTuner.copyOfRange(0, rollingFill), sampleRate)
@@ -295,10 +388,7 @@ class LinuxSoundEngine(
                         val sec = if (tunerOnly) 0f else synchronized(recordedSamples) {
                             recordedSamples.size.toFloat() / sampleRate
                         }
-                        _micState.value = _micState.value.copy(
-                            capturedSeconds = sec,
-                            peakLevel = peak
-                        )
+                        _micState.value = _micState.value.copy(capturedSeconds = sec, peakLevel = peak)
                     }
                 }
             } catch (e: Exception) {
