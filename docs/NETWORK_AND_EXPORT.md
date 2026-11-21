@@ -23,3 +23,7 @@ Persisted via Jetpack `DataStore` Preferences (`samplfie2_rig_prefs`):
 - **`.WAV` Export**: Writes standard RIFF PCM 16-bit `.wav` files via `WavExporter.saveWavToDevice`.
 - **`.MP3` Export**: Encodes MPEG-1 Layer III (`128–320` kbps CBR) via pure-Java LAME (`de.sciss:jump3r:1.0.5`).
 - Saves into `Music/Samplfie2/` using `MediaStore.Audio.Media` on Android 10+ (API 29+) with automatic app-external `Music/Samplfie2/` fallback on legacy or headless environments.
+
+## Desktop Linux Bridge & Export (`:desktop`)
+- **`Smp2NetworkNode`**: Listens on any configured TCP (`ServerSocket`) or UDP (`DatagramSocket`) port to receive `SMP2` frames streamed from the Android **LIVE** spoke, route incoming frames directly to the **Chromatic Tuner** (`SMP2_STREAM`), and capture received frames directly into the **Signal Editor** buffer—or transmit processed desktop audio back to Android or another studio host.
+- **Desktop Export**: Uses `DesktopWavCodec` and `DesktopMp3Exporter` (`de.sciss:jump3r`) with Swing file choosers for direct `.wav` / `.mp3` read/write on Linux filesystems.

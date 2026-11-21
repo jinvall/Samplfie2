@@ -22,7 +22,16 @@ Samplfie2 is organized around a **Circular Production Booth Hub-and-Spoke** mode
 - `studio/` — `StudioEngine` & `DrumKitSynthesizer` (4-slot Looper, 16-Step Sequencer, 4-Track Timeline, and `SyncedPlayheadState` synchronizing timeline, sequencer, and looper clocks).
 - `ui/` — `SamplfieUiState`, `SamplfieViewModel`, `components/` (`MasterProductionHub` providing persistent on-screen `DockedCircularProductionHub` on portrait stations and `WideCircularProductionSidebar` on wide/tablet screens, `CircularStudioHub` / `CircularStudioWheel`, `StompboxMiniProcessor`, `HardwareChrome`, `AudioVisualizerPanel`, `TacHoldPad`), `screens/` (`DeckEditorScreen`, `SamplesSpokeScreen`, `InstrumentsSpokeScreen`, `TracksSpokeScreen`, `FxRackScreen`, `FxRackSpatialCards`, `LiveSpokeScreen`), and adaptive `MainActivity`.
 
-## Permissions
+## Permissions (Android)
 - `RECORD_AUDIO`: Runtime permission requested only when arming or holding the TAC mic capture pad.
 - `INTERNET`, `ACCESS_NETWORK_STATE`: Install-time permissions for TCP/UDP network streaming.
 - `WRITE_EXTERNAL_STORAGE` (`maxSdkVersion="28"`): Only for legacy pre-Android 10 devices; Android 10+ uses zero-permission `MediaStore.Audio.Media` and SAF `OpenDocument` requires zero storage permissions.
+
+## Desktop Companion Module Layout (`:desktop` — `com.samplfie.desktop`)
+- `model/` — `DesktopModels` (`DesktopStation`, `DesktopAudioBuffer`, `DesktopFxState`, `DesktopStompState`, `DesktopPresetFactory`, `TunerReading`, `TuningPreset`, `DesktopRigConfig`).
+- `audio/` — `DesktopWavCodec`, `DesktopMp3Exporter` (`jump3r`), `SignalAnalyzer` (envelope peaks, 48-band Radix-2 FFT, calibrated test signal generator), `LinuxSoundEngine` (`javax.sound.sampled` ALSA/PulseAudio/PipeWire playback, mic capture, live tuner feeding, and reference pitch synthesis with headless fallback).
+- `tuner/` — `PitchDetector` (YIN fundamental pitch detection across `32 Hz – 2200 Hz` with parabolic interpolation and configurable `A4` calibration).
+- `dsp/` — `DesktopDspProcessor` (matching 12-module DSP chain + Stompbox master scaling/kill/tilt processing).
+- `network/` — `Smp2NetworkNode` (bidirectional `SMP2` 20-byte header TCP `ServerSocket`/`Socket` and UDP `DatagramSocket` listener + transmitter).
+- `ui/` — `StudioTheme` (matching Samplfie2 Android palette), `CircularHubSidebar` (persistent 360° Java2D wheel + transport + VU meter), `SignalEditorPanel`, `ChromaticTunerPanel`, `FxAndStompPanel`, `NetLinkPanel`, and `SamplfieDesktopFrame` (`Main.kt`).
+- `scripts/` — `launch-linux-studio.sh` & `samplfie2-desktop.desktop` Linux launcher and desktop entry.

@@ -27,3 +27,9 @@
 - Redesigned main navigation around the **Circular Production Booth Hub** (`CircularStudioHub` / `CircularStudioWheel`) and 6 radial device spokes: **DECK**, **SAMPLES** (with integrated **Loop Refinement Editor**), **INSTRUMENTS** (16-step seq, pads, MIDI), **TRACKS** (globally synced playhead), **FX RACK** (12 expanded modules), and **LIVE** (`StompboxMiniProcessor` + `Stage DJ` / `Live Rec` / `Studio Release` modes + Rig/Export hub).
 - Added persistent **Master Production Control Hub** (`DockedCircularProductionHub` with expandable inline 360° wheel on portrait stations, and `WideCircularProductionSidebar` on wide/tablet layouts) so master sync transport, beat/VU dial, deck audition, tap BPM, stomp bypass, universal import, and network TX stay on screen across every station spoke.
 - Verified end-to-end via `Stage5ComposeConsoleTest` (`gradle :app:testDebugUnitTest`), `compile_applet`, and zero `TODO`/placeholder scan.
+
+## Stage 6: Linux Desktop Audio, Signal Editor, Chromatic Tuner & SMP2 Bridge (`:desktop`)
+**Status:** VERIFIED
+- Built `:desktop` Kotlin JVM Gradle module (`com.samplfie.desktop`) with a Linux Java2D/Swing GUI mirroring the Samplfie2 Android dark hardware chassis, neon accents, and persistent **CircularHubSidebar** 360° wheel.
+- Implemented **Signal Editor** (dual waveform + 48-band FFT scope, selection extract, zero-crossing snap, fades, reverse, DC fix, normalize, undo/reset, signal generator, ALSA/PulseAudio/PipeWire mic/playback, WAV/MP3 export), **Chromatic Tuner** (YIN `32–2200 Hz`, circular strobe/cents dial, `A4` calibration, instrument presets & reference tone pads), **12-FX + Stompbox** station, and bidirectional **SMP2 TCP/UDP Net Link** + Linux `.desktop`/launcher scripts.
+- Verified via `DesktopStudioTest` (`gradle :desktop:test`), `:desktop:installDist`, Android `:app:testDebugUnitTest`, and `compile_applet`.

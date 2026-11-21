@@ -25,3 +25,4 @@ dependencyResolutionManagement {
 rootProject.name = "Samplfie2"
 
 include(":app")
+include(":desktop")

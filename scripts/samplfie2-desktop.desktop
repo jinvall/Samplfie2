@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Samplfie2 Linux Studio
+Comment=Desktop Audio, Signal Editor, Chromatic Tuner & SMP2 Bridge for Samplfie2
+Exec=/usr/local/bin/samplfie2-desktop
+Terminal=false
+Categories=AudioVideo;Audio;Music;
+Keywords=audio;dsp;tuner;waveform;dj;samplfie2;
