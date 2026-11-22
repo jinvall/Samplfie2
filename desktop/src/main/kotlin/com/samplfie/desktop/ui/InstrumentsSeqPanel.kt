@@ -1,5 +1,10 @@
 package com.samplfie.desktop.ui
 
+import com.samplfie.desktop.drums.BeaterSide
+import com.samplfie.desktop.drums.CustomDrumKitState
+import com.samplfie.desktop.drums.DrumAddonType
+import com.samplfie.desktop.drums.DrumKitPreset
+import com.samplfie.desktop.drums.DrumKitStyle
 import com.samplfie.desktop.midi.VmcEngineState
 import com.samplfie.desktop.studio.DesktopSequencerState
 import java.awt.BorderLayout
@@ -32,8 +37,51 @@ class InstrumentsSeqPanel(
     private val onOpenVmcMapper: () -> Unit,
     private val onToggleCompanionOverdubRx: () -> Unit = {},
     private val onClearPattern: () -> Unit = {},
-    private val onUndoPattern: () -> Unit = {}
+    private val onUndoPattern: () -> Unit = {},
+    private val onSetDrumStyle: (DrumKitStyle) -> Unit = {},
+    private val onApplyDrumPreset: (DrumKitPreset) -> Unit = {},
+    private val onToggleDrumArrangeMode: () -> Unit = {},
+    private val onFlipDrumKitLeftHanded: () -> Unit = {},
+    private val onSelectDrumSlot: (String?) -> Unit = {},
+    private val onSetTargetBeater: (BeaterSide) -> Unit = {},
+    private val onHitDrumPiece: (String, BeaterSide) -> Unit = { _, _ -> },
+    private val onHitDrumAddon: (String) -> Unit = {},
+    private val onMoveDrumPiece: (String, Float, Float) -> Unit = { _, _, _ -> },
+    private val onAddDrumPiece: (String) -> Unit = {},
+    private val onSwapDrumPiece: (String, String) -> Unit = { _, _ -> },
+    private val onRemoveDrumPiece: (String) -> Unit = {},
+    private val onUpdateDrumPieceParams: (String, Float?, Float?, Float?, Boolean?) -> Unit = { _, _, _, _, _ -> },
+    private val onAttachDrumAddon: (DrumAddonType, String, BeaterSide) -> Unit = { _, _, _ -> },
+    private val onRemoveDrumAddon: (String) -> Unit = {},
+    private val onToggleDrumAddonCoupled: (String) -> Unit = {},
+    private val onSetDrumAddonStyle: (String, DrumKitStyle) -> Unit = { _, _ -> },
+    private val onSetDrumAddonBeaterSide: (String, BeaterSide) -> Unit = { _, _ -> },
+    private val onRouteDrumPieceToSeqLane: (String, Int, BeaterSide) -> Unit = { _, _, _ -> },
+    private val onSendDrumPieceToDeck: (String, BeaterSide) -> Unit = { _, _ -> }
 ) : JPanel() {
+
+    private val drumKitPanel = DesktopDrumKitPanel(
+        onSetStyle = onSetDrumStyle,
+        onApplyPreset = onApplyDrumPreset,
+        onToggleArrangeMode = onToggleDrumArrangeMode,
+        onFlipLeftHanded = onFlipDrumKitLeftHanded,
+        onSelectSlot = onSelectDrumSlot,
+        onSetTargetBeater = onSetTargetBeater,
+        onHitPiece = onHitDrumPiece,
+        onHitAddon = onHitDrumAddon,
+        onMovePiece = onMoveDrumPiece,
+        onAddPiece = onAddDrumPiece,
+        onSwapPiece = onSwapDrumPiece,
+        onRemovePiece = onRemoveDrumPiece,
+        onUpdatePieceParams = onUpdateDrumPieceParams,
+        onAttachAddon = onAttachDrumAddon,
+        onRemoveAddon = onRemoveDrumAddon,
+        onToggleAddonCoupled = onToggleDrumAddonCoupled,
+        onSetAddonStyle = onSetDrumAddonStyle,
+        onSetAddonBeaterSide = onSetDrumAddonBeaterSide,
+        onRouteToSeqLane = onRouteDrumPieceToSeqLane,
+        onSendToDeck = onSendDrumPieceToDeck
+    )
 
     private var updating = false
     private var lastSeqState = DesktopSequencerState()
@@ -61,6 +109,9 @@ class InstrumentsSeqPanel(
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             border = javax.swing.BorderFactory.createEmptyBorder(10, 12, 10, 12)
         }
+
+        root.add(drumKitPanel)
+        root.add(Box.createVerticalStrut(10))
 
         // Top Sequencer Controls
         val ctrlBar = StudioTheme.hardwarePanel(StudioTheme.AmberHot).apply {
@@ -181,7 +232,8 @@ class InstrumentsSeqPanel(
         }, BorderLayout.CENTER)
     }
 
-    fun updateState(seq: DesktopSequencerState, vmc: VmcEngineState) {
+    fun updateState(seq: DesktopSequencerState, vmc: VmcEngineState, drumKit: CustomDrumKitState = CustomDrumKitState()) {
+        drumKitPanel.updateState(drumKit)
         updating = true
         try {
             lastSeqState = seq

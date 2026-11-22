@@ -45,6 +45,13 @@ import com.example.network.MAX_COLLAB_PEERS
 import com.example.network.NetworkAudioTransmitter
 import com.example.network.NetworkLinkState
 import com.example.network.SessionHandoffSnapshot
+import com.example.drums.BeaterSide
+import com.example.drums.CustomDrumKitState
+import com.example.drums.DrumAddonType
+import com.example.drums.DrumKitManager
+import com.example.drums.DrumKitPreset
+import com.example.drums.DrumKitStyle
+import com.example.drums.DrumKitSynthesizerLibrary
 import com.example.stems.DisbandApiClient
 import com.example.stems.DisbandHttpTransport
 import com.example.stems.DisbandStem
@@ -148,6 +155,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
     )
     private val midiController = MidiControllerManager(appContext)
     private val studioEngine = StudioEngine()
+    val drumKitManager = DrumKitManager()
 
     private val undoStack = ArrayDeque<AudioBuffer>()
     private var fxRenderJob: Job? = null
@@ -208,6 +216,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
     val sequencerState: StateFlow<SequencerState> = studioEngine.sequencerState
     val timelineState: StateFlow<TimelineState> = studioEngine.timelineState
     val syncedPlayhead: StateFlow<SyncedPlayheadState> = studioEngine.syncedPlayhead
+    val customDrumKitState: StateFlow<CustomDrumKitState> = drumKitManager.state
 
     init {
         viewModelScope.launch {
@@ -238,7 +247,12 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
                 vmcEngine.processAndroidHardwareMidi(event, busIndex = 0)
                 when (event) {
                     is MidiEvent.NoteOn -> {
-                        if (event.note in 48..72) {
+                        val drumHit = if (event.note in 35..59) {
+                            drumKitManager.synthesizeByMidiNote(event.note, _rigConfig.value.sampleRate)
+                        } else null
+                        if (drumHit != null) {
+                            studioEngine.playOneShot(drumHit)
+                        } else if (event.note in 48..72) {
                             _editorState.value.processedBuffer ?: return@collect
                             val semitones = (event.note - 60).toFloat()
                             updateFxRack {
@@ -839,6 +853,83 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         _editorState.value = _editorState.value.copy(statusBanner = "BOUNCED 2-BAR BEAT TO TIMELINE")
     }
 
+    // --- ARRANGEABLE CUSTOM ELECTRIC & ACOUSTIC DRUM KIT (UP TO 7 MAIN + MOUNTED ADD-ONS) ---
+
+    fun setDrumKitStyle(style: DrumKitStyle, convertExisting: Boolean = true) {
+        drumKitManager.setKitStyle(style, convertExisting)
+        _editorState.value = _editorState.value.copy(statusBanner = "DRUM KIT -> ${style.label.uppercase()}")
+    }
+
+    fun applyDrumKitPreset(preset: DrumKitPreset) {
+        drumKitManager.applyPreset(preset)
+        _editorState.value = _editorState.value.copy(statusBanner = "DRUM KIT: ${preset.label.uppercase()}")
+    }
+
+    fun toggleDrumArrangeMode() = drumKitManager.toggleArrangeMode()
+    fun flipDrumKitLeftHanded() = drumKitManager.flipLeftHanded()
+    fun selectDrumSlot(slotId: String?) = drumKitManager.selectSlot(slotId)
+    fun setTargetBeaterForMount(side: BeaterSide) = drumKitManager.setTargetBeaterForMount(side)
+
+    fun addMainDrumPiece(componentId: String, xNorm: Float? = null, yNorm: Float? = null): Boolean {
+        val added = drumKitManager.addMainPiece(componentId, xNorm, yNorm)
+        if (added == null) {
+            drumKitManager.state.value.statusError?.let { _toastEvents.tryEmit(it) }
+            return false
+        }
+        return true
+    }
+
+    fun swapMainDrumPiece(slotId: String, newComponentId: String) =
+        drumKitManager.swapMainPiece(slotId, newComponentId)
+
+    fun removeMainDrumPiece(slotId: String) = drumKitManager.removeMainPiece(slotId)
+
+    fun moveDrumPieceOnStage(slotId: String, xNorm: Float, yNorm: Float) =
+        drumKitManager.movePieceOnStage(slotId, xNorm, yNorm)
+
+    fun updateDrumPieceParams(
+        slotId: String,
+        pitchSemitones: Float? = null,
+        decayScale: Float? = null,
+        volume: Float? = null,
+        isMuted: Boolean? = null
+    ) = drumKitManager.updatePieceParams(slotId, pitchSemitones, decayScale, volume, isMuted)
+
+    fun attachDrumAddon(
+        addonType: DrumAddonType,
+        targetSlotId: String,
+        beaterSide: BeaterSide = drumKitManager.state.value.targetBeaterForMount,
+        styleOverride: DrumKitStyle? = null
+    ) = drumKitManager.attachAddon(addonType, targetSlotId, beaterSide, styleOverride)
+
+    fun removeDrumAddon(instanceId: String) = drumKitManager.removeMountedAddon(instanceId)
+    fun toggleDrumAddonCoupled(instanceId: String) = drumKitManager.toggleAddonCoupled(instanceId)
+    fun setDrumAddonStyle(instanceId: String, style: DrumKitStyle) = drumKitManager.setAddonStyle(instanceId, style)
+    fun setDrumAddonBeaterSide(instanceId: String, side: BeaterSide) = drumKitManager.setAddonBeaterSide(instanceId, side)
+
+    fun hitDrumPiece(slotId: String, beaterSide: BeaterSide = BeaterSide.NONE) {
+        val hit = drumKitManager.synthesizePieceHit(slotId, beaterSide, _rigConfig.value.sampleRate) ?: return
+        studioEngine.playOneShot(hit)
+    }
+
+    fun hitDrumAddon(instanceId: String) {
+        val hit = drumKitManager.synthesizeAddonHit(instanceId, _rigConfig.value.sampleRate) ?: return
+        studioEngine.playOneShot(hit)
+    }
+
+    fun sendDrumPieceToSeqLane(slotId: String, laneId: Int, beaterSide: BeaterSide = BeaterSide.NONE) {
+        val hit = drumKitManager.synthesizePieceHit(slotId, beaterSide, _rigConfig.value.sampleRate) ?: return
+        studioEngine.setSequencerSampleForLane(laneId.coerceIn(0, 3), hit)
+        _editorState.value = _editorState.value.copy(
+            statusBanner = "ROUTED ${hit.name} -> SEQ LANE ${laneId.coerceIn(0, 3) + 1}"
+        )
+    }
+
+    fun sendDrumKitPieceToDeck(slotId: String, beaterSide: BeaterSide = BeaterSide.NONE) {
+        val hit = drumKitManager.synthesizePieceHit(slotId, beaterSide, _rigConfig.value.sampleRate) ?: return
+        loadNewRawBuffer(hit, "SENT ${hit.name} TO DECK EDITOR", preserveLoopPlayback = false)
+    }
+
     // --- TRACKS SPOKE: SYNCED PLAYHEAD & TIMELINE ---
 
     fun toggleSyncedTransport() = studioEngine.toggleSyncedTransport()
@@ -1296,6 +1387,14 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
             VmcTarget.SEQ_PLAY_TOGGLE -> studioEngine.toggleSequencerPlayback()
             VmcTarget.TIMELINE_PLAY_TOGGLE -> studioEngine.toggleTimelinePlayback()
             VmcTarget.SESSION_HANDOFF_PUSH -> pushSessionToPeer()
+            VmcTarget.LIVE_OVERDUB_TOGGLE -> _editorState.value = _editorState.value.copy(statusBanner = "VMC OVERDUB PULSE")
+            VmcTarget.SEQ_CLEAR_PATTERN -> {
+                for (lane in 0..3) studioEngine.applySequencerPatternMask(lane, 0)
+            }
+            VmcTarget.DRUM_PUNCH_LANE_1 -> triggerSequencerLaneOneShot(0)
+            VmcTarget.DRUM_PUNCH_LANE_2 -> triggerSequencerLaneOneShot(1)
+            VmcTarget.DRUM_PUNCH_LANE_3 -> triggerSequencerLaneOneShot(2)
+            VmcTarget.DRUM_PUNCH_LANE_4 -> triggerSequencerLaneOneShot(3)
         }
     }
 

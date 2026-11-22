@@ -243,6 +243,55 @@ class StudioEngine {
 
     fun effectiveMasterGain(): Float = if (masterMuted) 0f else masterGain
 
+    /**
+     * Plays a single non-blocking one-shot AudioBuffer (drum kit hit, mounted add-on, pad trigger)
+     * without interrupting active Deck loop playback or looper/sequencer streams.
+     */
+    fun playOneShot(buffer: AudioBuffer) {
+        if (buffer.frameCount <= 0) return
+        scope.launch {
+            var track: AudioTrack? = null
+            try {
+                val mono = if (buffer.channels != 1) buffer.convertChannels(1) else buffer
+                val sr = mono.sampleRate.coerceIn(8000, 96000)
+                val gain = effectiveMasterGain()
+                val shorts = ShortArray(mono.frameCount) { i ->
+                    ((mono.samples[i] * gain).coerceIn(-1f, 1f) * 32767f).toInt().coerceIn(-32768, 32767).toShort()
+                }
+                val minBuf = AudioTrack.getMinBufferSize(
+                    sr,
+                    AudioFormat.CHANNEL_OUT_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT
+                ).coerceAtLeast(2048)
+                val bytesNeeded = max(minBuf, shorts.size * 2)
+                track = AudioTrack.Builder()
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .build()
+                    )
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setSampleRate(sr)
+                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(bytesNeeded)
+                    .setTransferMode(AudioTrack.MODE_STATIC)
+                    .build()
+                track.write(shorts, 0, shorts.size)
+                track.play()
+                val waitMs = ((mono.frameCount * 1000L) / sr + 40L).coerceIn(60L, 1800L)
+                delay(waitMs)
+            } catch (_: Exception) {
+            } finally {
+                runCatching { track?.pause(); track?.stop(); track?.release() }
+            }
+        }
+    }
+
     // --- LOOPER ---
 
     fun assignBufferToLoopSlot(slotId: Int, buffer: AudioBuffer, label: String = buffer.name) {

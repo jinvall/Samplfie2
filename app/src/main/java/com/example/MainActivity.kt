@@ -218,10 +218,17 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
     val sequencerState by viewModel.sequencerState.collectAsStateWithLifecycle()
     val timelineState by viewModel.timelineState.collectAsStateWithLifecycle()
     val syncedPlayhead by viewModel.syncedPlayhead.collectAsStateWithLifecycle()
+    val customDrumKitState by viewModel.customDrumKitState.collectAsStateWithLifecycle()
 
     LaunchedEffect(viewModel) {
         viewModel.toastEvents.collect { msg ->
-            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            } else {
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                }
+            }
         }
     }
 
@@ -592,6 +599,7 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                             StudioSpoke.INSTRUMENTS -> InstrumentsSpokeScreen(
                                 sequencerState = sequencerState,
                                 midiState = midiState,
+                                customDrumKitState = customDrumKitState,
                                 hasEditorAudio = hasAudio,
                                 onSetBpm = { viewModel.setStudioBpm(it) },
                                 onToggleSequencerPlay = { viewModel.toggleSequencerPlayback() },
@@ -603,7 +611,35 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                                 onBounceSequencerToTimeline = { viewModel.bounceSequencerToTimeline() },
                                 onRefreshMidi = { viewModel.refreshMidiDevices() },
                                 onOpenVmc = { viewModel.selectSpoke(StudioSpoke.VMC) },
-                                onOpenTuner = { viewModel.selectSpoke(StudioSpoke.TUNER) }
+                                onOpenTuner = { viewModel.selectSpoke(StudioSpoke.TUNER) },
+                                onSetDrumStyle = { viewModel.setDrumKitStyle(it) },
+                                onApplyDrumPreset = { viewModel.applyDrumKitPreset(it) },
+                                onToggleDrumArrangeMode = { viewModel.toggleDrumArrangeMode() },
+                                onFlipDrumKitLeftHanded = { viewModel.flipDrumKitLeftHanded() },
+                                onSelectDrumSlot = { viewModel.selectDrumSlot(it) },
+                                onSetTargetBeater = { viewModel.setTargetBeaterForMount(it) },
+                                onHitDrumPiece = { slotId, beater -> viewModel.hitDrumPiece(slotId, beater) },
+                                onHitDrumAddon = { viewModel.hitDrumAddon(it) },
+                                onMoveDrumPiece = { slotId, x, y -> viewModel.moveDrumPieceOnStage(slotId, x, y) },
+                                onAddDrumPiece = { viewModel.addMainDrumPiece(it) },
+                                onSwapDrumPiece = { slotId, compId -> viewModel.swapMainDrumPiece(slotId, compId) },
+                                onRemoveDrumPiece = { viewModel.removeMainDrumPiece(it) },
+                                onUpdateDrumPieceParams = { slotId, pitch, decay, vol, muted ->
+                                    viewModel.updateDrumPieceParams(slotId, pitch, decay, vol, muted)
+                                },
+                                onAttachDrumAddon = { addonType, targetSlot, beater ->
+                                    viewModel.attachDrumAddon(addonType, targetSlot, beater)
+                                },
+                                onRemoveDrumAddon = { viewModel.removeDrumAddon(it) },
+                                onToggleDrumAddonCoupled = { viewModel.toggleDrumAddonCoupled(it) },
+                                onSetDrumAddonStyle = { id, style -> viewModel.setDrumAddonStyle(id, style) },
+                                onSetDrumAddonBeaterSide = { id, side -> viewModel.setDrumAddonBeaterSide(id, side) },
+                                onRouteDrumPieceToSeqLane = { slotId, laneId, beater ->
+                                    viewModel.sendDrumPieceToSeqLane(slotId, laneId, beater)
+                                },
+                                onSendDrumPieceToDeck = { slotId, beater ->
+                                    viewModel.sendDrumKitPieceToDeck(slotId, beater)
+                                }
                             )
 
                             StudioSpoke.TRACKS -> TracksSpokeScreen(

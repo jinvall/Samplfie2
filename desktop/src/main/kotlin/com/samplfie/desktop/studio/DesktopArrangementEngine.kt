@@ -149,7 +149,9 @@ data class DesktopSequencerState(
     val isPlaying: Boolean = false,
     val currentStep: Int = 0,
     val bpm: Float = 124f,
-    val swing: Float = 0.08f
+    val swing: Float = 0.08f,
+    val companionOverdubRx: Boolean = true,
+    val companionStepCursor: Int = 0
 ) {
     companion object {
         fun defaultLanes(): List<DesktopSequencerLane> {
@@ -520,6 +522,47 @@ class DesktopArrangementEngine {
 
     fun setSequencerSwing(swing: Float) {
         _sequencerState.value = _sequencerState.value.copy(swing = swing.coerceIn(0f, 0.45f))
+    }
+
+    private val patternUndoStack = ArrayDeque<List<BooleanArray>>()
+
+    fun toggleCompanionOverdubRx() {
+        val cur = _sequencerState.value
+        _sequencerState.value = cur.copy(companionOverdubRx = !cur.companionOverdubRx)
+    }
+
+    fun recordCompanionStepHit(laneId: Int) {
+        val cur = _sequencerState.value
+        if (!cur.companionOverdubRx) return
+        val step = if (cur.isPlaying) cur.currentStep else cur.companionStepCursor
+        patternUndoStack.addLast(cur.lanes.map { it.steps.copyOf() })
+        val updated = cur.lanes.map { lane ->
+            if (lane.id == laneId) {
+                val copy = lane.steps.copyOf()
+                copy[step] = true
+                lane.copy(steps = copy)
+            } else lane
+        }
+        _sequencerState.value = cur.copy(
+            lanes = updated,
+            companionStepCursor = (step + 1) % 16
+        )
+    }
+
+    fun undoSequencerPattern() {
+        val prev = patternUndoStack.removeLastOrNull() ?: return
+        val cur = _sequencerState.value
+        val restored = cur.lanes.mapIndexed { idx, lane ->
+            lane.copy(steps = prev.getOrElse(idx) { lane.steps })
+        }
+        _sequencerState.value = cur.copy(lanes = restored)
+    }
+
+    fun clearSequencerPattern() {
+        val cur = _sequencerState.value
+        patternUndoStack.addLast(cur.lanes.map { it.steps.copyOf() })
+        val cleared = cur.lanes.map { it.copy(steps = BooleanArray(16)) }
+        _sequencerState.value = cur.copy(lanes = cleared, companionStepCursor = 0)
     }
 
     fun toggleSequencerPlayback() {

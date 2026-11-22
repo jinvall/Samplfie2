@@ -45,6 +45,12 @@ import com.samplfie.desktop.stems.DesktopSecretsState
 import com.samplfie.desktop.stems.DesktopSecretsVault
 import com.samplfie.desktop.stems.DesktopStemPreset
 import com.samplfie.desktop.stems.DesktopStemState
+import com.samplfie.desktop.drums.BeaterSide
+import com.samplfie.desktop.drums.CustomDrumKitState
+import com.samplfie.desktop.drums.DesktopDrumKitManager
+import com.samplfie.desktop.drums.DrumAddonType
+import com.samplfie.desktop.drums.DrumKitPreset
+import com.samplfie.desktop.drums.DrumKitStyle
 import com.samplfie.desktop.studio.DesktopArrangementEngine
 import com.samplfie.desktop.studio.DesktopLoopRefinerState
 import com.samplfie.desktop.studio.DesktopLooperState
@@ -119,6 +125,7 @@ class DesktopStudioController {
     val secretsState: StateFlow<DesktopSecretsState> = secretsVault.state
 
     val arrangement = DesktopArrangementEngine()
+    val drumKitManager = DesktopDrumKitManager()
 
     val soundEngine: LinuxSoundEngine = LinuxSoundEngine(
         onLiveSamplesForTuner = { monoChunk, sr ->
@@ -194,6 +201,7 @@ class DesktopStudioController {
     val timelineState: StateFlow<DesktopTimelineState> = arrangement.timelineState
     val syncedPlayhead: StateFlow<DesktopSyncedPlayheadState> = arrangement.syncedPlayhead
     val vmcState: StateFlow<VmcEngineState> = vmcEngine.state
+    val customDrumKitState: StateFlow<CustomDrumKitState> = drumKitManager.state
 
     init {
         soundEngine.setMasterVolume(_uiState.value.masterVolume, _uiState.value.isMasterMuted)
@@ -502,6 +510,79 @@ class DesktopStudioController {
         _uiState.value = _uiState.value.copy(statusLine = "BOUNCED 2-BAR SEQ BEAT TO TRACK 3")
     }
 
+    // --- ARRANGEABLE ELECTRIC & ACOUSTIC DRUM KIT STUDIO (UP TO 7 MAIN + MOUNTED ADD-ONS) ---
+
+    fun setDrumKitStyle(style: DrumKitStyle, convertExisting: Boolean = true) {
+        drumKitManager.setKitStyle(style, convertExisting)
+        _uiState.value = _uiState.value.copy(statusLine = "DRUM KIT -> ${style.label.uppercase()}")
+    }
+
+    fun applyDrumKitPreset(preset: DrumKitPreset) {
+        drumKitManager.applyPreset(preset)
+        _uiState.value = _uiState.value.copy(statusLine = "DRUM KIT: ${preset.label.uppercase()}")
+    }
+
+    fun toggleDrumArrangeMode() = drumKitManager.toggleArrangeMode()
+    fun flipDrumKitLeftHanded() = drumKitManager.flipLeftHanded()
+    fun selectDrumSlot(slotId: String?) = drumKitManager.selectSlot(slotId)
+    fun setTargetBeaterForMount(side: BeaterSide) = drumKitManager.setTargetBeaterForMount(side)
+
+    fun addMainDrumPiece(componentId: String, xNorm: Float? = null, yNorm: Float? = null): Boolean {
+        val added = drumKitManager.addMainPiece(componentId, xNorm, yNorm)
+        if (added == null) {
+            drumKitManager.state.value.statusError?.let { _uiState.value = _uiState.value.copy(statusLine = it) }
+            return false
+        }
+        return true
+    }
+
+    fun swapMainDrumPiece(slotId: String, newComponentId: String) =
+        drumKitManager.swapMainPiece(slotId, newComponentId)
+
+    fun removeMainDrumPiece(slotId: String) = drumKitManager.removeMainPiece(slotId)
+    fun moveDrumPieceOnStage(slotId: String, xNorm: Float, yNorm: Float) = drumKitManager.movePieceOnStage(slotId, xNorm, yNorm)
+
+    fun updateDrumPieceParams(
+        slotId: String,
+        pitchSemitones: Float? = null,
+        decayScale: Float? = null,
+        volume: Float? = null,
+        isMuted: Boolean? = null
+    ) = drumKitManager.updatePieceParams(slotId, pitchSemitones, decayScale, volume, isMuted)
+
+    fun attachDrumAddon(
+        addonType: DrumAddonType,
+        targetSlotId: String,
+        beaterSide: BeaterSide = drumKitManager.state.value.targetBeaterForMount,
+        styleOverride: DrumKitStyle? = null
+    ) = drumKitManager.attachAddon(addonType, targetSlotId, beaterSide, styleOverride)
+
+    fun removeDrumAddon(instanceId: String) = drumKitManager.removeMountedAddon(instanceId)
+    fun toggleDrumAddonCoupled(instanceId: String) = drumKitManager.toggleAddonCoupled(instanceId)
+    fun setDrumAddonStyle(instanceId: String, style: DrumKitStyle) = drumKitManager.setAddonStyle(instanceId, style)
+    fun setDrumAddonBeaterSide(instanceId: String, side: BeaterSide) = drumKitManager.setAddonBeaterSide(instanceId, side)
+
+    fun hitDrumPiece(slotId: String, beaterSide: BeaterSide = BeaterSide.NONE) {
+        val hit = drumKitManager.synthesizePieceHit(slotId, beaterSide, _uiState.value.rigConfig.sampleRate) ?: return
+        soundEngine.playOneShot(hit)
+    }
+
+    fun hitDrumAddon(instanceId: String) {
+        val hit = drumKitManager.synthesizeAddonHit(instanceId, _uiState.value.rigConfig.sampleRate) ?: return
+        soundEngine.playOneShot(hit)
+    }
+
+    fun sendDrumPieceToSeqLane(slotId: String, laneId: Int, beaterSide: BeaterSide = BeaterSide.NONE) {
+        val hit = drumKitManager.synthesizePieceHit(slotId, beaterSide, _uiState.value.rigConfig.sampleRate) ?: return
+        arrangement.setSequencerSampleForLane(laneId.coerceIn(0, 3), hit)
+        _uiState.value = _uiState.value.copy(statusLine = "ROUTED ${hit.name} -> SEQ LANE ${laneId.coerceIn(0, 3) + 1}")
+    }
+
+    fun sendDrumPieceToDeck(slotId: String, beaterSide: BeaterSide = BeaterSide.NONE) {
+        val hit = drumKitManager.synthesizePieceHit(slotId, beaterSide, _uiState.value.rigConfig.sampleRate) ?: return
+        loadNewBuffer(hit, "SENT ${hit.name} TO DECK EDITOR", preserveLoopPlayback = false)
+    }
+
     fun addEditorClipToTimeline(trackId: Int) {
         val buf = _uiState.value.processedBuffer ?: _uiState.value.dryBuffer ?: return
         arrangement.addClipToTimeline(trackId, buf, arrangement.timelineState.value.playheadSec)
@@ -565,6 +646,24 @@ class DesktopStudioController {
             VmcTarget.SEQ_PLAY_TOGGLE -> arrangement.toggleSequencerPlayback()
             VmcTarget.TIMELINE_PLAY_TOGGLE -> arrangement.toggleTimelinePlayback()
             VmcTarget.SESSION_HANDOFF_PUSH -> pushSessionToPeer()
+            VmcTarget.LIVE_OVERDUB_TOGGLE -> arrangement.toggleCompanionOverdubRx()
+            VmcTarget.SEQ_CLEAR_PATTERN -> arrangement.clearSequencerPattern()
+            VmcTarget.DRUM_PUNCH_LANE_1 -> {
+                arrangement.recordCompanionStepHit(0)
+                triggerSeqPadOneShot(0)
+            }
+            VmcTarget.DRUM_PUNCH_LANE_2 -> {
+                arrangement.recordCompanionStepHit(1)
+                triggerSeqPadOneShot(1)
+            }
+            VmcTarget.DRUM_PUNCH_LANE_3 -> {
+                arrangement.recordCompanionStepHit(2)
+                triggerSeqPadOneShot(2)
+            }
+            VmcTarget.DRUM_PUNCH_LANE_4 -> {
+                arrangement.recordCompanionStepHit(3)
+                triggerSeqPadOneShot(3)
+            }
         }
     }
 

@@ -151,7 +151,38 @@ class SamplfieDesktopFrame(
         onSetSwing = { controller.arrangement.setSequencerSwing(it) },
         onBounceSeqToTimeline = { controller.bounceSequencerToTimeline() },
         onRefreshMidi = { controller.refreshMidiPorts() },
-        onOpenVmcMapper = { controller.selectStation(DesktopStation.VMC) }
+        onOpenVmcMapper = { controller.selectStation(DesktopStation.VMC) },
+        onToggleCompanionOverdubRx = { controller.arrangement.toggleCompanionOverdubRx() },
+        onClearPattern = { controller.arrangement.clearSequencerPattern() },
+        onUndoPattern = { controller.arrangement.undoSequencerPattern() },
+        onSetDrumStyle = { controller.setDrumKitStyle(it) },
+        onApplyDrumPreset = { controller.applyDrumKitPreset(it) },
+        onToggleDrumArrangeMode = { controller.toggleDrumArrangeMode() },
+        onFlipDrumKitLeftHanded = { controller.flipDrumKitLeftHanded() },
+        onSelectDrumSlot = { controller.selectDrumSlot(it) },
+        onSetTargetBeater = { controller.setTargetBeaterForMount(it) },
+        onHitDrumPiece = { slotId, beater -> controller.hitDrumPiece(slotId, beater) },
+        onHitDrumAddon = { controller.hitDrumAddon(it) },
+        onMoveDrumPiece = { slotId, x, y -> controller.moveDrumPieceOnStage(slotId, x, y) },
+        onAddDrumPiece = { controller.addMainDrumPiece(it) },
+        onSwapDrumPiece = { slotId, compId -> controller.swapMainDrumPiece(slotId, compId) },
+        onRemoveDrumPiece = { controller.removeMainDrumPiece(it) },
+        onUpdateDrumPieceParams = { slotId, pitch, decay, vol, muted ->
+            controller.updateDrumPieceParams(slotId, pitch, decay, vol, muted)
+        },
+        onAttachDrumAddon = { addonType, targetSlot, beater ->
+            controller.attachDrumAddon(addonType, targetSlot, beater)
+        },
+        onRemoveDrumAddon = { controller.removeDrumAddon(it) },
+        onToggleDrumAddonCoupled = { controller.toggleDrumAddonCoupled(it) },
+        onSetDrumAddonStyle = { id, style -> controller.setDrumAddonStyle(id, style) },
+        onSetDrumAddonBeaterSide = { id, side -> controller.setDrumAddonBeaterSide(id, side) },
+        onRouteDrumPieceToSeqLane = { slotId, laneId, beater ->
+            controller.sendDrumPieceToSeqLane(slotId, laneId, beater)
+        },
+        onSendDrumPieceToDeck = { slotId, beater ->
+            controller.sendDrumPieceToDeck(slotId, beater)
+        }
     )
 
     private val tracksPanel = TracksTimelinePanel(
@@ -385,7 +416,7 @@ class SamplfieDesktopFrame(
         boothPanel.updateState(ui, play, net, sync, stems, secrets, collabPeers)
         editorPanel.updateState(ui, play)
         samplesPanel.updateState(looper, refiner)
-        instrumentsPanel.updateState(seq, vmc)
+        instrumentsPanel.updateState(seq, vmc, controller.customDrumKitState.value)
         tracksPanel.updateState(tl, sync)
         fxPanel.updateState(ui)
         livePanel.updateState(ui, sync, collabPeers)

@@ -35,8 +35,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import com.example.drums.BeaterSide
+import com.example.drums.CustomDrumKitState
+import com.example.drums.DrumAddonType
+import com.example.drums.DrumKitPreset
+import com.example.drums.DrumKitStyle
 import com.example.midi.MidiState
 import com.example.studio.SequencerState
+import com.example.ui.components.DrumKitStudioSection
 import com.example.ui.components.HardwareChipToggle
 import com.example.ui.components.HardwarePanel
 import com.example.ui.components.HardwareParameterSlider
@@ -61,6 +67,7 @@ import com.example.ui.theme.VioletMod
 fun InstrumentsSpokeScreen(
     sequencerState: SequencerState,
     midiState: MidiState,
+    customDrumKitState: CustomDrumKitState = CustomDrumKitState(),
     hasEditorAudio: Boolean,
     onSetBpm: (Float) -> Unit,
     onToggleSequencerPlay: () -> Unit,
@@ -73,6 +80,26 @@ fun InstrumentsSpokeScreen(
     onRefreshMidi: () -> Unit,
     onOpenVmc: () -> Unit = {},
     onOpenTuner: () -> Unit = {},
+    onSetDrumStyle: (DrumKitStyle) -> Unit = {},
+    onApplyDrumPreset: (DrumKitPreset) -> Unit = {},
+    onToggleDrumArrangeMode: () -> Unit = {},
+    onFlipDrumKitLeftHanded: () -> Unit = {},
+    onSelectDrumSlot: (String?) -> Unit = {},
+    onSetTargetBeater: (BeaterSide) -> Unit = {},
+    onHitDrumPiece: (String, BeaterSide) -> Unit = { _, _ -> },
+    onHitDrumAddon: (String) -> Unit = {},
+    onMoveDrumPiece: (String, Float, Float) -> Unit = { _, _, _ -> },
+    onAddDrumPiece: (String) -> Unit = {},
+    onSwapDrumPiece: (String, String) -> Unit = { _, _ -> },
+    onRemoveDrumPiece: (String) -> Unit = {},
+    onUpdateDrumPieceParams: (String, Float?, Float?, Float?, Boolean?) -> Unit = { _, _, _, _, _ -> },
+    onAttachDrumAddon: (DrumAddonType, String, BeaterSide) -> Unit = { _, _, _ -> },
+    onRemoveDrumAddon: (String) -> Unit = {},
+    onToggleDrumAddonCoupled: (String) -> Unit = {},
+    onSetDrumAddonStyle: (String, DrumKitStyle) -> Unit = { _, _ -> },
+    onSetDrumAddonBeaterSide: (String, BeaterSide) -> Unit = { _, _ -> },
+    onRouteDrumPieceToSeqLane: (String, Int, BeaterSide) -> Unit = { _, _, _ -> },
+    onSendDrumPieceToDeck: (String, BeaterSide) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val laneColors = listOf(NeonCyan, TacCoral, AmberHot, EmeraldSignal)
@@ -84,6 +111,31 @@ fun InstrumentsSpokeScreen(
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        // 0. Arrangeable & Customizable Electric / Non-Electric Drum Kit Studio (Up to 7 Main + Add-Ons)
+        DrumKitStudioSection(
+            kitState = customDrumKitState,
+            onSetStyle = onSetDrumStyle,
+            onApplyPreset = onApplyPreset@{ onApplyDrumPreset(it) },
+            onToggleArrangeMode = onToggleDrumArrangeMode,
+            onFlipLeftHanded = onFlipDrumKitLeftHanded,
+            onSelectSlot = onSelectDrumSlot,
+            onSetTargetBeater = onSetTargetBeater,
+            onHitPiece = onHitDrumPiece,
+            onHitAddon = onHitDrumAddon,
+            onMovePiece = onMoveDrumPiece,
+            onAddPiece = onAddDrumPiece,
+            onSwapPiece = onSwapDrumPiece,
+            onRemovePiece = onRemoveDrumPiece,
+            onUpdatePieceParams = onUpdateDrumPieceParams,
+            onAttachAddon = onAttachDrumAddon,
+            onRemoveAddon = onRemoveDrumAddon,
+            onToggleAddonCoupled = onToggleDrumAddonCoupled,
+            onSetAddonStyle = onSetDrumAddonStyle,
+            onSetAddonBeaterSide = onSetDrumAddonBeaterSide,
+            onRoutePieceToSeqLane = onRouteDrumPieceToSeqLane,
+            onSendPieceToDeck = onSendDrumPieceToDeck
+        )
+
         // 1. Live Performance Trigger Pads + Sequencer Master Transport
         HardwarePanel(borderColor = AmberHot.copy(alpha = 0.5f)) {
             Row(
