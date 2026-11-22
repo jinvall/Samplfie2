@@ -17,6 +17,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.abs
@@ -25,6 +26,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,6 +45,7 @@ data class Smp2Header(
 data class NetBridgeState(
     val isListening: Boolean = false,
     val isTransmitting: Boolean = false,
+    val isDiscovering: Boolean = false,
     val rxPackets: Long = 0L,
     val rxBytes: Long = 0L,
     val rxSampleRate: Int = 44100,
@@ -52,35 +55,63 @@ data class NetBridgeState(
     val txBytes: Long = 0L,
     val vmcRxCount: Long = 0L,
     val vmcTxCount: Long = 0L,
+    val connectedPeerCount: Int = 0,
     val lastHandoffSender: String? = null,
     val lastHandoffTimestamp: Long = 0L,
-    val statusText: String = "IDLE — READY FOR SMP2 / VMC2 / HANDOFF BRIDGE",
+    val statusText: String = "IDLE — READY FOR SMP2 / VMC2 / HANDOFF / BAND",
     val rxReadyBuffer: DesktopAudioBuffer? = null
 )
 
 /**
  * Bidirectional Equal-Peer Network Bridge compatible with Samplfie2 Android.
- * Multiplexes 4 frame types over the active TCP or UDP channel:
- * - SMP2: Streaming 16-bit PCM audio frames
- * - VMC2: Real-time 64-Channel Virtual MIDI Controller events
- * - SMH2: Full Session Handoff (chunk-reassembled snapshot + audio buffer)
- * - SMHR: Session Handoff Pull Request (grabs session from active peer)
+ * Supports up to 4 simultaneous collaborators with nearby discovery (SMDP),
+ * tagged multi-peer live band audio (SMCL), synchronized recording control (SMRC),
+ * 64-channel VMC2 MIDI, SMH2/SMHR Session Handoff, and SMP2 PCM streaming.
  */
 class Smp2NetworkNode(
     private val onStreamChunkForTuner: (FloatArray, Int) -> Unit = { _, _ -> },
     private val onVmcEventReceived: (VmcEventPacket) -> Unit = {},
     private val onSessionHandoffReceived: (SessionHandoffSnapshot) -> Unit = {},
-    private val onHandoffRequestedByPeer: (senderHost: String, replyPort: Int) -> Unit = { _, _ -> }
+    private val onHandoffRequestedByPeer: (senderHost: String, replyPort: Int) -> Unit = { _, _ -> },
+    private val onCollabSyncCommandReceived: (CollabSyncCommand) -> Unit = {}
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var listenJob: Job? = null
     private var txJob: Job? = null
+    private var beaconRxJob: Job? = null
+    private var beaconTxJob: Job? = null
     private var serverSocket: ServerSocket? = null
     private var udpRxSocket: DatagramSocket? = null
+    private var beaconRxSocket: DatagramSocket? = null
+
+    val localNodeId: String = "linux_${UUID.randomUUID().toString().take(8)}"
 
     private val pcmAccumulator = ByteArrayOutputStream()
     private val accumLock = Any()
     private val handoffSeq = AtomicInteger(1)
+
+    private class CollabStreamAccum(val sampleRate: Int, val channels: Int) {
+        val stream = ByteArrayOutputStream()
+    }
+    private val collabAccumulators = ConcurrentHashMap<String, CollabStreamAccum>()
+
+    @Volatile
+    private var localPeerName: String = "LINUX WORKSTATION"
+
+    @Volatile
+    private var localListenPort: Int = 9000
+
+    @Volatile
+    private var localStyle: CollabInstrumentStyle = CollabInstrumentStyle.GUITAR
+
+    @Volatile
+    private var localTrackSlot: Int = 1
+
+    @Volatile
+    private var localIsRecording: Boolean = false
+
+    private val _collabPeers = MutableStateFlow<List<CollabPeerDevice>>(emptyList())
+    val collabPeers: StateFlow<List<CollabPeerDevice>> = _collabPeers.asStateFlow()
 
     private class HandoffReassembly(val totalChunks: Int, val totalBytes: Int) {
         val chunks = arrayOfNulls<ByteArray>(totalChunks)
@@ -175,6 +206,37 @@ class Smp2NetworkNode(
                                 val payload = readExact(input, chunkLen) ?: break
                                 ingestHandoffChunk(sessionId, chunkIdx, totalChunks, totalSize, payload)
                             }
+                            MAGIC_BEACON -> {
+                                val bb = ByteBuffer.wrap(headerBytes, 4, 16).order(ByteOrder.LITTLE_ENDIAN)
+                                val listenPort = bb.int
+                                val styleOrd = bb.int
+                                val flags = bb.short.toInt() and 0xFFFF
+                                val payLen = bb.short.toInt() and 0xFFFF
+                                val trackSlot = bb.int
+                                val payload = readExact(input, payLen) ?: break
+                                ingestBeaconFrame(remoteHost, listenPort, styleOrd, flags, trackSlot, payload)
+                            }
+                            MAGIC_COLLAB_AUDIO -> {
+                                val bb = ByteBuffer.wrap(headerBytes, 4, 16).order(ByteOrder.LITTLE_ENDIAN)
+                                val metaLen = bb.short.toInt() and 0xFFFF
+                                val styleOrd = bb.short.toInt() and 0xFFFF
+                                val sr = bb.int
+                                val chTrack = bb.short.toInt() and 0xFFFF
+                                val pcmLen = bb.short.toInt() and 0xFFFF
+                                val peakScaled = bb.int
+                                val payload = readExact(input, metaLen + pcmLen) ?: break
+                                ingestCollabAudioFrame(remoteHost, metaLen, styleOrd, sr, chTrack, pcmLen, peakScaled, payload)
+                            }
+                            MAGIC_REC_CMD -> {
+                                val bb = ByteBuffer.wrap(headerBytes, 4, 16).order(ByteOrder.LITTLE_ENDIAN)
+                                val cmdCode = bb.int
+                                val bpmX100 = bb.int
+                                val styleOrd = bb.short.toInt() and 0xFFFF
+                                val payLen = bb.short.toInt() and 0xFFFF
+                                val senderPort = bb.int
+                                val payload = readExact(input, payLen) ?: break
+                                ingestRecCommandFrame(remoteHost, cmdCode, bpmX100, styleOrd, senderPort, payload)
+                            }
                         }
                     }
                 }
@@ -231,6 +293,44 @@ class Smp2NetworkNode(
                     val payload = packet.copyOfRange(HEADER_SIZE, HEADER_SIZE + actualLen)
                     ingestHandoffChunk(sessionId, chunkIdx, totalChunks, totalSize, payload)
                 }
+            }
+            MAGIC_BEACON -> {
+                val bb = ByteBuffer.wrap(packet, 4, 16).order(ByteOrder.LITTLE_ENDIAN)
+                val listenPort = bb.int
+                val styleOrd = bb.int
+                val flags = bb.short.toInt() and 0xFFFF
+                val payLen = bb.short.toInt() and 0xFFFF
+                val trackSlot = bb.int
+                val actualLen = min(payLen, packet.size - HEADER_SIZE)
+                if (actualLen > 0) {
+                    val payload = packet.copyOfRange(HEADER_SIZE, HEADER_SIZE + actualLen)
+                    ingestBeaconFrame(remoteHost, listenPort, styleOrd, flags, trackSlot, payload)
+                }
+            }
+            MAGIC_COLLAB_AUDIO -> {
+                val bb = ByteBuffer.wrap(packet, 4, 16).order(ByteOrder.LITTLE_ENDIAN)
+                val metaLen = bb.short.toInt() and 0xFFFF
+                val styleOrd = bb.short.toInt() and 0xFFFF
+                val sr = bb.int
+                val chTrack = bb.short.toInt() and 0xFFFF
+                val pcmLen = bb.short.toInt() and 0xFFFF
+                val peakScaled = bb.int
+                val actualTotal = min(metaLen + pcmLen, packet.size - HEADER_SIZE)
+                if (actualTotal > metaLen) {
+                    val payload = packet.copyOfRange(HEADER_SIZE, HEADER_SIZE + actualTotal)
+                    ingestCollabAudioFrame(remoteHost, metaLen, styleOrd, sr, chTrack, actualTotal - metaLen, peakScaled, payload)
+                }
+            }
+            MAGIC_REC_CMD -> {
+                val bb = ByteBuffer.wrap(packet, 4, 16).order(ByteOrder.LITTLE_ENDIAN)
+                val cmdCode = bb.int
+                val bpmX100 = bb.int
+                val styleOrd = bb.short.toInt() and 0xFFFF
+                val payLen = bb.short.toInt() and 0xFFFF
+                val senderPort = bb.int
+                val actualLen = min(payLen, packet.size - HEADER_SIZE)
+                val payload = if (actualLen > 0) packet.copyOfRange(HEADER_SIZE, HEADER_SIZE + actualLen) else ByteArray(0)
+                ingestRecCommandFrame(remoteHost, cmdCode, bpmX100, styleOrd, senderPort, payload)
             }
         }
     }
@@ -487,12 +587,501 @@ class Smp2NetworkNode(
         }
     }
 
+    // --- 4-DEVICE COLLABORATION, NEARBY DISCOVERY & LIVE BAND RECORDING ---
+
+    fun updateLocalPresence(
+        nodeName: String,
+        listenPort: Int,
+        style: CollabInstrumentStyle,
+        trackSlot: Int,
+        isRecording: Boolean
+    ) {
+        localPeerName = nodeName.ifBlank { "LINUX WORKSTATION" }
+        localListenPort = listenPort.coerceIn(1, 65535)
+        localStyle = style
+        localTrackSlot = trackSlot.coerceIn(0, 3)
+        localIsRecording = isRecording
+    }
+
+    fun seedKnownPeers(peers: List<CollabPeerDevice>) {
+        if (peers.isEmpty()) return
+        val current = _collabPeers.value.associateBy { it.peerId }.toMutableMap()
+        peers.forEach { kp ->
+            val prev = current[kp.peerId]
+            current[kp.peerId] = prev?.copy(isKnown = true) ?: kp.copy(isKnown = true)
+        }
+        publishPeers(current.values.toList())
+    }
+
+    fun startDiscovery(discoveryPort: Int = COLLAB_DISCOVERY_PORT) {
+        stopDiscovery()
+        _state.value = _state.value.copy(isDiscovering = true)
+
+        beaconRxJob = scope.launch {
+            runCatching {
+                val sock = DatagramSocket(null).apply {
+                    reuseAddress = true
+                    broadcast = true
+                    bind(InetSocketAddress(discoveryPort))
+                }.also { beaconRxSocket = it }
+                val buf = ByteArray(4096)
+                sock.use { s ->
+                    while (isActive && !s.isClosed) {
+                        val pkt = DatagramPacket(buf, buf.size)
+                        s.receive(pkt)
+                        if (pkt.length >= HEADER_SIZE) {
+                            val data = pkt.data.copyOfRange(pkt.offset, pkt.offset + pkt.length)
+                            val host = pkt.address.hostAddress ?: "127.0.0.1"
+                            processIncomingDatagram(data, host)
+                        }
+                    }
+                }
+            }
+        }
+
+        beaconTxJob = scope.launch {
+            while (isActive) {
+                runCatching { sendDiscoveryBeaconOnce(discoveryPort) }
+                delay(2500L)
+            }
+        }
+    }
+
+    fun stopDiscovery() {
+        beaconRxJob?.cancel()
+        beaconTxJob?.cancel()
+        beaconRxJob = null
+        beaconTxJob = null
+        runCatching { beaconRxSocket?.close() }
+        beaconRxSocket = null
+        _state.value = _state.value.copy(isDiscovering = false)
+    }
+
+    fun sendDiscoveryBeaconOnce(
+        discoveryPort: Int = COLLAB_DISCOVERY_PORT,
+        explicitTargets: List<Pair<String, Int>> = emptyList()
+    ) {
+        val frame = buildBeaconFrame(
+            nodeId = localNodeId,
+            name = localPeerName,
+            platform = "LINUX",
+            listenPort = localListenPort,
+            style = localStyle,
+            trackSlot = localTrackSlot,
+            isRecording = localIsRecording
+        )
+        runCatching {
+            DatagramSocket().use { s ->
+                s.broadcast = true
+                runCatching {
+                    val bcast = InetAddress.getByName("255.255.255.255")
+                    s.send(DatagramPacket(frame, frame.size, bcast, discoveryPort))
+                }
+                val probeSet = LinkedHashSet<Pair<String, Int>>()
+                probeSet += "127.0.0.1" to 9001
+                probeSet += "127.0.0.1" to discoveryPort
+                _collabPeers.value.forEach { p ->
+                    probeSet += p.host to p.listenPort
+                    probeSet += p.host to discoveryPort
+                }
+                probeSet.addAll(explicitTargets)
+                probeSet.forEach { (h, pt) ->
+                    runCatching {
+                        val addr = InetAddress.getByName(h)
+                        s.send(DatagramPacket(frame, frame.size, addr, pt))
+                    }
+                }
+            }
+        }
+    }
+
+    fun connectPeer(
+        host: String,
+        listenPort: Int,
+        name: String = "Studio Peer",
+        platform: String = "PEER",
+        style: CollabInstrumentStyle? = null,
+        trackSlot: Int? = null
+    ): Result<CollabPeerDevice> {
+        val cleanHost = host.trim()
+        if (cleanHost.isEmpty() || listenPort !in 1..65535) {
+            return Result.failure(IllegalArgumentException("Enter valid host and port"))
+        }
+        val key = "$cleanHost:$listenPort"
+        val curList = _collabPeers.value
+        val existing = curList.firstOrNull { it.peerId == key || (it.host == cleanHost && it.listenPort == listenPort) }
+        val connectedAlready = curList.count { it.isConnected }
+        if (existing?.isConnected != true && connectedAlready >= MAX_COLLAB_PEERS) {
+            val msg = "MAX $MAX_COLLAB_PEERS SIMULTANEOUS COLLABORATORS REACHED"
+            _state.value = _state.value.copy(statusText = msg)
+            return Result.failure(IllegalStateException(msg))
+        }
+        val assignedStyle = style ?: existing?.style ?: suggestNextStyle(curList)
+        val assignedTrack = (trackSlot ?: existing?.trackSlot ?: assignedStyle.defaultTrack).coerceIn(0, 3)
+        val updatedPeer = (existing ?: CollabPeerDevice(
+            peerId = key,
+            name = name.ifBlank { "Peer $cleanHost" },
+            platform = platform,
+            host = cleanHost,
+            listenPort = listenPort
+        )).copy(
+            isConnected = true,
+            isKnown = true,
+            style = assignedStyle,
+            trackSlot = assignedTrack,
+            lastSeenMs = System.currentTimeMillis()
+        )
+        val nextList = curList.filterNot { it.peerId == updatedPeer.peerId } + updatedPeer
+        publishPeers(nextList)
+        scope.launch {
+            sendDiscoveryBeaconOnce(explicitTargets = listOf(cleanHost to listenPort))
+        }
+        _state.value = _state.value.copy(
+            statusText = "LINKED ${updatedPeer.name} (${assignedStyle.shortTag}) • ${nextList.count { it.isConnected }}/$MAX_COLLAB_PEERS"
+        )
+        return Result.success(updatedPeer)
+    }
+
+    fun disconnectPeer(peerId: String) {
+        val next = _collabPeers.value.map {
+            if (it.peerId == peerId) it.copy(isConnected = false, isRecording = false, livePeak = 0f) else it
+        }
+        publishPeers(next)
+    }
+
+    fun removeKnownPeer(peerId: String) {
+        val next = _collabPeers.value.filterNot { it.peerId == peerId }
+        publishPeers(next)
+    }
+
+    fun updatePeerStyleAndTrack(peerId: String, style: CollabInstrumentStyle, trackSlot: Int = style.defaultTrack) {
+        val next = _collabPeers.value.map {
+            if (it.peerId == peerId) it.copy(style = style, trackSlot = trackSlot.coerceIn(0, 3)) else it
+        }
+        publishPeers(next)
+    }
+
+    fun getConnectedPeers(): List<CollabPeerDevice> =
+        _collabPeers.value.filter { it.isConnected }.take(MAX_COLLAB_PEERS)
+
+    fun beginCollabAudioCapture() {
+        collabAccumulators.clear()
+    }
+
+    fun stopAndCollectCollabTracks(takePrefix: String = "BAND"): List<Pair<CollabPeerDevice, DesktopAudioBuffer>> {
+        val out = mutableListOf<Pair<CollabPeerDevice, DesktopAudioBuffer>>()
+        val currentPeers = _collabPeers.value
+        collabAccumulators.forEach { (key, acc) ->
+            val raw = synchronized(acc) { acc.stream.toByteArray() }
+            if (raw.size >= 512) {
+                val peer = currentPeers.firstOrNull { it.peerId == key || it.host == key }
+                    ?: CollabPeerDevice(
+                        peerId = key,
+                        name = key,
+                        host = key.substringBefore(':'),
+                        listenPort = key.substringAfter(':', "9001").toIntOrNull() ?: 9001,
+                        style = CollabInstrumentStyle.VOCALS
+                    )
+                val floats = DesktopWavCodec.pcm16BytesToFloats(raw)
+                val bufName = "${takePrefix}_${peer.style.shortTag}_${peer.name}".take(24)
+                out += peer to DesktopAudioBuffer(floats, acc.sampleRate, acc.channels, bufName)
+            }
+        }
+        collabAccumulators.clear()
+        return out
+    }
+
+    fun sendCollabLiveChunk(
+        samples: FloatArray,
+        sampleRate: Int,
+        style: CollabInstrumentStyle,
+        trackSlot: Int
+    ) {
+        val peers = getConnectedPeers()
+        if (peers.isEmpty() || samples.isEmpty()) return
+        val pcmBytes = DesktopWavCodec.floatToPcm16Bytes(samples)
+        val senderTag = "$localPeerName|$localListenPort".take(42)
+        val maxPcmPerFrame = 8192
+        val total = pcmBytes.size
+        scope.launch {
+            var offset = 0
+            DatagramSocket().use { udp ->
+                while (offset < total) {
+                    val len = min(maxPcmPerFrame, total - offset)
+                    val frame = buildCollabAudioFrame(
+                        senderTag = senderTag,
+                        style = style,
+                        sampleRate = sampleRate,
+                        channels = 1,
+                        trackSlot = trackSlot,
+                        pcmBytes = pcmBytes,
+                        offset = offset,
+                        length = len
+                    )
+                    peers.forEach { p ->
+                        runCatching {
+                            val addr = InetAddress.getByName(p.host)
+                            udp.send(DatagramPacket(frame, frame.size, addr, p.listenPort))
+                        }
+                    }
+                    offset += len
+                }
+            }
+        }
+    }
+
+    fun sendCollabRecSync(cmd: CollabSyncCommand) {
+        val peers = getConnectedPeers()
+        if (peers.isEmpty()) return
+        val frame = buildRecCommandFrame(cmd)
+        scope.launch {
+            DatagramSocket().use { udp ->
+                peers.forEach { p ->
+                    runCatching {
+                        val addr = InetAddress.getByName(p.host)
+                        udp.send(DatagramPacket(frame, frame.size, addr, p.listenPort))
+                    }
+                }
+            }
+        }
+    }
+
+    private fun ingestBeaconFrame(
+        remoteHost: String,
+        listenPort: Int,
+        styleOrd: Int,
+        flags: Int,
+        trackSlot: Int,
+        payload: ByteArray
+    ) {
+        val kv = CollabWireCodec.decodeBeaconPayload(payload)
+        val nodeId = kv["id"].orEmpty()
+        if (nodeId == localNodeId) return
+        val port = kv["port"]?.toIntOrNull()?.coerceIn(1, 65535) ?: listenPort.coerceIn(1, 65535)
+        val name = kv["name"]?.ifBlank { "Peer $remoteHost" } ?: "Peer $remoteHost"
+        val plat = kv["plat"]?.ifBlank { "ANDROID" } ?: "ANDROID"
+        val style = CollabInstrumentStyle.fromOrdinalOrName(styleOrd, kv["style"])
+        val track = (kv["track"]?.toIntOrNull() ?: trackSlot).coerceIn(0, 3)
+        val rec = (flags and 1) == 1 || kv["rec"] == "true"
+        val key = "$remoteHost:$port"
+
+        val current = _collabPeers.value.associateBy { it.peerId }.toMutableMap()
+        val prev = current[key]
+        current[key] = (prev ?: CollabPeerDevice(
+            peerId = key,
+            name = name,
+            platform = plat,
+            host = remoteHost,
+            listenPort = port
+        )).copy(
+            name = name,
+            platform = plat,
+            style = if (prev?.isConnected == true) prev.style else style,
+            trackSlot = if (prev?.isConnected == true) prev.trackSlot else track,
+            isNearby = true,
+            isRecording = rec,
+            lastSeenMs = System.currentTimeMillis()
+        )
+        publishPeers(current.values.toList())
+    }
+
+    private fun ingestCollabAudioFrame(
+        remoteHost: String,
+        metaLen: Int,
+        styleOrd: Int,
+        sampleRate: Int,
+        chTrack: Int,
+        pcmLen: Int,
+        peakScaled: Int,
+        payload: ByteArray
+    ) {
+        if (pcmLen < 2 || metaLen + pcmLen > payload.size) return
+        val tag = String(payload, 0, metaLen, Charsets.UTF_8)
+        val peerName = tag.substringBefore('|').ifBlank { "Band Peer" }
+        val peerPort = tag.substringAfter('|', "9001").toIntOrNull()?.coerceIn(1, 65535) ?: 9001
+        val peerKey = "$remoteHost:$peerPort"
+        val channels = (chTrack and 0xFF).coerceIn(1, 2)
+        val trackSlot = ((chTrack shr 8) and 0xFF).coerceIn(0, 3)
+        val style = CollabInstrumentStyle.fromOrdinalOrName(styleOrd, null)
+        val pcmPayload = payload.copyOfRange(metaLen, metaLen + pcmLen)
+        val peakNorm = (peakScaled / 32768f).coerceIn(0f, 1f)
+
+        val current = _collabPeers.value.associateBy { it.peerId }.toMutableMap()
+        val prev = current[peerKey]
+        val canConnect = prev?.isConnected == true || current.values.count { it.isConnected } < MAX_COLLAB_PEERS
+        current[peerKey] = (prev ?: CollabPeerDevice(
+            peerId = peerKey,
+            name = peerName,
+            platform = "PEER",
+            host = remoteHost,
+            listenPort = peerPort
+        )).copy(
+            name = peerName,
+            style = prev?.style ?: style,
+            trackSlot = prev?.trackSlot ?: trackSlot,
+            isConnected = canConnect,
+            isNearby = true,
+            livePeak = peakNorm,
+            rxPackets = (prev?.rxPackets ?: 0L) + 1L,
+            lastSeenMs = System.currentTimeMillis()
+        )
+        publishPeers(current.values.toList())
+
+        val acc = collabAccumulators.computeIfAbsent(peerKey) {
+            CollabStreamAccum(sampleRate.coerceIn(8000, 96000), channels)
+        }
+        synchronized(acc) {
+            if (acc.stream.size() < 24_000_000) acc.stream.write(pcmPayload)
+        }
+
+        val floats = DesktopWavCodec.pcm16BytesToFloats(pcmPayload)
+        val mono = if (channels > 1) DesktopAudioBuffer(floats, sampleRate, channels).monoMixed() else floats
+        onStreamChunkForTuner(mono, sampleRate)
+        _state.value = _state.value.copy(
+            rxPackets = _state.value.rxPackets + 1,
+            rxBytes = _state.value.rxBytes + HEADER_SIZE + payload.size,
+            rxLivePeak = peakNorm,
+            statusText = "BAND LIVE RX • $peerName (${style.shortTag})"
+        )
+    }
+
+    private fun ingestRecCommandFrame(
+        remoteHost: String,
+        cmdCode: Int,
+        bpmX100: Int,
+        styleOrd: Int,
+        senderPort: Int,
+        payload: ByteArray
+    ) {
+        val kv = CollabWireCodec.decodeBeaconPayload(payload)
+        val name = kv["name"]?.ifBlank { "Peer" } ?: "Peer"
+        val port = senderPort.coerceIn(1, 65535)
+        val key = "$remoteHost:$port"
+        val style = CollabInstrumentStyle.fromOrdinalOrName(styleOrd, kv["style"])
+        val track = kv["track"]?.toIntOrNull()?.coerceIn(0, 3) ?: style.defaultTrack
+        val take = kv["take"].orEmpty()
+        val start = (cmdCode == 1)
+        val bpm = (bpmX100 / 100f).coerceIn(40f, 240f)
+        onCollabSyncCommandReceived(
+            CollabSyncCommand(
+                start = start,
+                bpm = bpm,
+                senderPeerId = key,
+                senderName = name,
+                senderStyle = style,
+                senderTrackSlot = track,
+                takeName = take,
+                senderListenPort = port
+            )
+        )
+    }
+
+    private fun publishPeers(raw: List<CollabPeerDevice>) {
+        val sorted = raw.sortedWith(
+            compareByDescending<CollabPeerDevice> { it.isConnected }
+                .thenByDescending { it.isNearby }
+                .thenBy { it.name }
+        )
+        _collabPeers.value = sorted
+        _state.value = _state.value.copy(
+            connectedPeerCount = sorted.count { it.isConnected }.coerceAtMost(MAX_COLLAB_PEERS)
+        )
+    }
+
+    private fun suggestNextStyle(current: List<CollabPeerDevice>): CollabInstrumentStyle {
+        val used = current.filter { it.isConnected }.map { it.style }.toSet()
+        return CollabInstrumentStyle.entries.firstOrNull { it != localStyle && it !in used }
+            ?: CollabInstrumentStyle.VOCALS
+    }
+
+    fun release() {
+        stopListening()
+        stopDiscovery()
+    }
+
     companion object {
         const val MAGIC = "SMP2"
         const val MAGIC_VMC = "VMC2"
         const val MAGIC_HANDOFF = "SMH2"
         const val MAGIC_HANDOFF_REQ = "SMHR"
+        const val MAGIC_BEACON = "SMDP"
+        const val MAGIC_COLLAB_AUDIO = "SMCL"
+        const val MAGIC_REC_CMD = "SMRC"
         const val HEADER_SIZE = 20
+
+        fun buildBeaconFrame(
+            nodeId: String,
+            name: String,
+            platform: String,
+            listenPort: Int,
+            style: CollabInstrumentStyle,
+            trackSlot: Int,
+            isRecording: Boolean
+        ): ByteArray {
+            val payload = CollabWireCodec.encodeBeaconPayload(nodeId, name, platform, listenPort, style, trackSlot, isRecording)
+            val out = ByteArray(HEADER_SIZE + payload.size)
+            val bb = ByteBuffer.wrap(out).order(ByteOrder.LITTLE_ENDIAN)
+            bb.put(MAGIC_BEACON.toByteArray(Charsets.US_ASCII))
+            bb.putInt(listenPort.coerceIn(1, 65535))
+            bb.putInt(style.ordinal)
+            bb.putShort((if (isRecording) 1 else 0).toShort())
+            bb.putShort(payload.size.toShort())
+            bb.putInt(trackSlot.coerceIn(0, 3))
+            System.arraycopy(payload, 0, out, HEADER_SIZE, payload.size)
+            return out
+        }
+
+        fun buildCollabAudioFrame(
+            senderTag: String,
+            style: CollabInstrumentStyle,
+            sampleRate: Int,
+            channels: Int,
+            trackSlot: Int,
+            pcmBytes: ByteArray,
+            offset: Int = 0,
+            length: Int = pcmBytes.size - offset
+        ): ByteArray {
+            val metaBytes = senderTag.toByteArray(Charsets.UTF_8)
+            var peak = 0
+            var i = offset
+            while (i + 1 < offset + length) {
+                val lo = pcmBytes[i].toInt() and 0xFF
+                val hi = pcmBytes[i + 1].toInt()
+                val s = abs((hi shl 8) or lo)
+                if (s > peak) peak = s
+                i += 2
+            }
+            val chTrack = (channels.coerceIn(1, 2) and 0xFF) or ((trackSlot.coerceIn(0, 3) and 0xFF) shl 8)
+            val out = ByteArray(HEADER_SIZE + metaBytes.size + length)
+            val bb = ByteBuffer.wrap(out).order(ByteOrder.LITTLE_ENDIAN)
+            bb.put(MAGIC_COLLAB_AUDIO.toByteArray(Charsets.US_ASCII))
+            bb.putShort(metaBytes.size.toShort())
+            bb.putShort(style.ordinal.toShort())
+            bb.putInt(sampleRate)
+            bb.putShort(chTrack.toShort())
+            bb.putShort(length.toShort())
+            bb.putInt(peak)
+            System.arraycopy(metaBytes, 0, out, HEADER_SIZE, metaBytes.size)
+            System.arraycopy(pcmBytes, offset, out, HEADER_SIZE + metaBytes.size, length)
+            return out
+        }
+
+        fun buildRecCommandFrame(cmd: CollabSyncCommand): ByteArray {
+            val cleanName = cmd.senderName.replace(";", " ").take(24)
+            val cleanTake = cmd.takeName.replace(";", " ").take(24)
+            val payload = "name=$cleanName;style=${cmd.senderStyle.name};track=${cmd.senderTrackSlot};take=$cleanTake"
+                .toByteArray(Charsets.UTF_8)
+            val out = ByteArray(HEADER_SIZE + payload.size)
+            val bb = ByteBuffer.wrap(out).order(ByteOrder.LITTLE_ENDIAN)
+            bb.put(MAGIC_REC_CMD.toByteArray(Charsets.US_ASCII))
+            bb.putInt(if (cmd.start) 1 else 2)
+            bb.putInt((cmd.bpm * 100f).toInt())
+            bb.putShort(cmd.senderStyle.ordinal.toShort())
+            bb.putShort(payload.size.toShort())
+            bb.putInt(cmd.senderListenPort.coerceIn(1, 65535))
+            System.arraycopy(payload, 0, out, HEADER_SIZE, payload.size)
+            return out
+        }
 
         fun buildPacketBytes(
             sequence: Int,

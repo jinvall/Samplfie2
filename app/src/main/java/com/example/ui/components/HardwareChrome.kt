@@ -67,7 +67,10 @@ fun HardwareTopRack(
     hasAudio: Boolean,
     bpm: Float,
     hasDisbandKey: Boolean = false,
+    connectedPeerCount: Int = 0,
+    isBandRecording: Boolean = false,
     onReturnToBooth: () -> Unit,
+    onOpenCollabDialog: () -> Unit = {},
     onOpenSecretsVault: () -> Unit = {},
     onExportMp3Click: () -> Unit,
     modifier: Modifier = Modifier
@@ -120,7 +123,7 @@ fun HardwareTopRack(
                     } else {
                         HardwareLedIndicator(
                             active = true,
-                            color = if (isRecording) TacCoral else NeonCyan,
+                            color = if (isRecording || isBandRecording) TacCoral else NeonCyan,
                             sizeDp = 10
                         )
                     }
@@ -163,6 +166,38 @@ fun HardwareTopRack(
                         }
                     }
 
+                    val pillColor = when {
+                        isBandRecording -> TacCoral
+                        connectedPeerCount > 0 -> EmeraldSignal
+                        else -> NeonCyan
+                    }
+                    Surface(
+                        color = if (connectedPeerCount > 0 || isBandRecording) pillColor.copy(alpha = 0.18f) else BrushedPanel,
+                        shape = RoundedCornerShape(6.dp),
+                        border = BorderStroke(1.dp, if (connectedPeerCount > 0 || isBandRecording) pillColor else HairlineDivider),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable(onClick = onOpenCollabDialog)
+                            .testTag("top_collab_pill")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            HardwareLedIndicator(
+                                active = connectedPeerCount > 0 || isBandRecording,
+                                color = pillColor,
+                                sizeDp = 6
+                            )
+                            Text(
+                                text = if (isBandRecording) "REC" else "$connectedPeerCount/4",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (connectedPeerCount > 0 || isBandRecording) pillColor else TextSecondary
+                            )
+                        }
+                    }
+
                     Surface(
                         color = if (isMasterBypass) ElevatedBezel else if (activeFxCount > 0) NeonCyan.copy(alpha = 0.16f) else BrushedPanel,
                         shape = RoundedCornerShape(6.dp),
@@ -175,7 +210,7 @@ fun HardwareTopRack(
                             text = if (isMasterBypass) "BYP" else "FX $activeFxCount",
                             style = MaterialTheme.typography.labelSmall,
                             color = if (isMasterBypass) AmberHot else if (activeFxCount > 0) NeonCyan else TextMuted,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp)
                         )
                     }
 

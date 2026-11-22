@@ -63,6 +63,8 @@ import com.example.dsp.FxRackState
 import com.example.dsp.LiveSessionMode
 import com.example.dsp.StompboxMasterState
 import com.example.midi.MidiState
+import com.example.network.CollabPeerDevice
+import com.example.network.LiveBandRecordingState
 import com.example.network.NetworkLinkState
 import com.example.stems.DisbandStem
 import com.example.stems.StemPreset
@@ -536,6 +538,10 @@ fun CircularStudioHub(
     secretsState: SecretsVaultState = SecretsVaultState(),
     stemState: StemSeparationUiState = StemSeparationUiState(),
     workspaceConfig: WorkspaceConfig = WorkspaceConfig(),
+    collabPeers: List<CollabPeerDevice> = emptyList(),
+    bandRecState: LiveBandRecordingState = LiveBandRecordingState(),
+    masterVolume: Float = 0.85f,
+    isMasterMuted: Boolean = false,
     peerLabel: String = "127.0.0.1:9000",
     onSelectSpoke: (StudioSpoke) -> Unit,
     onToggleSyncedPlay: () -> Unit,
@@ -548,6 +554,10 @@ fun CircularStudioHub(
     onExportWavClick: () -> Unit,
     onExportMp3Click: () -> Unit,
     onStreamTxClick: () -> Unit,
+    onSetMasterVolume: (Float) -> Unit = {},
+    onToggleMasterMute: () -> Unit = {},
+    onOpenCollabDialog: () -> Unit = {},
+    onToggleBandRec: () -> Unit = {},
     onPushHandoffClick: () -> Unit = {},
     onGrabHandoffClick: () -> Unit = {},
     onApplyPendingHandoff: () -> Unit = {},
@@ -563,6 +573,8 @@ fun CircularStudioHub(
     onSendStemToLooper: (String, Int) -> Unit = { _, _ -> },
     onAddStemToTimeline: (String, Int) -> Unit = { _, _ -> },
     onSendAllStemsToTimeline: () -> Unit = {},
+    onSendAllStemsToLooper: () -> Unit = {},
+    onExportStemWav: (String) -> Unit = {},
     showWheel: Boolean = true,
     modifier: Modifier = Modifier
 ) {
@@ -646,6 +658,14 @@ fun CircularStudioHub(
             }
         }
 
+        // 4-Device Live Band Collaborators & Instrument Style Strip
+        BandCollaboratorsStrip(
+            peers = collabPeers,
+            bandRecState = bandRecState,
+            onOpenCollabDialog = onOpenCollabDialog,
+            onToggleBandRec = onToggleBandRec
+        )
+
         // Equal Peer Session Handoff & Companion VMC/Tuner Station Launcher
         HardwarePanel(
             borderColor = VioletMod.copy(alpha = 0.5f),
@@ -723,7 +743,9 @@ fun CircularStudioHub(
             onLoadStemToDeck = onLoadStemToDeck,
             onSendStemToLooper = onSendStemToLooper,
             onAddStemToTimeline = onAddStemToTimeline,
-            onSendAllStemsToTimeline = onSendAllStemsToTimeline
+            onSendAllStemsToTimeline = onSendAllStemsToTimeline,
+            onSendAllStemsToLooper = onSendAllStemsToLooper,
+            onExportStemWav = onExportStemWav
         )
 
         // Master Production Control Strip (Transport, Stomp, Mode, I/O)
@@ -738,6 +760,12 @@ fun CircularStudioHub(
                 peak = livePeak,
                 rms = liveRms,
                 label = "MST"
+            )
+            MasterVolumeCompactRow(
+                masterVolume = masterVolume,
+                isMasterMuted = isMasterMuted,
+                onVolumeChange = onSetMasterVolume,
+                onToggleMute = onToggleMasterMute
             )
             Spacer(modifier = Modifier.height(8.dp))
             FlowRow(

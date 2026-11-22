@@ -40,12 +40,16 @@ data class MidiState(
     val connectedDevices: List<MidiDeviceSummary> = emptyList(),
     val recentLog: List<String> = emptyList(),
     val syncedBpm: Float? = null,
-    val lastMappedAction: String = "READY"
+    val lastMappedAction: String = "READY",
+    val usbPeripheralConnected: Boolean = false,
+    val outgoingMessagesSent: Long = 0L,
+    val lastOutgoingSummary: String = "NO MIDI TX YET"
 )
 
 /**
  * Real Android MidiManager controller supporting hardware/virtual MIDI input/output ports,
- * MIDI Clock BPM detection, Note triggers, Pitch Bend, and CC parameter mapping.
+ * USB Peripheral Responder bridge, MIDI Clock BPM detection/transmission, Note triggers,
+ * Pitch Bend, and CC parameter mapping.
  */
 class MidiControllerManager(context: Context) {
     private val appContext = context.applicationContext
@@ -58,6 +62,7 @@ class MidiControllerManager(context: Context) {
 
     private val openDevices = mutableMapOf<Int, MidiDevice>()
     private val openOutputPorts = mutableListOf<MidiOutputPort>()
+    private val openInputPorts = mutableListOf<MidiInputPort>()
     private var activeInputPort: MidiInputPort? = null
 
     private var clockTickTimes = ArrayDeque<Long>(24)
@@ -81,6 +86,9 @@ class MidiControllerManager(context: Context) {
     }
 
     fun start() {
+        MidiPeripheralBridge.registerIncomingListener { event ->
+            handleParsedEvent(event)
+        }
         val mgr = midiManager ?: return
         val handler = Handler(Looper.getMainLooper())
         @Suppress("DEPRECATION")
@@ -91,7 +99,12 @@ class MidiControllerManager(context: Context) {
     }
 
     fun refreshDevices() {
-        val mgr = midiManager ?: return
+        val periAttached = MidiPeripheralBridge.isHostConnected
+        val mgr = midiManager
+        if (mgr == null) {
+            _state.value = _state.value.copy(usbPeripheralConnected = periAttached)
+            return
+        }
         @Suppress("DEPRECATION")
         val summaries = mgr.devices.map { info ->
             val props = info.properties
@@ -103,7 +116,10 @@ class MidiControllerManager(context: Context) {
                 outputPortCount = info.outputPortCount
             )
         }
-        _state.value = _state.value.copy(connectedDevices = summaries)
+        _state.value = _state.value.copy(
+            connectedDevices = summaries,
+            usbPeripheralConnected = periAttached
+        )
     }
 
     private fun connectDevice(info: MidiDeviceInfo) {
@@ -125,20 +141,92 @@ class MidiControllerManager(context: Context) {
                 openOutputPorts.add(outPort)
             }
             // Device input ports allow our app to send MIDI OUT
-            if (activeInputPort == null && info.inputPortCount > 0) {
-                activeInputPort = device.openInputPort(0)
+            for (i in 0 until info.inputPortCount) {
+                val inPort = device.openInputPort(i) ?: continue
+                openInputPorts.add(inPort)
+                if (activeInputPort == null) activeInputPort = inPort
             }
         }, handler)
     }
 
     fun sendNoteOut(channel: Int, note: Int, velocity: Int) {
-        val port = activeInputPort ?: return
-        try {
-            val status = (0x90 or (channel and 0x0F)).toByte()
-            val bytes = byteArrayOf(status, (note and 0x7F).toByte(), (velocity and 0x7F).toByte())
-            port.send(bytes, 0, bytes.size)
-        } catch (_: Exception) {
+        sendRawMidiMessage(
+            bytes = byteArrayOf(
+                (0x90 or (channel and 0x0F)).toByte(),
+                (note and 0x7F).toByte(),
+                (velocity and 0x7F).toByte()
+            ),
+            summary = "USB TX NOTE ON ch${(channel and 0x0F) + 1} #${note and 0x7F} v${velocity and 0x7F}"
+        )
+    }
+
+    fun sendNoteOn(channel16: Int, note: Int, velocity: Int): Boolean {
+        val ch0 = (channel16.coerceIn(1, 16) - 1) and 0x0F
+        val n = note.coerceIn(0, 127)
+        val v = velocity.coerceIn(1, 127)
+        return sendRawMidiMessage(
+            bytes = byteArrayOf((0x90 or ch0).toByte(), n.toByte(), v.toByte()),
+            summary = "MIDI TX NOTE ON CH${ch0 + 1} #$n v$v"
+        )
+    }
+
+    fun sendNoteOff(channel16: Int, note: Int): Boolean {
+        val ch0 = (channel16.coerceIn(1, 16) - 1) and 0x0F
+        val n = note.coerceIn(0, 127)
+        return sendRawMidiMessage(
+            bytes = byteArrayOf((0x80 or ch0).toByte(), n.toByte(), 0),
+            summary = "MIDI TX NOTE OFF CH${ch0 + 1} #$n"
+        )
+    }
+
+    fun sendControlChange(channel16: Int, controller: Int, value: Int): Boolean {
+        val ch0 = (channel16.coerceIn(1, 16) - 1) and 0x0F
+        val cc = controller.coerceIn(0, 127)
+        val v = value.coerceIn(0, 127)
+        return sendRawMidiMessage(
+            bytes = byteArrayOf((0xB0 or ch0).toByte(), cc.toByte(), v.toByte()),
+            summary = "MIDI TX CC CH${ch0 + 1} #$cc=$v"
+        )
+    }
+
+    fun sendTransport(start: Boolean): Boolean {
+        val status = if (start) 0xFA.toByte() else 0xFC.toByte()
+        return sendRawMidiMessage(
+            bytes = byteArrayOf(status),
+            summary = if (start) "MIDI TX START (0xFA)" else "MIDI TX STOP (0xFC)"
+        )
+    }
+
+    fun sendClockTick(): Boolean {
+        return sendRawMidiMessage(
+            bytes = byteArrayOf(0xF8.toByte()),
+            summary = null
+        )
+    }
+
+    private fun sendRawMidiMessage(bytes: ByteArray, summary: String?): Boolean {
+        var transmitted = false
+        val targets = if (openInputPorts.isNotEmpty()) openInputPorts else listOfNotNull(activeInputPort)
+        targets.forEach { port ->
+            runCatching {
+                port.send(bytes, 0, bytes.size)
+                transmitted = true
+            }
         }
+        if (MidiPeripheralBridge.sendRawMidi(bytes)) {
+            transmitted = true
+        }
+        if (summary != null) {
+            val cur = _state.value
+            val logEntry = if (transmitted) summary else "$summary (NO USB PORT — LOGGED)"
+            _state.value = cur.copy(
+                usbPeripheralConnected = MidiPeripheralBridge.isHostConnected,
+                outgoingMessagesSent = cur.outgoingMessagesSent + 1,
+                lastOutgoingSummary = logEntry,
+                recentLog = (listOf(logEntry) + cur.recentLog).take(12)
+            )
+        }
+        return transmitted
     }
 
     fun handleParsedEvent(event: MidiEvent) {
@@ -180,6 +268,7 @@ class MidiControllerManager(context: Context) {
     }
 
     fun release() {
+        MidiPeripheralBridge.registerIncomingListener(null)
         val mgr = midiManager
         if (mgr != null) {
             try {
@@ -189,7 +278,8 @@ class MidiControllerManager(context: Context) {
         }
         openOutputPorts.forEach { runCatching { it.close() } }
         openOutputPorts.clear()
-        runCatching { activeInputPort?.close() }
+        openInputPorts.forEach { runCatching { it.close() } }
+        openInputPorts.clear()
         activeInputPort = null
         openDevices.values.forEach { runCatching { it.close() } }
         openDevices.clear()

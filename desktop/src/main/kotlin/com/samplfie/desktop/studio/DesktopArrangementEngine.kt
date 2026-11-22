@@ -235,6 +235,19 @@ class DesktopArrangementEngine {
     private var timelineThread: Thread? = null
     private var syncThread: Thread? = null
 
+    @Volatile
+    private var masterGain = 0.85f
+
+    @Volatile
+    private var masterMuted = false
+
+    fun setMasterVolume(volume: Float, muted: Boolean) {
+        masterGain = volume.coerceIn(0f, 1f)
+        masterMuted = muted
+    }
+
+    fun effectiveMasterGain(): Float = if (masterMuted) 0f else masterGain
+
     // --- LOOPER ---
 
     fun assignBufferToLoopSlot(slotId: Int, buffer: DesktopAudioBuffer, label: String = buffer.name) {
@@ -421,6 +434,10 @@ class DesktopArrangementEngine {
                         }
                     }
 
+                    val gain = effectiveMasterGain()
+                    if (gain < 0.999f) {
+                        for (i in chunk.indices) chunk[i] = (chunk[i] * gain).coerceIn(-1f, 1f)
+                    }
                     val pcm = DesktopWavCodec.floatToPcm16Bytes(chunk)
                     if (line != null) line.write(pcm, 0, pcm.size) else Thread.sleep(sleepMs.coerceAtLeast(8L))
 
@@ -539,6 +556,10 @@ class DesktopArrangementEngine {
                         }
                     }
 
+                    val gain = effectiveMasterGain()
+                    if (gain < 0.999f) {
+                        for (i in stepAudio.indices) stepAudio[i] = (stepAudio[i] * gain).coerceIn(-1f, 1f)
+                    }
                     val pcm = DesktopWavCodec.floatToPcm16Bytes(stepAudio)
                     if (line != null) line.write(pcm, 0, pcm.size)
                     else Thread.sleep(((stepFrames * 1000L) / sr).coerceAtLeast(15L))
@@ -723,7 +744,11 @@ class DesktopArrangementEngine {
                 var cursor = (_timelineState.value.playheadSec * sr).toInt().coerceIn(0, max(0, mixdown.frameCount - 1))
                 while (timelineRunning.get() && cursor < mixdown.frameCount) {
                     val count = min(chunkFrames, mixdown.frameCount - cursor)
+                    val gain = effectiveMasterGain()
                     val slice = mixdown.samples.copyOfRange(cursor, cursor + count)
+                    if (gain < 0.999f) {
+                        for (i in slice.indices) slice[i] = (slice[i] * gain).coerceIn(-1f, 1f)
+                    }
                     val pcm = DesktopWavCodec.floatToPcm16Bytes(slice)
                     if (line != null) line.write(pcm, 0, pcm.size)
                     else Thread.sleep(((count * 1000L) / sr).coerceAtLeast(15L))

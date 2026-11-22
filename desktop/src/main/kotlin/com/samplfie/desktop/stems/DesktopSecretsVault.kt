@@ -115,11 +115,12 @@ class DesktopSecretsVault(
         val envDisband = System.getenv(KEY_DISBAND_API_KEY)?.trim()?.takeIf { it.isNotBlank() && it != PLACEHOLDER_KEY }
         var vaultDisband: String?
         synchronized(lock) {
-            vaultDisband = inMemory[KEY_DISBAND_API_KEY]
-            if (vaultDisband != null) {
+            val localDisband = inMemory[KEY_DISBAND_API_KEY]
+            vaultDisband = localDisband
+            if (localDisband != null) {
                 list += DesktopSecretEntry(
                     keyName = KEY_DISBAND_API_KEY,
-                    maskedValue = maskSecret(vaultDisband!!),
+                    maskedValue = maskSecret(localDisband),
                     sourceLabel = "Local Vault (POSIX 600)",
                     isReadOnlyEnv = false
                 )

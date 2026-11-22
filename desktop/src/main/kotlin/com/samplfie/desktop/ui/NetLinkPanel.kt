@@ -3,6 +3,7 @@ package com.samplfie.desktop.ui
 import com.samplfie.desktop.DesktopStudioUiState
 import com.samplfie.desktop.model.DesktopRigConfig
 import com.samplfie.desktop.model.NetworkProtocol
+import com.samplfie.desktop.network.CollabPeerDevice
 import com.samplfie.desktop.network.NetBridgeState
 import java.awt.BorderLayout
 import java.awt.Dimension
@@ -25,8 +26,15 @@ class NetLinkPanel(
     private val onCaptureRxToEditor: () -> Unit,
     private val onTransmitActive: () -> Unit,
     private val onPushHandoff: () -> Unit,
-    private val onGrabHandoff: () -> Unit
+    private val onGrabHandoff: () -> Unit,
+    private val onOpenCollabDialog: () -> Unit = {},
+    private val onToggleBandRec: () -> Unit = {}
 ) : JPanel() {
+
+    private val collabStrip = DesktopBandCollabStrip(
+        onOpenCollabDialog = onOpenCollabDialog,
+        onToggleBandRec = onToggleBandRec
+    )
 
     private var updating = false
 
@@ -85,6 +93,9 @@ class NetLinkPanel(
         background = StudioTheme.ObsidianChassis
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
         border = javax.swing.BorderFactory.createEmptyBorder(10, 12, 10, 12)
+
+        add(collabStrip)
+        add(Box.createVerticalStrut(10))
 
         val rxPanel = StudioTheme.hardwarePanel(StudioTheme.NeonCyan).apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -173,9 +184,10 @@ class NetLinkPanel(
         }
     }
 
-    fun updateState(ui: DesktopStudioUiState, net: NetBridgeState) {
+    fun updateState(ui: DesktopStudioUiState, net: NetBridgeState, collabPeers: List<CollabPeerDevice> = emptyList()) {
         updating = true
         try {
+            collabStrip.updateState(collabPeers, ui.bandRecState)
             listenBtn.text = if (net.isListening) "STOP PEER LISTENER" else "START SMP2/VMC2 RX LISTENER"
             statusLabel.text = "STATUS: ${net.statusText}"
             rxStatsLabel.text = "RX: ${net.rxPackets} PKTS • ${net.rxBytes} BYTES • ${net.rxSampleRate}Hz ${net.rxChannels}CH • LAST HANDOFF: ${net.lastHandoffSender ?: "NONE"}"

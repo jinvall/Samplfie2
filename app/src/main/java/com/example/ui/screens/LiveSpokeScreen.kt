@@ -44,8 +44,12 @@ import com.example.dsp.FxRackState
 import com.example.dsp.LiveSessionMode
 import com.example.dsp.StompboxMasterState
 import com.example.export.ExportedAudioResult
+import com.example.network.CollabInstrumentStyle
+import com.example.network.CollabPeerDevice
+import com.example.network.LiveBandRecordingState
 import com.example.network.NetworkLinkState
 import com.example.studio.LooperState
+import com.example.ui.components.BandCollaboratorsStrip
 import com.example.ui.components.HardwareChipToggle
 import com.example.ui.components.HardwareLedIndicator
 import com.example.ui.components.HardwarePanel
@@ -106,6 +110,11 @@ fun LiveSpokeScreen(
     onCaptureRxToDeck: () -> Unit = {},
     onPushHandoff: () -> Unit = {},
     onGrabHandoff: () -> Unit = {},
+    collabPeers: List<CollabPeerDevice> = emptyList(),
+    bandRecState: LiveBandRecordingState = LiveBandRecordingState(),
+    onOpenCollabDialog: () -> Unit = {},
+    onToggleBandRec: () -> Unit = {},
+    onSelectMyStyle: (CollabInstrumentStyle) -> Unit = {},
     onExportWav: (String) -> Unit,
     onExportMp3: (String) -> Unit,
     modifier: Modifier = Modifier
@@ -153,7 +162,32 @@ fun LiveSpokeScreen(
                     )
                 }
             }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("MY COLLABORATOR STYLE", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+            Spacer(modifier = Modifier.height(4.dp))
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                CollabInstrumentStyle.entries.forEach { st ->
+                    HardwareChipToggle(
+                        label = st.shortTag,
+                        selected = bandRecState.myStyle == st,
+                        onClick = { onSelectMyStyle(st) },
+                        accentColor = NeonCyan
+                    )
+                }
+            }
         }
+
+        // 1b. 4-Device Live Band Collaborators & Sync Recording Strip
+        BandCollaboratorsStrip(
+            peers = collabPeers,
+            bandRecState = bandRecState,
+            onOpenCollabDialog = onOpenCollabDialog,
+            onToggleBandRec = onToggleBandRec
+        )
 
         // 2. Mini Stompbox Master Multi-FX Processor
         StompboxMiniProcessor(

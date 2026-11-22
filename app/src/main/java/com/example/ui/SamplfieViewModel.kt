@@ -36,6 +36,12 @@ import com.example.midi.VmcMappingRule
 import com.example.midi.VmcMsgType
 import com.example.midi.VmcRouteMode
 import com.example.midi.VmcTarget
+import com.example.network.CollabInstrumentStyle
+import com.example.network.CollabPeerDevice
+import com.example.network.CollabSyncCommand
+import com.example.network.CollabWireCodec
+import com.example.network.LiveBandRecordingState
+import com.example.network.MAX_COLLAB_PEERS
 import com.example.network.NetworkAudioTransmitter
 import com.example.network.NetworkLinkState
 import com.example.network.SessionHandoffSnapshot
@@ -69,6 +75,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -86,6 +93,10 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
     private val micEngine: MicCaptureEngine = MicCaptureEngine { mono, sr ->
         if (_tunerState.value.source == TunerInputSource.LIVE_MIC) {
             analyzeSamplesForTuner(mono, sr)
+        }
+        val band = _bandRecState.value
+        if (band.isRecording) {
+            networkTransmitter.sendCollabLiveChunk(mono, sr, band.myStyle, band.myTrackSlot)
         }
     }
     private val playbackEngine: AudioPlaybackEngine = AudioPlaybackEngine { mono, sr ->
@@ -119,6 +130,20 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         onHandoffRequestedByPeer = { host, replyPort ->
             val snap = captureSessionSnapshot()
             networkTransmitter.sendSessionHandoff(snap, _rigConfig.value.protocol, host, replyPort)
+        },
+        onCollabSyncCommandReceived = { cmd ->
+            viewModelScope.launch(Dispatchers.Main) {
+                if (cmd.start) {
+                    if (!_bandRecState.value.isRecording) {
+                        setStudioBpm(cmd.bpm)
+                        startLiveBandRecording(broadcastToPeers = false, syncedTakeName = cmd.takeName)
+                    }
+                } else {
+                    if (_bandRecState.value.isRecording) {
+                        stopLiveBandRecording(broadcastStop = false)
+                    }
+                }
+            }
         }
     )
     private val midiController = MidiControllerManager(appContext)
@@ -163,6 +188,12 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
     private val _showSecretsVault = MutableStateFlow(false)
     val showSecretsVault: StateFlow<Boolean> = _showSecretsVault.asStateFlow()
 
+    private val _showCollabSheet = MutableStateFlow(false)
+    val showCollabSheet: StateFlow<Boolean> = _showCollabSheet.asStateFlow()
+
+    private val _bandRecState = MutableStateFlow(LiveBandRecordingState())
+    val bandRecState: StateFlow<LiveBandRecordingState> = _bandRecState.asStateFlow()
+
     private val _toastEvents = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val toastEvents: SharedFlow<String> = _toastEvents.asSharedFlow()
 
@@ -170,6 +201,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
     val micTelemetry: StateFlow<MicCaptureTelemetry> = micEngine.telemetry
     val playbackState: StateFlow<PlaybackState> = playbackEngine.state
     val networkState: StateFlow<NetworkLinkState> = networkTransmitter.state
+    val collabPeers: StateFlow<List<CollabPeerDevice>> = networkTransmitter.collabPeers
     val midiState: StateFlow<MidiState> = midiController.state
     val vmcState: StateFlow<VmcEngineState> = vmcEngine.state
     val looperState: StateFlow<LooperState> = studioEngine.looperState
@@ -182,11 +214,22 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
             val loaded = rigRepository.configFlow.first()
             if (!hasRigLocalEdit) {
                 _rigConfig.value = loaded
+                playbackEngine.setMasterVolume(loaded.masterVolume, loaded.isMasterMuted)
+                studioEngine.setMasterVolume(loaded.masterVolume, loaded.isMasterMuted)
+                val style = CollabInstrumentStyle.fromOrdinalOrName(null, loaded.myStyleName)
+                _bandRecState.value = _bandRecState.value.copy(
+                    myStyle = style,
+                    myTrackSlot = style.defaultTrack
+                )
+                networkTransmitter.seedKnownPeers(CollabWireCodec.parseKnownPeers(loaded.knownPeersSpec))
+                syncLocalPresence()
             }
         }
         refreshSavedTakes()
         midiController.start()
         observeMidiEvents()
+        syncLocalPresence()
+        networkTransmitter.startDiscovery()
     }
 
     private fun observeMidiEvents() {
@@ -836,14 +879,230 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         _selectedSpoke.value = StudioSpoke.DECK
     }
 
-    // --- RIG CONFIG, NETWORK STREAMING & LOCAL WAV/MP3 EXPORT ---
+    // --- MASTER VOLUME, RIG CONFIG, 4-DEVICE COLLABORATION & NETWORK STREAMING ---
+
+    fun setMasterVolume(volume: Float) {
+        val clamped = volume.coerceIn(0f, 1f)
+        playbackEngine.setMasterVolume(clamped, _rigConfig.value.isMasterMuted)
+        studioEngine.setMasterVolume(clamped, _rigConfig.value.isMasterMuted)
+        updateRigConfig { copy(masterVolume = clamped) }
+    }
+
+    fun toggleMasterMute() {
+        val nextMuted = !_rigConfig.value.isMasterMuted
+        val vol = _rigConfig.value.masterVolume
+        playbackEngine.setMasterVolume(vol, nextMuted)
+        studioEngine.setMasterVolume(vol, nextMuted)
+        updateRigConfig { copy(isMasterMuted = nextMuted) }
+    }
+
+    fun setShowCollabSheet(visible: Boolean) {
+        _showCollabSheet.value = visible
+        if (visible) {
+            refreshNearbyDiscovery()
+        }
+    }
+
+    fun refreshNearbyDiscovery() {
+        syncLocalPresence()
+        if (!networkTransmitter.state.value.isListening) {
+            val cfg = _rigConfig.value
+            runCatching { networkTransmitter.startListening(cfg.protocol, cfg.bindPort) }
+        }
+        if (!networkTransmitter.state.value.isDiscovering) {
+            networkTransmitter.startDiscovery()
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            networkTransmitter.sendDiscoveryBeaconOnce()
+        }
+    }
+
+    fun setMyCollabStyle(style: CollabInstrumentStyle, trackSlot: Int = style.defaultTrack) {
+        val slot = trackSlot.coerceIn(0, 3)
+        _bandRecState.value = _bandRecState.value.copy(myStyle = style, myTrackSlot = slot)
+        updateRigConfig { copy(myStyleName = style.name) }
+        syncLocalPresence()
+        viewModelScope.launch(Dispatchers.IO) {
+            networkTransmitter.sendDiscoveryBeaconOnce()
+        }
+    }
+
+    fun connectCollabPeer(
+        host: String,
+        port: Int,
+        name: String = "Studio Peer",
+        platform: String = "PEER",
+        style: CollabInstrumentStyle? = null,
+        trackSlot: Int? = null
+    ): Boolean {
+        val cfg = _rigConfig.value
+        if (!networkTransmitter.state.value.isListening) {
+            runCatching { networkTransmitter.startListening(cfg.protocol, cfg.bindPort) }
+        }
+        val res = networkTransmitter.connectPeer(host, port, name, platform, style, trackSlot)
+        res.onSuccess { peer ->
+            val knownSpec = CollabWireCodec.serializeKnownPeers(networkTransmitter.collabPeers.value)
+            updateRigConfig {
+                copy(
+                    ipAddress = peer.host,
+                    port = peer.listenPort,
+                    knownPeersSpec = knownSpec
+                )
+            }
+            val msg = "CONNECTED ${peer.name} (${peer.style.label}) • TRACK ${peer.trackSlot + 1}"
+            _editorState.value = _editorState.value.copy(statusBanner = msg)
+            _toastEvents.tryEmit(msg)
+        }.onFailure { err ->
+            val msg = err.message ?: "Max $MAX_COLLAB_PEERS collaborators linked"
+            _editorState.value = _editorState.value.copy(statusBanner = msg)
+            _toastEvents.tryEmit(msg)
+        }
+        return res.isSuccess
+    }
+
+    fun disconnectCollabPeer(peerId: String) {
+        networkTransmitter.disconnectPeer(peerId)
+        _editorState.value = _editorState.value.copy(statusBanner = "DISCONNECTED PEER $peerId")
+    }
+
+    fun removeKnownCollabPeer(peerId: String) {
+        networkTransmitter.removeKnownPeer(peerId)
+        val knownSpec = CollabWireCodec.serializeKnownPeers(networkTransmitter.collabPeers.value)
+        updateRigConfig { copy(knownPeersSpec = knownSpec) }
+    }
+
+    fun updateCollabPeerStyleAndTrack(
+        peerId: String,
+        style: CollabInstrumentStyle,
+        trackSlot: Int = style.defaultTrack
+    ) {
+        networkTransmitter.updatePeerStyleAndTrack(peerId, style, trackSlot)
+        val knownSpec = CollabWireCodec.serializeKnownPeers(networkTransmitter.collabPeers.value)
+        updateRigConfig { copy(knownPeersSpec = knownSpec) }
+    }
+
+    fun toggleLiveBandRecording() {
+        if (_bandRecState.value.isRecording) {
+            stopLiveBandRecording(broadcastStop = true)
+        } else {
+            startLiveBandRecording(broadcastToPeers = true)
+        }
+    }
+
+    fun startLiveBandRecording(broadcastToPeers: Boolean = true, syncedTakeName: String = "") {
+        if (_bandRecState.value.isRecording) return
+        val cfg = _rigConfig.value
+        if (!networkTransmitter.state.value.isListening) {
+            runCatching { networkTransmitter.startListening(cfg.protocol, cfg.bindPort) }
+        }
+        networkTransmitter.beginCollabAudioCapture()
+        val takeName = syncedTakeName.ifBlank {
+            "BAND_${SimpleDateFormat("HHmmss", Locale.US).format(Date())}"
+        }
+        val cur = _bandRecState.value
+        _bandRecState.value = cur.copy(
+            isRecording = true,
+            startedAtMs = System.currentTimeMillis(),
+            activeTakeName = takeName
+        )
+        syncLocalPresence()
+
+        val micRes = micEngine.startCapture(
+            sampleRate = cfg.sampleRate,
+            channels = 1,
+            bufferSizeFrames = cfg.bufferSize
+        )
+        if (broadcastToPeers) {
+            networkTransmitter.sendCollabRecSync(
+                CollabSyncCommand(
+                    start = true,
+                    bpm = studioEngine.syncedPlayhead.value.bpm,
+                    senderPeerId = networkTransmitter.localNodeId,
+                    senderName = cfg.nodeName,
+                    senderStyle = cur.myStyle,
+                    senderTrackSlot = cur.myTrackSlot,
+                    takeName = takeName,
+                    senderListenPort = cfg.bindPort
+                )
+            )
+        }
+        val linked = networkTransmitter.getConnectedPeers().size
+        val note = if (micRes.isSuccess) {
+            "LIVE BAND REC (${cur.myStyle.shortTag} -> T${cur.myTrackSlot + 1} • $linked PEERS)"
+        } else {
+            "BAND RX REC ONLY (GRANT MIC FOR LOCAL TRACK)"
+        }
+        _editorState.value = _editorState.value.copy(statusBanner = note)
+    }
+
+    fun stopLiveBandRecording(broadcastStop: Boolean = true) {
+        val cur = _bandRecState.value
+        if (!cur.isRecording) return
+        _bandRecState.value = cur.copy(isRecording = false, elapsedMs = System.currentTimeMillis() - cur.startedAtMs)
+        syncLocalPresence()
+        val cfg = _rigConfig.value
+
+        if (broadcastStop) {
+            networkTransmitter.sendCollabRecSync(
+                CollabSyncCommand(
+                    start = false,
+                    bpm = studioEngine.syncedPlayhead.value.bpm,
+                    senderPeerId = networkTransmitter.localNodeId,
+                    senderName = cfg.nodeName,
+                    senderStyle = cur.myStyle,
+                    senderTrackSlot = cur.myTrackSlot,
+                    takeName = cur.activeTakeName,
+                    senderListenPort = cfg.bindPort
+                )
+            )
+        }
+
+        viewModelScope.launch {
+            val stamp = cur.activeTakeName.ifBlank { "BAND_${System.currentTimeMillis()}" }
+            val localFile = File(takesDir, "${stamp}_${cur.myStyle.shortTag}.wav")
+            val localRes = micEngine.stopCaptureAndSaveWav(localFile, "${stamp}_${cur.myStyle.shortTag}")
+            val peerTracks = networkTransmitter.stopAndCollectCollabTracks(stamp)
+
+            var placedCount = 0
+            localRes.onSuccess { localBuf ->
+                studioEngine.addClipToTimeline(cur.myTrackSlot.coerceIn(0, 3), localBuf, 0f)
+                placedCount++
+                loadNewRawBuffer(localBuf, "SAVED ${cur.myStyle.label} TAKE -> TRACK ${cur.myTrackSlot + 1}")
+                refreshSavedTakes()
+            }
+            peerTracks.forEach { (peer, buf) ->
+                studioEngine.addClipToTimeline(peer.trackSlot.coerceIn(0, 3), buf, 0f)
+                placedCount++
+            }
+            val summary = "BAND REC LANDED $placedCount TRACKS (${1 + peerTracks.size} DEVICES)"
+            _bandRecState.value = _bandRecState.value.copy(lastRecordedSummary = summary)
+            _editorState.value = _editorState.value.copy(statusBanner = summary)
+            _toastEvents.tryEmit(summary)
+        }
+    }
+
+    private fun syncLocalPresence() {
+        val cfg = _rigConfig.value
+        val band = _bandRecState.value
+        networkTransmitter.updateLocalPresence(
+            nodeName = cfg.nodeName,
+            listenPort = cfg.bindPort,
+            style = band.myStyle,
+            trackSlot = band.myTrackSlot,
+            isRecording = band.isRecording
+        )
+    }
 
     fun updateRigConfig(transform: RigConfig.() -> RigConfig) {
         hasRigLocalEdit = true
         _rigConfig.value = _rigConfig.value.transform()
+        val cfg = _rigConfig.value
+        playbackEngine.setMasterVolume(cfg.masterVolume, cfg.isMasterMuted)
+        studioEngine.setMasterVolume(cfg.masterVolume, cfg.isMasterMuted)
+        syncLocalPresence()
         viewModelScope.launch {
             rigSaveMutex.withLock {
-                rigRepository.saveConfig(_rigConfig.value)
+                rigRepository.saveConfig(cfg)
             }
         }
     }
@@ -910,6 +1169,8 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
             looperActiveMask = loopMask,
             looperBars = loopBars,
             vmcMappings = vmcEngine.state.value.mappings,
+            masterVolume = cfg.masterVolume,
+            isMasterMuted = cfg.isMasterMuted,
             buffer = ed.dryBuffer
         )
     }
@@ -956,7 +1217,13 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         val incomingDry = snap.buffer ?: _editorState.value.dryBuffer
         _fxRack.value = snap.fxRack
         _stompbox.value = snap.stompbox
-        updateRigConfig { copy(a4ReferenceHz = snap.a4ReferenceHz.coerceIn(430.0, 450.0)) }
+        updateRigConfig {
+            copy(
+                a4ReferenceHz = snap.a4ReferenceHz.coerceIn(430.0, 450.0),
+                masterVolume = snap.masterVolume.coerceIn(0f, 1f),
+                isMasterMuted = snap.isMasterMuted
+            )
+        }
 
         playbackEngine.setLooping(snap.isLooping)
         playbackEngine.setSelectionBounds(snap.selectionStart, snap.selectionEnd, snap.playSelectionOnly)
@@ -1320,7 +1587,8 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
                     baseUrl = baseUrl,
                     apiKey = apiKey,
                     stems = targetStems,
-                    sourceBuffer = source
+                    sourceBuffer = source,
+                    isCancelled = { !coroutineContext.isActive }
                 ) { jobId, status, charge ->
                     _stemState.value = _stemState.value.copy(
                         activeJobId = jobId ?: _stemState.value.activeJobId,
@@ -1346,6 +1614,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
                 _editorState.value = _editorState.value.copy(statusBanner = doneMsg)
                 _toastEvents.tryEmit(doneMsg)
             }.onFailure { err ->
+                if (err is InterruptedException) return@onFailure
                 val errMsg = err.message ?: "Disband separation failed"
                 _stemState.value = _stemState.value.copy(
                     isRunning = false,
@@ -1387,12 +1656,41 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
     fun sendAllSeparatedStemsToTimeline() {
         val stems = _stemState.value.separatedStems
         if (stems.isEmpty()) return
-        stems.take(4).forEachIndexed { idx, stem ->
-            studioEngine.addClipToTimeline(idx, stem.buffer, startTimeSec = 0f)
+        stems.forEachIndexed { idx, stem ->
+            val trackIdx = idx % 4
+            val offsetSec = if (idx >= 4) 0.0f else 0f
+            studioEngine.addClipToTimeline(trackIdx, stem.buffer, startTimeSec = offsetSec)
         }
-        val msg = "PLACED ${stems.take(4).size} SEPARATED STEMS ONTO TRACKS 1–${stems.take(4).size}"
+        val msg = "PLACED ALL ${stems.size} SEPARATED STEMS ONTO TRACKS 1–4"
         _editorState.value = _editorState.value.copy(statusBanner = msg)
         _toastEvents.tryEmit(msg)
+    }
+
+    fun sendAllSeparatedStemsToLooper() {
+        val stems = _stemState.value.separatedStems
+        if (stems.isEmpty()) return
+        stems.take(4).forEachIndexed { idx, stem ->
+            studioEngine.assignBufferToLoopSlot(idx, stem.buffer, stem.label)
+        }
+        val msg = "LOADED ${stems.take(4).size} STEMS INTO LOOP SLOTS A–${'A' + (stems.take(4).size - 1)}"
+        _editorState.value = _editorState.value.copy(statusBanner = msg)
+        _toastEvents.tryEmit(msg)
+    }
+
+    fun exportSeparatedStemWav(stemId: String) {
+        val stem = _stemState.value.separatedStems.firstOrNull { it.stemId == stemId } ?: return
+        viewModelScope.launch {
+            val res = WavExporter.saveWavToDevice(appContext, stem.buffer, "${stem.buffer.name}_stem")
+            res.onSuccess { exported ->
+                val msg = "SAVED STEM WAV: ${exported.displayLocation}"
+                _editorState.value = _editorState.value.copy(lastLocalExport = exported, statusBanner = msg)
+                _toastEvents.tryEmit(msg)
+            }.onFailure { err ->
+                val msg = "STEM WAV EXPORT FAILED: ${err.message}"
+                _editorState.value = _editorState.value.copy(statusBanner = msg)
+                _toastEvents.tryEmit(msg)
+            }
+        }
     }
 
     private fun activeOutputBuffer(): AudioBuffer? {

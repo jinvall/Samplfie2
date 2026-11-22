@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -29,6 +30,10 @@ class RigConfigRepository(private val context: Context) {
         val NODE_NAME = stringPreferencesKey("node_name")
         val AUTO_RESUME_HANDOFF = booleanPreferencesKey("auto_resume_handoff")
         val AUTO_ACCEPT_HANDOFF = booleanPreferencesKey("auto_accept_handoff")
+        val MASTER_VOLUME = floatPreferencesKey("master_volume")
+        val IS_MASTER_MUTED = booleanPreferencesKey("is_master_muted")
+        val MY_STYLE_NAME = stringPreferencesKey("my_style_name")
+        val KNOWN_PEERS_SPEC = stringPreferencesKey("known_peers_spec")
     }
 
     val configFlow: Flow<RigConfig> = context.rigDataStore.data.map { prefs ->
@@ -46,7 +51,11 @@ class RigConfigRepository(private val context: Context) {
             a4ReferenceHz = (prefs[Keys.A4_REF_HZ] ?: 440.0).coerceIn(430.0, 450.0),
             nodeName = prefs[Keys.NODE_NAME] ?: "ANDROID WORKSTATION",
             autoResumeOnHandoff = prefs[Keys.AUTO_RESUME_HANDOFF] ?: true,
-            autoAcceptIncomingHandoff = prefs[Keys.AUTO_ACCEPT_HANDOFF] ?: true
+            autoAcceptIncomingHandoff = prefs[Keys.AUTO_ACCEPT_HANDOFF] ?: true,
+            masterVolume = (prefs[Keys.MASTER_VOLUME] ?: 0.85f).coerceIn(0f, 1f),
+            isMasterMuted = prefs[Keys.IS_MASTER_MUTED] ?: false,
+            myStyleName = prefs[Keys.MY_STYLE_NAME] ?: "VOCALS",
+            knownPeersSpec = prefs[Keys.KNOWN_PEERS_SPEC] ?: ""
         )
     }
 
@@ -64,6 +73,10 @@ class RigConfigRepository(private val context: Context) {
             prefs[Keys.NODE_NAME] = config.nodeName
             prefs[Keys.AUTO_RESUME_HANDOFF] = config.autoResumeOnHandoff
             prefs[Keys.AUTO_ACCEPT_HANDOFF] = config.autoAcceptIncomingHandoff
+            prefs[Keys.MASTER_VOLUME] = config.masterVolume.coerceIn(0f, 1f)
+            prefs[Keys.IS_MASTER_MUTED] = config.isMasterMuted
+            prefs[Keys.MY_STYLE_NAME] = config.myStyleName
+            prefs[Keys.KNOWN_PEERS_SPEC] = config.knownPeersSpec
         }
     }
 }

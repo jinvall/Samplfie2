@@ -199,7 +199,7 @@ fun DeckEditorScreen(
                     Column(modifier = Modifier.weight(1f)) {
                         HardwareParameterSlider(
                             label = "IN MARKER",
-                            valueText = "${"%.2f".format(editorState.selectionStart * (activeBuf?.durationSeconds ?: 0f))}s",
+                            valueText = "${"%.2f".format(editorState.selectionStart * activeBuf.durationSeconds)}s",
                             value = editorState.selectionStart,
                             valueRange = 0f..0.96f,
                             onValueChange = { onSelectionChange(it, editorState.selectionEnd) },

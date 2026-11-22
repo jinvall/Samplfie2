@@ -4,6 +4,7 @@ import com.samplfie.desktop.DesktopStudioUiState
 import com.samplfie.desktop.audio.DesktopPlaybackState
 import com.samplfie.desktop.model.DesktopStation
 import com.samplfie.desktop.model.DesktopWorkspaceConfig
+import com.samplfie.desktop.network.CollabPeerDevice
 import com.samplfie.desktop.network.NetBridgeState
 import com.samplfie.desktop.stems.DesktopDisbandStem
 import com.samplfie.desktop.stems.DesktopSecretsState
@@ -44,7 +45,11 @@ class ProductionBoothPanel(
     private val onLoadStemToDeck: (String) -> Unit = {},
     private val onSendStemToLoop: (String, Int) -> Unit = { _, _ -> },
     private val onAddStemToTrack: (String, Int) -> Unit = { _, _ -> },
-    private val onSendAllStemsToTracks: () -> Unit = {}
+    private val onSendAllStemsToTracks: () -> Unit = {},
+    private val onSendAllStemsToLooper: () -> Unit = {},
+    private val onSaveStemWav: (String) -> Unit = {},
+    private val onOpenCollabDialog: () -> Unit = {},
+    private val onToggleBandRec: () -> Unit = {}
 ) : JPanel() {
 
     private var updating = false
@@ -86,7 +91,13 @@ class ProductionBoothPanel(
         onLoadStemToDeck = onLoadStemToDeck,
         onSendStemToLoop = onSendStemToLoop,
         onAddStemToTrack = onAddStemToTrack,
-        onSendAllToTracks = onSendAllStemsToTracks
+        onSendAllToTracks = onSendAllStemsToTracks,
+        onSendAllToLooper = onSendAllStemsToLooper,
+        onSaveStemWav = onSaveStemWav
+    )
+    private val collabStrip = DesktopBandCollabStrip(
+        onOpenCollabDialog = onOpenCollabDialog,
+        onToggleBandRec = onToggleBandRec
     )
 
     init {
@@ -98,6 +109,9 @@ class ProductionBoothPanel(
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             border = javax.swing.BorderFactory.createEmptyBorder(10, 12, 10, 12)
         }
+
+        root.add(collabStrip)
+        root.add(Box.createVerticalStrut(10))
 
         // Equal Peer Handoff Card
         val handoffCard = StudioTheme.hardwarePanel(StudioTheme.NeonCyan).apply {
@@ -220,10 +234,12 @@ class ProductionBoothPanel(
         net: NetBridgeState,
         sync: DesktopSyncedPlayheadState,
         stemState: DesktopStemState = DesktopStemState(),
-        secretsState: DesktopSecretsState = DesktopSecretsState()
+        secretsState: DesktopSecretsState = DesktopSecretsState(),
+        collabPeers: List<CollabPeerDevice> = emptyList()
     ) {
         updating = true
         try {
+            collabStrip.updateState(collabPeers, ui.bandRecState)
             val ws = ui.workspaceConfig
             if (!nodeNameField.hasFocus() && nodeNameField.text != ws.nodeName) {
                 nodeNameField.text = ws.nodeName

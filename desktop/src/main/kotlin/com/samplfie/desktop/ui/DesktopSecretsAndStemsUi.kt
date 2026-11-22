@@ -211,7 +211,9 @@ class DesktopStemSeparationPanel(
     private val onLoadStemToDeck: (String) -> Unit,
     private val onSendStemToLoop: (String, Int) -> Unit,
     private val onAddStemToTrack: (String, Int) -> Unit,
-    private val onSendAllToTracks: () -> Unit
+    private val onSendAllToTracks: () -> Unit,
+    private val onSendAllToLooper: () -> Unit = {},
+    private val onSaveStemWav: (String) -> Unit = {}
 ) : JPanel() {
 
     private var updating = false
@@ -286,6 +288,7 @@ class DesktopStemSeparationPanel(
             add(scopeSelCb)
             add(separateBtn)
             add(cancelBtn)
+            add(StudioTheme.hardwareButton("ALL -> LOOPS", StudioTheme.NeonCyan) { onSendAllToLooper() })
             add(StudioTheme.hardwareButton("ALL -> TRACKS", StudioTheme.EmeraldSignal) { onSendAllToTracks() })
         }
         add(actionRow)
@@ -326,6 +329,7 @@ class DesktopStemSeparationPanel(
                         add(StudioTheme.hardwareButton("-> DECK", StudioTheme.NeonCyan) { onLoadStemToDeck(stem.stemId) })
                         add(StudioTheme.hardwareButton("-> LOOP ${'A' + slot}", StudioTheme.EmeraldSignal) { onSendStemToLoop(stem.stemId, slot) })
                         add(StudioTheme.hardwareButton("-> TRK ${slot + 1}", StudioTheme.MagentaFx) { onAddStemToTrack(stem.stemId, slot) })
+                        add(StudioTheme.hardwareButton("-> .WAV", StudioTheme.AmberHot) { onSaveStemWav(stem.stemId) })
                     }
                     resultsPanel.add(row)
                 }

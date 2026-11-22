@@ -230,6 +230,19 @@ class StudioEngine {
     private val timelinePlayingFlag = AtomicBoolean(false)
     private val masterSyncFlag = AtomicBoolean(false)
 
+    @Volatile
+    private var masterGain = 0.85f
+
+    @Volatile
+    private var masterMuted = false
+
+    fun setMasterVolume(volume: Float, muted: Boolean) {
+        masterGain = volume.coerceIn(0f, 1f)
+        masterMuted = muted
+    }
+
+    fun effectiveMasterGain(): Float = if (masterMuted) 0f else masterGain
+
     // --- LOOPER ---
 
     fun assignBufferToLoopSlot(slotId: Int, buffer: AudioBuffer, label: String = buffer.name) {
@@ -414,8 +427,9 @@ class StudioEngine {
                         }
                     }
 
+                    val gain = effectiveMasterGain()
                     val shorts = ShortArray(chunkFrames) { i ->
-                        (chunk[i].coerceIn(-1f, 1f) * 32767f).toInt().toShort()
+                        ((chunk[i] * gain).coerceIn(-1f, 1f) * 32767f).toInt().toShort()
                     }
                     track.write(shorts, 0, shorts.size)
                     globalFrame += chunkFrames
@@ -553,8 +567,9 @@ class StudioEngine {
                         }
                     }
 
+                    val gain = effectiveMasterGain()
                     val shorts = ShortArray(stepFrames) { i ->
-                        (stepAudio[i].coerceIn(-1f, 1f) * 32767f).toInt().toShort()
+                        ((stepAudio[i] * gain).coerceIn(-1f, 1f) * 32767f).toInt().toShort()
                     }
                     track.write(shorts, 0, shorts.size)
                     step = (step + 1) % 16
@@ -697,8 +712,9 @@ class StudioEngine {
 
                 while (timelinePlayingFlag.get() && isActive && cursorFrame < mixdown.frameCount) {
                     val count = min(chunkFrames, mixdown.frameCount - cursorFrame)
+                    val gain = effectiveMasterGain()
                     val shorts = ShortArray(count) { i ->
-                        (mixdown.samples[cursorFrame + i].coerceIn(-1f, 1f) * 32767f).toInt().toShort()
+                        ((mixdown.samples[cursorFrame + i] * gain).coerceIn(-1f, 1f) * 32767f).toInt().toShort()
                     }
                     track.write(shorts, 0, shorts.size)
                     cursorFrame += count

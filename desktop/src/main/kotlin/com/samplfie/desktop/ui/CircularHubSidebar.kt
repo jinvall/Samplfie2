@@ -4,6 +4,7 @@ import com.samplfie.desktop.DesktopStudioUiState
 import com.samplfie.desktop.audio.DesktopMicState
 import com.samplfie.desktop.audio.DesktopPlaybackState
 import com.samplfie.desktop.model.DesktopStation
+import com.samplfie.desktop.network.CollabPeerDevice
 import com.samplfie.desktop.network.NetBridgeState
 import java.awt.BasicStroke
 import java.awt.BorderLayout
@@ -46,9 +47,14 @@ class CircularHubSidebar(
     private val onGrabHandoff: () -> Unit,
     private val onOpenWav: () -> Unit,
     private val onSaveWav: () -> Unit,
-    private val onExportMp3: () -> Unit
+    private val onExportMp3: () -> Unit,
+    private val onMasterVolumeChanged: (Float) -> Unit = {},
+    private val onToggleMasterMute: () -> Unit = {},
+    private val onOpenCollabDialog: () -> Unit = {},
+    private val onToggleBandRec: () -> Unit = {}
 ) : JPanel() {
 
+    private var updating = false
     private var uiState = DesktopStudioUiState()
     private var playState = DesktopPlaybackState()
     private var micState = DesktopMicState()
@@ -63,8 +69,22 @@ class CircularHubSidebar(
     private val micBtn = StudioTheme.hardwareButton("REC MIC", StudioTheme.TacCoral) { onToggleMic() }
     private val stompBtn = StudioTheme.hardwareButton("STOMP ON", StudioTheme.VioletMod) { onToggleStompBypass() }
 
+    private val masterMuteBtn = StudioTheme.hardwareButton("VOL", StudioTheme.EmeraldSignal) { onToggleMasterMute() }.apply {
+        preferredSize = Dimension(62, 26)
+    }
+    private val masterVolumeSlider = StudioTheme.hardwareSlider(0, 100, 85).apply {
+        addChangeListener {
+            if (!updating) {
+                onMasterVolumeChanged(value / 100f)
+            }
+        }
+    }
+    private val masterVolValueLabel = StudioTheme.hardwareLabel("85%", StudioTheme.EmeraldSignal, StudioTheme.MonoFont)
+
     private val pushHandoffBtn = StudioTheme.hardwareButton("PUSH PEER", StudioTheme.NeonCyan) { onPushHandoff() }
     private val grabHandoffBtn = StudioTheme.hardwareButton("GRAB PEER", StudioTheme.AmberHot) { onGrabHandoff() }
+    private val bandLinkBtn = StudioTheme.hardwareButton("BAND 0/4", StudioTheme.NeonCyan) { onOpenCollabDialog() }
+    private val bandRecBtn = StudioTheme.hardwareButton("BAND REC", StudioTheme.TacCoral) { onToggleBandRec() }
 
     private val openBtn = StudioTheme.hardwareButton("OPEN WAV", StudioTheme.NeonCyan) { onOpenWav() }
     private val saveWavBtn = StudioTheme.hardwareButton("SAVE WAV", StudioTheme.EmeraldSignal) { onSaveWav() }
@@ -117,28 +137,40 @@ class CircularHubSidebar(
         inner.add(transportPanel)
         inner.add(Box.createVerticalStrut(6))
 
-        // Equal Peer Handoff Strip
+        // Equal Peer Handoff & 4-Device Band Strip
         val handoffPanel = StudioTheme.hardwarePanel(StudioTheme.AmberHot).apply {
-            layout = GridLayout(1, 2, 6, 0)
-            maximumSize = Dimension(Int.MAX_VALUE, 46)
+            layout = GridLayout(2, 2, 6, 4)
+            maximumSize = Dimension(Int.MAX_VALUE, 74)
             alignmentX = LEFT_ALIGNMENT
             add(pushHandoffBtn)
             add(grabHandoffBtn)
+            add(bandLinkBtn)
+            add(bandRecBtn)
         }
         inner.add(handoffPanel)
         inner.add(Box.createVerticalStrut(6))
 
-        // Stomp + Master VU
+        // Stomp + Master VU + Master Volume Control
         val masterPanel = StudioTheme.hardwarePanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            maximumSize = Dimension(Int.MAX_VALUE, 84)
+            maximumSize = Dimension(Int.MAX_VALUE, 118)
             alignmentX = LEFT_ALIGNMENT
-            add(stompBtn.apply { alignmentX = LEFT_ALIGNMENT; maximumSize = Dimension(Int.MAX_VALUE, 30) })
-            add(Box.createVerticalStrut(6))
+            add(stompBtn.apply { alignmentX = LEFT_ALIGNMENT; maximumSize = Dimension(Int.MAX_VALUE, 28) })
+            add(Box.createVerticalStrut(4))
             vuMeterCanvas.alignmentX = LEFT_ALIGNMENT
             vuMeterCanvas.preferredSize = Dimension(280, 18)
-            vuMeterCanvas.maximumSize = Dimension(Int.MAX_VALUE, 20)
+            vuMeterCanvas.maximumSize = Dimension(Int.MAX_VALUE, 18)
             add(vuMeterCanvas)
+            add(Box.createVerticalStrut(4))
+            val volRow = JPanel(BorderLayout(6, 0)).apply {
+                isOpaque = false
+                maximumSize = Dimension(Int.MAX_VALUE, 28)
+                alignmentX = LEFT_ALIGNMENT
+                add(masterMuteBtn, BorderLayout.WEST)
+                add(masterVolumeSlider, BorderLayout.CENTER)
+                add(masterVolValueLabel, BorderLayout.EAST)
+            }
+            add(volRow)
         }
         inner.add(masterPanel)
         inner.add(Box.createVerticalStrut(6))
@@ -162,25 +194,44 @@ class CircularHubSidebar(
         ui: DesktopStudioUiState,
         play: DesktopPlaybackState,
         mic: DesktopMicState,
-        net: NetBridgeState
+        net: NetBridgeState,
+        collabPeers: List<CollabPeerDevice> = emptyList()
     ) {
-        uiState = ui
-        playState = play
-        micState = mic
-        netState = net
+        updating = true
+        try {
+            uiState = ui
+            playState = play
+            micState = mic
+            netState = net
 
-        rigLabel.text = "${ui.rigConfig.sampleRate / 1000.0}kHz • ${ui.rigConfig.channels}CH • B${ui.rigConfig.bufferSize} • ${ui.rigConfig.protocol.label}"
-        playBtn.text = if (play.isPlaying) "PAUSE" else "PLAY"
-        loopBtn.text = if (play.isLooping) "LOOP: ON" else "LOOP: OFF"
-        micBtn.text = if (mic.isRecording) "STOP REC" else "REC MIC"
-        stompBtn.text = if (ui.stompState.engaged && !ui.fxState.masterBypass) {
-            "STOMP ON (${ui.fxState.activeCount} FX)"
-        } else {
-            "MASTER BYPASS"
+            rigLabel.text = "${ui.rigConfig.sampleRate / 1000.0}kHz • ${ui.rigConfig.channels}CH • B${ui.rigConfig.bufferSize} • ${ui.rigConfig.protocol.label}"
+            playBtn.text = if (play.isPlaying) "PAUSE" else "PLAY"
+            loopBtn.text = if (play.isLooping) "LOOP: ON" else "LOOP: OFF"
+            micBtn.text = if (mic.isRecording) "STOP REC" else "REC MIC"
+            stompBtn.text = if (ui.stompState.engaged && !ui.fxState.masterBypass) {
+                "STOMP ON (${ui.fxState.activeCount} FX)"
+            } else {
+                "MASTER BYPASS"
+            }
+
+            val volPct = (ui.masterVolume.coerceIn(0f, 1f) * 100f).toInt()
+            if (!masterVolumeSlider.valueIsAdjusting) {
+                masterVolumeSlider.value = volPct
+            }
+            masterMuteBtn.text = if (ui.isMasterMuted) "MUTE" else "VOL"
+            masterMuteBtn.foreground = if (ui.isMasterMuted) StudioTheme.TacCoral else StudioTheme.EmeraldSignal
+            masterVolValueLabel.text = if (ui.isMasterMuted) "MUTE" else "$volPct%"
+            masterVolValueLabel.foreground = if (ui.isMasterMuted) StudioTheme.TacCoral else StudioTheme.EmeraldSignal
+
+            val linked = collabPeers.count { it.isConnected }
+            bandLinkBtn.text = "BAND $linked/4 (${ui.bandRecState.myStyle.shortTag})"
+            bandRecBtn.text = if (ui.bandRecState.isRecording) "STOP BAND" else "BAND REC"
+
+            wheelCanvas.repaint()
+            vuMeterCanvas.repaint()
+        } finally {
+            updating = false
         }
-
-        wheelCanvas.repaint()
-        vuMeterCanvas.repaint()
     }
 
     private data class SpokeHit(val station: DesktopStation, val rect: RoundRectangle2D.Double, val accent: Color, val angleDeg: Double)

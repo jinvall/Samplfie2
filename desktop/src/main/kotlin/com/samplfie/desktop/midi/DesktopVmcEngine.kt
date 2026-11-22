@@ -55,7 +55,13 @@ enum class VmcTarget(val label: String, val isContinuous: Boolean) {
     SEQ_PAD_4("Seq Pad 4 (Hi-Hat)", false),
     SEQ_PLAY_TOGGLE("Sequencer Play/Stop", false),
     TIMELINE_PLAY_TOGGLE("Timeline Play/Stop", false),
-    SESSION_HANDOFF_PUSH("Push Session Handoff", false)
+    SESSION_HANDOFF_PUSH("Push Session Handoff", false),
+    LIVE_OVERDUB_TOGGLE("Live Pad Overdub Arm", false),
+    SEQ_CLEAR_PATTERN("Sequencer Clear Pattern", false),
+    DRUM_PUNCH_LANE_1("Punch Step Lane 1 (Sample)", false),
+    DRUM_PUNCH_LANE_2("Punch Step Lane 2 (Kick)", false),
+    DRUM_PUNCH_LANE_3("Punch Step Lane 3 (Snare)", false),
+    DRUM_PUNCH_LANE_4("Punch Step Lane 4 (Hi-Hat)", false)
 }
 
 /**
@@ -111,7 +117,17 @@ data class VmcEngineState(
             VmcMappingRule("r_loop_a", 17, VmcMsgType.NOTE_ON, 36, VmcTarget.LOOPER_SLOT_A),
             VmcMappingRule("r_loop_b", 17, VmcMsgType.NOTE_ON, 37, VmcTarget.LOOPER_SLOT_B),
             VmcMappingRule("r_pad_1", 33, VmcMsgType.NOTE_ON, 40, VmcTarget.SEQ_PAD_1),
-            VmcMappingRule("r_pad_2", 33, VmcMsgType.NOTE_ON, 41, VmcTarget.SEQ_PAD_2)
+            VmcMappingRule("r_pad_2", 33, VmcMsgType.NOTE_ON, 41, VmcTarget.SEQ_PAD_2),
+            VmcMappingRule("r_pad_3", 33, VmcMsgType.NOTE_ON, 42, VmcTarget.SEQ_PAD_3),
+            VmcMappingRule("r_pad_4", 33, VmcMsgType.NOTE_ON, 43, VmcTarget.SEQ_PAD_4),
+            VmcMappingRule("r_gm_kick", 33, VmcMsgType.NOTE_ON, 36, VmcTarget.DRUM_PUNCH_LANE_2),
+            VmcMappingRule("r_gm_snare", 33, VmcMsgType.NOTE_ON, 38, VmcTarget.DRUM_PUNCH_LANE_3),
+            VmcMappingRule("r_gm_clap", 33, VmcMsgType.NOTE_ON, 39, VmcTarget.DRUM_PUNCH_LANE_1),
+            VmcMappingRule("r_gm_hat", 33, VmcMsgType.NOTE_ON, 42, VmcTarget.DRUM_PUNCH_LANE_4),
+            VmcMappingRule("r_ch10_kick", 10, VmcMsgType.NOTE_ON, 36, VmcTarget.DRUM_PUNCH_LANE_2),
+            VmcMappingRule("r_ch10_snare", 10, VmcMsgType.NOTE_ON, 38, VmcTarget.DRUM_PUNCH_LANE_3),
+            VmcMappingRule("r_ch10_clap", 10, VmcMsgType.NOTE_ON, 39, VmcTarget.DRUM_PUNCH_LANE_1),
+            VmcMappingRule("r_ch10_hat", 10, VmcMsgType.NOTE_ON, 42, VmcTarget.DRUM_PUNCH_LANE_4)
         )
     }
 }

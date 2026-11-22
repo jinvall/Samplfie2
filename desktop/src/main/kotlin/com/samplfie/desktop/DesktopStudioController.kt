@@ -30,6 +30,11 @@ import com.samplfie.desktop.model.TunerInputSource
 import com.samplfie.desktop.model.TunerReading
 import com.samplfie.desktop.model.TuningPreset
 import com.samplfie.desktop.model.VisualizerMode
+import com.samplfie.desktop.network.CollabInstrumentStyle
+import com.samplfie.desktop.network.CollabPeerDevice
+import com.samplfie.desktop.network.CollabSyncCommand
+import com.samplfie.desktop.network.LiveBandRecordingState
+import com.samplfie.desktop.network.MAX_COLLAB_PEERS
 import com.samplfie.desktop.network.NetBridgeState
 import com.samplfie.desktop.network.SessionHandoffSnapshot
 import com.samplfie.desktop.network.Smp2NetworkNode
@@ -48,6 +53,9 @@ import com.samplfie.desktop.studio.DesktopSyncedPlayheadState
 import com.samplfie.desktop.studio.DesktopTimelineState
 import com.samplfie.desktop.tuner.PitchDetector
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -58,6 +66,9 @@ data class DesktopStudioUiState(
     val station: DesktopStation = DesktopStation.EDITOR,
     val visualizerMode: VisualizerMode = VisualizerMode.DUAL,
     val workspaceConfig: DesktopWorkspaceConfig = DesktopWorkspaceConfig(),
+    val masterVolume: Float = 0.85f,
+    val isMasterMuted: Boolean = false,
+    val bandRecState: LiveBandRecordingState = LiveBandRecordingState(),
     val rawBuffer: DesktopAudioBuffer? = null,
     val dryBuffer: DesktopAudioBuffer? = null,
     val processedBuffer: DesktopAudioBuffer? = null,
@@ -85,7 +96,7 @@ data class DesktopStudioUiState(
 /**
  * Central state controller for Samplfie2 Desktop Workstation.
  * Unifies all studio spokes (Booth, Deck/Signal Editor, Samples/Looper + Refiner, Instruments/Seq,
- * Synced Tracks, FX Rack, Live Stompbox, Chromatic Tuner, 64-Ch VMC MIDI, and Peer Handoff Bridge).
+ * Synced Tracks, FX Rack, Live Stompbox, Chromatic Tuner, 64-Ch VMC MIDI, and 4-Device Collab Bridge).
  */
 class DesktopStudioController {
 
@@ -109,12 +120,20 @@ class DesktopStudioController {
 
     val arrangement = DesktopArrangementEngine()
 
-    val soundEngine: LinuxSoundEngine = LinuxSoundEngine { monoChunk, sr ->
-        val src = _uiState.value.tunerSource
-        if (src == TunerInputSource.LIVE_MIC || (src == TunerInputSource.DECK_BUFFER && playbackState.value.isPlaying)) {
-            analyzeSamplesForTuner(monoChunk, sr)
+    val soundEngine: LinuxSoundEngine = LinuxSoundEngine(
+        onLiveSamplesForTuner = { monoChunk, sr ->
+            val src = _uiState.value.tunerSource
+            if (src == TunerInputSource.LIVE_MIC || (src == TunerInputSource.DECK_BUFFER && playbackState.value.isPlaying)) {
+                analyzeSamplesForTuner(monoChunk, sr)
+            }
+        },
+        onLiveRecordedAudio = { monoChunk, sr ->
+            val band = _uiState.value.bandRecState
+            if (band.isRecording) {
+                netNode.sendCollabLiveChunk(monoChunk, sr, band.myStyle, band.myTrackSlot)
+            }
         }
-    }
+    )
 
     val vmcEngine: DesktopVmcEngine = DesktopVmcEngine(
         onExecuteTarget = { target, norm -> executeVmcTarget(target, norm) },
@@ -150,12 +169,25 @@ class DesktopStudioController {
         onHandoffRequestedByPeer = { host, replyPort ->
             val snap = captureSessionSnapshot()
             netNode.sendSessionHandoff(snap, _uiState.value.rigConfig.protocol, host, replyPort)
+        },
+        onCollabSyncCommandReceived = { cmd ->
+            if (cmd.start) {
+                if (!_uiState.value.bandRecState.isRecording) {
+                    arrangement.setBpm(cmd.bpm)
+                    startLiveBandRecording(broadcastToPeers = false, syncedTakeName = cmd.takeName)
+                }
+            } else {
+                if (_uiState.value.bandRecState.isRecording) {
+                    stopLiveBandRecording(broadcastStop = false)
+                }
+            }
         }
     )
 
     val playbackState: StateFlow<DesktopPlaybackState> = soundEngine.playbackState
     val micState: StateFlow<DesktopMicState> = soundEngine.micState
     val netState: StateFlow<NetBridgeState> = netNode.state
+    val collabPeers: StateFlow<List<CollabPeerDevice>> = netNode.collabPeers
     val looperState: StateFlow<DesktopLooperState> = arrangement.looperState
     val loopRefinerState: StateFlow<DesktopLoopRefinerState> = arrangement.loopRefinerState
     val sequencerState: StateFlow<DesktopSequencerState> = arrangement.sequencerState
@@ -164,8 +196,12 @@ class DesktopStudioController {
     val vmcState: StateFlow<VmcEngineState> = vmcEngine.state
 
     init {
+        soundEngine.setMasterVolume(_uiState.value.masterVolume, _uiState.value.isMasterMuted)
+        arrangement.setMasterVolume(_uiState.value.masterVolume, _uiState.value.isMasterMuted)
         generateTestSignal(SignalWaveformType.SINE, 440.0)
         refreshMidiPorts()
+        syncLocalPresence()
+        netNode.startDiscovery()
     }
 
     fun selectStation(station: DesktopStation) {
@@ -567,6 +603,8 @@ class DesktopStudioController {
             looperActiveMask = loopMask,
             looperBars = loopBars,
             vmcMappings = vmcEngine.state.value.mappings,
+            masterVolume = ui.masterVolume,
+            isMasterMuted = ui.isMasterMuted,
             buffer = ui.dryBuffer
         )
     }
@@ -603,9 +641,15 @@ class DesktopStudioController {
 
         val targetStation = SessionHandoffSnapshot.mapStationKeyToDesktop(snap.stationKey)
         val newDry = snap.buffer ?: _uiState.value.dryBuffer
+        val syncedVol = snap.masterVolume.coerceIn(0f, 1f)
+        val syncedMuted = snap.isMasterMuted
+        soundEngine.setMasterVolume(syncedVol, syncedMuted)
+        arrangement.setMasterVolume(syncedVol, syncedMuted)
         _uiState.value = _uiState.value.copy(
             fxState = snap.fxState,
             stompState = snap.stompState,
+            masterVolume = syncedVol,
+            isMasterMuted = syncedMuted,
             selectionStart = snap.selectionStart,
             selectionEnd = snap.selectionEnd,
             playSelectionOnly = snap.playSelectionOnly,
@@ -729,10 +773,192 @@ class DesktopStudioController {
         return res
     }
 
-    // --- NETWORK BRIDGE ---
+    // --- MASTER VOLUME, 4-DEVICE COLLAB & NETWORK BRIDGE ---
+
+    fun setMasterVolume(volume: Float) {
+        val clamped = volume.coerceIn(0f, 1f)
+        val muted = _uiState.value.isMasterMuted
+        soundEngine.setMasterVolume(clamped, muted)
+        arrangement.setMasterVolume(clamped, muted)
+        _uiState.value = _uiState.value.copy(masterVolume = clamped)
+    }
+
+    fun toggleMasterMute() {
+        val nextMuted = !_uiState.value.isMasterMuted
+        val vol = _uiState.value.masterVolume
+        soundEngine.setMasterVolume(vol, nextMuted)
+        arrangement.setMasterVolume(vol, nextMuted)
+        _uiState.value = _uiState.value.copy(isMasterMuted = nextMuted)
+    }
+
+    fun refreshNearbyDiscovery() {
+        syncLocalPresence()
+        val cfg = _uiState.value.rigConfig
+        if (!netNode.state.value.isListening) {
+            runCatching { netNode.startListening(cfg.protocol, cfg.bindPort) }
+        }
+        if (!netNode.state.value.isDiscovering) {
+            netNode.startDiscovery()
+        }
+        netNode.sendDiscoveryBeaconOnce()
+    }
+
+    fun setMyCollabStyle(style: CollabInstrumentStyle, trackSlot: Int = style.defaultTrack) {
+        val slot = trackSlot.coerceIn(0, 3)
+        _uiState.value = _uiState.value.copy(
+            bandRecState = _uiState.value.bandRecState.copy(myStyle = style, myTrackSlot = slot)
+        )
+        syncLocalPresence()
+        netNode.sendDiscoveryBeaconOnce()
+    }
+
+    fun connectCollabPeer(
+        host: String,
+        port: Int,
+        name: String = "Studio Peer",
+        platform: String = "PEER",
+        style: CollabInstrumentStyle? = null,
+        trackSlot: Int? = null
+    ): Boolean {
+        val cfg = _uiState.value.rigConfig
+        if (!netNode.state.value.isListening) {
+            runCatching { netNode.startListening(cfg.protocol, cfg.bindPort) }
+        }
+        val res = netNode.connectPeer(host, port, name, platform, style, trackSlot)
+        res.onSuccess { peer ->
+            _uiState.value = _uiState.value.copy(
+                rigConfig = cfg.copy(txHost = peer.host, txPort = peer.listenPort),
+                statusLine = "CONNECTED ${peer.name} (${peer.style.label}) -> TRACK ${peer.trackSlot + 1}"
+            )
+        }.onFailure { err ->
+            _uiState.value = _uiState.value.copy(
+                statusLine = err.message ?: "Max $MAX_COLLAB_PEERS collaborators connected"
+            )
+        }
+        return res.isSuccess
+    }
+
+    fun disconnectCollabPeer(peerId: String) {
+        netNode.disconnectPeer(peerId)
+        _uiState.value = _uiState.value.copy(statusLine = "DISCONNECTED PEER $peerId")
+    }
+
+    fun updateCollabPeerStyleAndTrack(
+        peerId: String,
+        style: CollabInstrumentStyle,
+        trackSlot: Int = style.defaultTrack
+    ) {
+        netNode.updatePeerStyleAndTrack(peerId, style, trackSlot)
+    }
+
+    fun toggleLiveBandRecording() {
+        if (_uiState.value.bandRecState.isRecording) {
+            stopLiveBandRecording(broadcastStop = true)
+        } else {
+            startLiveBandRecording(broadcastToPeers = true)
+        }
+    }
+
+    fun startLiveBandRecording(broadcastToPeers: Boolean = true, syncedTakeName: String = "") {
+        if (_uiState.value.bandRecState.isRecording) return
+        val cfg = _uiState.value.rigConfig
+        if (!netNode.state.value.isListening) {
+            runCatching { netNode.startListening(cfg.protocol, cfg.bindPort) }
+        }
+        netNode.beginCollabAudioCapture()
+        val takeName = syncedTakeName.ifBlank {
+            "BAND_${SimpleDateFormat("HHmmss", Locale.US).format(Date())}"
+        }
+        val cur = _uiState.value.bandRecState
+        _uiState.value = _uiState.value.copy(
+            bandRecState = cur.copy(
+                isRecording = true,
+                startedAtMs = System.currentTimeMillis(),
+                activeTakeName = takeName
+            )
+        )
+        syncLocalPresence()
+        soundEngine.startMicCapture(cfg.sampleRate, tunerOnly = false)
+        if (broadcastToPeers) {
+            netNode.sendCollabRecSync(
+                CollabSyncCommand(
+                    start = true,
+                    bpm = arrangement.syncedPlayhead.value.bpm,
+                    senderPeerId = netNode.localNodeId,
+                    senderName = _uiState.value.workspaceConfig.nodeName,
+                    senderStyle = cur.myStyle,
+                    senderTrackSlot = cur.myTrackSlot,
+                    takeName = takeName,
+                    senderListenPort = cfg.bindPort
+                )
+            )
+        }
+        val linked = netNode.getConnectedPeers().size
+        _uiState.value = _uiState.value.copy(
+            statusLine = "LIVE BAND REC (${cur.myStyle.shortTag} -> T${cur.myTrackSlot + 1} • $linked PEERS)"
+        )
+    }
+
+    fun stopLiveBandRecording(broadcastStop: Boolean = true) {
+        val cur = _uiState.value.bandRecState
+        if (!cur.isRecording) return
+        _uiState.value = _uiState.value.copy(
+            bandRecState = cur.copy(
+                isRecording = false,
+                elapsedMs = System.currentTimeMillis() - cur.startedAtMs
+            )
+        )
+        syncLocalPresence()
+        val cfg = _uiState.value.rigConfig
+        if (broadcastStop) {
+            netNode.sendCollabRecSync(
+                CollabSyncCommand(
+                    start = false,
+                    bpm = arrangement.syncedPlayhead.value.bpm,
+                    senderPeerId = netNode.localNodeId,
+                    senderName = _uiState.value.workspaceConfig.nodeName,
+                    senderStyle = cur.myStyle,
+                    senderTrackSlot = cur.myTrackSlot,
+                    takeName = cur.activeTakeName,
+                    senderListenPort = cfg.bindPort
+                )
+            )
+        }
+        val stamp = cur.activeTakeName.ifBlank { "BAND_${System.currentTimeMillis()}" }
+        val localBuf = soundEngine.stopMicAndCollectBuffer("${stamp}_${cur.myStyle.shortTag}")
+        val peerTracks = netNode.stopAndCollectCollabTracks(stamp)
+
+        var placedCount = 0
+        if (localBuf != null) {
+            arrangement.addClipToTimeline(cur.myTrackSlot.coerceIn(0, 3), localBuf, 0f)
+            placedCount++
+            loadNewBuffer(localBuf, "SAVED ${cur.myStyle.label} TAKE -> TRACK ${cur.myTrackSlot + 1}")
+        }
+        peerTracks.forEach { (peer, buf) ->
+            arrangement.addClipToTimeline(peer.trackSlot.coerceIn(0, 3), buf, 0f)
+            placedCount++
+        }
+        val summary = "BAND REC LANDED $placedCount TRACKS (${1 + peerTracks.size} DEVICES)"
+        _uiState.value = _uiState.value.copy(
+            bandRecState = _uiState.value.bandRecState.copy(lastRecordedSummary = summary),
+            statusLine = summary
+        )
+    }
+
+    private fun syncLocalPresence() {
+        val ui = _uiState.value
+        netNode.updateLocalPresence(
+            nodeName = ui.workspaceConfig.nodeName,
+            listenPort = ui.rigConfig.bindPort,
+            style = ui.bandRecState.myStyle,
+            trackSlot = ui.bandRecState.myTrackSlot,
+            isRecording = ui.bandRecState.isRecording
+        )
+    }
 
     fun updateRigConfig(transform: DesktopRigConfig.() -> DesktopRigConfig) {
         _uiState.value = _uiState.value.copy(rigConfig = _uiState.value.rigConfig.transform())
+        syncLocalPresence()
     }
 
     fun toggleNetworkListener() {
@@ -913,7 +1139,8 @@ class DesktopStudioController {
                     baseUrl = baseUrl,
                     apiKey = apiKey,
                     stems = targetStems,
-                    sourceBuffer = source
+                    sourceBuffer = source,
+                    isCancelled = { Thread.currentThread().isInterrupted }
                 ) { jobId, status, charge ->
                     _stemState.value = _stemState.value.copy(
                         activeJobId = jobId ?: _stemState.value.activeJobId,
@@ -938,6 +1165,7 @@ class DesktopStudioController {
                 )
                 _uiState.value = _uiState.value.copy(statusLine = done)
             }.onFailure { err ->
+                if (err is InterruptedException) return@onFailure
                 val msg = err.message ?: "Disband separation failed"
                 _stemState.value = _stemState.value.copy(
                     isRunning = false,
@@ -975,10 +1203,21 @@ class DesktopStudioController {
     fun sendAllSeparatedStemsToTimeline() {
         val stems = _stemState.value.separatedStems
         if (stems.isEmpty()) return
-        stems.take(4).forEachIndexed { idx, stem ->
-            arrangement.addClipToTimeline(idx, stem.buffer, startTimeSec = 0f)
+        stems.forEachIndexed { idx, stem ->
+            arrangement.addClipToTimeline(idx % 4, stem.buffer, startTimeSec = 0f)
         }
-        _uiState.value = _uiState.value.copy(statusLine = "PLACED ${stems.take(4).size} STEMS ONTO TRACKS 1–${stems.take(4).size}")
+        _uiState.value = _uiState.value.copy(statusLine = "PLACED ALL ${stems.size} STEMS ONTO TRACKS 1–4")
+    }
+
+    fun sendAllSeparatedStemsToLooper() {
+        val stems = _stemState.value.separatedStems
+        if (stems.isEmpty()) return
+        stems.take(4).forEachIndexed { idx, stem ->
+            arrangement.assignBufferToLoopSlot(idx, stem.buffer, stem.label)
+        }
+        _uiState.value = _uiState.value.copy(
+            statusLine = "LOADED ${stems.take(4).size} STEMS INTO LOOP SLOTS A–${'A' + (stems.take(4).size - 1)}"
+        )
     }
 
     fun exportSeparatedStemWav(stemId: String, targetFile: File): Result<File> {
@@ -998,6 +1237,6 @@ class DesktopStudioController {
         soundEngine.stopMicAndCollectBuffer()
         arrangement.release()
         hwMidi.closeAll()
-        netNode.stopListening()
+        netNode.release()
     }
 }

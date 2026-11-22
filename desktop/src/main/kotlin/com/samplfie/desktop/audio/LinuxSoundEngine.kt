@@ -44,7 +44,8 @@ data class DesktopMicState(
  * - Reference tuning tones & one-shot pad auditioning without stopping deck loop playback
  */
 class LinuxSoundEngine(
-    private val onLiveSamplesForTuner: (FloatArray, Int) -> Unit = { _, _ -> }
+    private val onLiveSamplesForTuner: (FloatArray, Int) -> Unit = { _, _ -> },
+    private val onLiveRecordedAudio: (FloatArray, Int) -> Unit = { _, _ -> }
 ) {
     private val _playbackState = MutableStateFlow(DesktopPlaybackState())
     val playbackState: StateFlow<DesktopPlaybackState> = _playbackState.asStateFlow()
@@ -65,6 +66,19 @@ class LinuxSoundEngine(
 
     @Volatile
     private var cursorFrame = 0
+
+    @Volatile
+    private var masterGain = 0.85f
+
+    @Volatile
+    private var masterMuted = false
+
+    fun setMasterVolume(volume: Float, muted: Boolean) {
+        masterGain = volume.coerceIn(0f, 1f)
+        masterMuted = muted
+    }
+
+    fun effectiveMasterGain(): Float = if (masterMuted) 0f else masterGain
 
     private val playingFlag = AtomicBoolean(false)
     private val loopingFlag = AtomicBoolean(false)
@@ -207,7 +221,9 @@ class LinuxSoundEngine(
                     val sampleLo = (curPos * b.channels).coerceIn(0, b.samples.size)
                     val sampleHi = ((curPos + count) * b.channels).coerceIn(sampleLo, b.samples.size)
                     val slice = b.samples.copyOfRange(sampleLo, sampleHi)
-                    val pcm = DesktopWavCodec.floatToPcm16Bytes(slice)
+                    val outGain = effectiveMasterGain()
+                    val scaledSlice = if (outGain >= 0.999f) slice else FloatArray(slice.size) { i -> (slice[i] * outGain).coerceIn(-1f, 1f) }
+                    val pcm = DesktopWavCodec.floatToPcm16Bytes(scaledSlice)
                     val frameMs = (count * 1000L) / b.sampleRate.coerceAtLeast(8000)
 
                     if (line != null) {
@@ -289,7 +305,9 @@ class LinuxSoundEngine(
     fun playOneShot(buf: DesktopAudioBuffer) {
         if (buf.frameCount == 0) return
         thread(isDaemon = true, name = "SamplfieDesktopOneShot") {
-            val pcm = DesktopWavCodec.floatToPcm16Bytes(buf.samples)
+            val outGain = effectiveMasterGain()
+            val scaled = if (outGain >= 0.999f) buf.samples else FloatArray(buf.samples.size) { i -> (buf.samples[i] * outGain).coerceIn(-1f, 1f) }
+            val pcm = DesktopWavCodec.floatToPcm16Bytes(scaled)
             try {
                 val fmt = AudioFormat(buf.sampleRate.toFloat(), 16, buf.channels, true, false)
                 val info = DataLine.Info(SourceDataLine::class.java, fmt)
@@ -310,10 +328,11 @@ class LinuxSoundEngine(
     fun playReferenceTone(freqHz: Double, durationMs: Int = 700, sampleRate: Int = 44100) {
         thread(isDaemon = true, name = "SamplfieRefTone") {
             val frames = (sampleRate * (durationMs / 1000.0)).toInt()
+            val outGain = effectiveMasterGain()
             val floats = FloatArray(frames) { i ->
                 val t = i.toDouble() / sampleRate
                 val env = min(1f, i / 400f) * min(1f, (frames - 1 - i) / 600f)
-                (sin(2.0 * PI * freqHz * t) * 0.45 * env).toFloat()
+                (sin(2.0 * PI * freqHz * t) * 0.45 * env * outGain).toFloat()
             }
             val pcm = DesktopWavCodec.floatToPcm16Bytes(floats)
             try {
@@ -373,6 +392,7 @@ class LinuxSoundEngine(
                             synchronized(recordedSamples) {
                                 for (s in floats) recordedSamples.add(s)
                             }
+                            onLiveRecordedAudio(floats, sampleRate)
                         }
                         var peak = 0f
                         for (s in floats) peak = max(peak, abs(s))

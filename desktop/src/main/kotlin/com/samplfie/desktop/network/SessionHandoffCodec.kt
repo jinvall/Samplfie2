@@ -36,6 +36,8 @@ data class SessionHandoffSnapshot(
     val looperActiveMask: Int = 0,
     val looperBars: List<Int> = listOf(1, 1, 1, 1),
     val vmcMappings: List<VmcMappingRule> = emptyList(),
+    val masterVolume: Float = 0.85f,
+    val isMasterMuted: Boolean = false,
     val buffer: DesktopAudioBuffer? = null
 ) {
     fun encodeToWireBytes(): ByteArray {
@@ -98,6 +100,8 @@ data class SessionHandoffSnapshot(
             "vmcMappings" to vmcMappings.joinToString(";") { r ->
                 "${r.id}|${r.channel64}|${r.msgType.name}|${r.number}|${r.target.name}|${r.routeMode.name}"
             },
+            "master.volume" to masterVolume.toString(),
+            "master.muted" to isMasterMuted.toString(),
             "buf.name" to sanitize(buffer?.name ?: ""),
             "buf.sampleRate" to (buffer?.sampleRate ?: 44100).toString(),
             "buf.channels" to (buffer?.channels ?: 1).toString()
@@ -242,6 +246,8 @@ data class SessionHandoffSnapshot(
                 looperActiveMask = map["looperActiveMask"]?.toIntOrNull() ?: 0,
                 looperBars = map["looperBars"]?.split(",")?.mapNotNull { it.toIntOrNull() } ?: listOf(1, 1, 1, 1),
                 vmcMappings = vmcList,
+                masterVolume = f("master.volume", 0.85f).coerceIn(0f, 1f),
+                isMasterMuted = b("master.muted", false),
                 buffer = buf
             )
         }

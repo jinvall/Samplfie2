@@ -22,4 +22,7 @@
     <string name="import_picker_title">Open audio file</string>
     <string name="mic_permission_required">Microphone permission required for live TAC capture</string>
     <string name="grant_mic_permission">GRANT MIC</string>
+    <string name="master_volume_label">MASTER VOL</string>
+    <string name="audio_permission_required">Audio file read permission needed to import tracks directly</string>
+    <string name="band_link_title">4-DEVICE BAND LINK</string>
 </resources>

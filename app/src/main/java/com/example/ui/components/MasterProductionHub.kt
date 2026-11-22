@@ -108,6 +108,14 @@ fun DockedCircularProductionHub(
     midiState: MidiState,
     hasAudio: Boolean,
     workspaceConfig: WorkspaceConfig = WorkspaceConfig(),
+    masterVolume: Float = 0.85f,
+    isMasterMuted: Boolean = false,
+    connectedPeerCount: Int = 0,
+    myStyleShortTag: String = "VOX",
+    isBandRecording: Boolean = false,
+    onSetMasterVolume: (Float) -> Unit = {},
+    onToggleMasterMute: () -> Unit = {},
+    onOpenCollabDialog: () -> Unit = {},
     onSelectSpoke: (StudioSpoke) -> Unit,
     onToggleSyncedPlay: () -> Unit,
     onToggleDeckPlay: () -> Unit,
@@ -265,17 +273,38 @@ fun DockedCircularProductionHub(
                     // Header row: Active Hub->Station Link + 360° Wheel Toggle
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "HUB ➔ ${selectedSpoke.shortLabel} • ${syncedPlayhead.bpm.toInt()} BPM",
+                            text = "HUB ➔ ${selectedSpoke.shortLabel} • ${syncedPlayhead.bpm.toInt()}",
                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                             color = activeAccent,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f)
                         )
+                        val collabColor = when {
+                            isBandRecording -> TacCoral
+                            connectedPeerCount > 0 -> EmeraldSignal
+                            else -> AmberHot
+                        }
+                        Surface(
+                            color = collabColor.copy(alpha = 0.16f),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, collabColor.copy(alpha = 0.8f)),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(onClick = onOpenCollabDialog)
+                                .testTag("hub_collab_pill")
+                        ) {
+                            Text(
+                                text = if (isBandRecording) "REC $connectedPeerCount/4" else "$myStyleShortTag $connectedPeerCount/4",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
+                                color = collabColor,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 4.dp)
+                            )
+                        }
                         Surface(
                             color = if (wheelExpanded) NeonCyan.copy(alpha = 0.22f) else BrushedPanel,
                             shape = RoundedCornerShape(8.dp),
@@ -286,9 +315,9 @@ fun DockedCircularProductionHub(
                                 .testTag("hub_expand_wheel_button")
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Filled.Hub,
@@ -297,8 +326,8 @@ fun DockedCircularProductionHub(
                                     modifier = Modifier.size(13.dp)
                                 )
                                 Text(
-                                    text = if (wheelExpanded) "HIDE 360°" else "360° RING",
-                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                    text = if (wheelExpanded) "HIDE" else "360°",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
                                     color = if (wheelExpanded) NeonCyan else TextPrimary
                                 )
                             }
@@ -369,12 +398,18 @@ fun DockedCircularProductionHub(
                 }
             }
 
-            // Live Master Output VU Bar visible on every station
+            // Live Master Output VU Bar & Master Volume Control visible on every station
             VuPeakMeterBar(
                 peak = livePeak,
                 rms = liveRms,
                 label = "MST",
                 modifier = Modifier.testTag("hub_vu_meter")
+            )
+            MasterVolumeCompactRow(
+                masterVolume = masterVolume,
+                isMasterMuted = isMasterMuted,
+                onVolumeChange = onSetMasterVolume,
+                onToggleMute = onToggleMasterMute
             )
 
             // Expandable Inline 360° Circular Studio Floorplan Overlay
@@ -509,6 +544,15 @@ fun WideCircularProductionSidebar(
     onExportMp3Click: () -> Unit,
     onStreamTxClick: () -> Unit,
     hasDisbandKey: Boolean = false,
+    masterVolume: Float = 0.85f,
+    isMasterMuted: Boolean = false,
+    connectedPeerCount: Int = 0,
+    myStyleShortTag: String = "VOX",
+    isBandRecording: Boolean = false,
+    onSetMasterVolume: (Float) -> Unit = {},
+    onToggleMasterMute: () -> Unit = {},
+    onOpenCollabDialog: () -> Unit = {},
+    onToggleBandRec: () -> Unit = {},
     onOpenSecretsVault: () -> Unit = {},
     onPushHandoffClick: () -> Unit = {},
     modifier: Modifier = Modifier
@@ -581,6 +625,12 @@ fun WideCircularProductionSidebar(
                 rms = liveRms,
                 label = "MST"
             )
+            MasterVolumeCompactRow(
+                masterVolume = masterVolume,
+                isMasterMuted = isMasterMuted,
+                onVolumeChange = onSetMasterVolume,
+                onToggleMute = onToggleMasterMute
+            )
 
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
@@ -629,6 +679,20 @@ fun WideCircularProductionSidebar(
                     selected = hasDisbandKey,
                     onClick = onOpenSecretsVault,
                     accentColor = if (hasDisbandKey) EmeraldSignal else AmberHot
+                )
+                HardwareChipToggle(
+                    label = "BAND $connectedPeerCount/4 ($myStyleShortTag)",
+                    selected = connectedPeerCount > 0,
+                    onClick = onOpenCollabDialog,
+                    accentColor = EmeraldSignal,
+                    modifier = Modifier.testTag("wide_collab_button")
+                )
+                HardwareChipToggle(
+                    label = if (isBandRecording) "STOP BAND REC" else "BAND REC",
+                    selected = isBandRecording,
+                    onClick = onToggleBandRec,
+                    accentColor = TacCoral,
+                    modifier = Modifier.testTag("wide_band_rec_button")
                 )
             }
 

@@ -4,7 +4,7 @@ import com.samplfie.desktop.audio.DesktopWavCodec
 import com.samplfie.desktop.model.DesktopAudioBuffer
 import java.io.InputStream
 import java.net.HttpURLConnection
-import java.net.URL
+import java.net.URI
 import java.net.URLEncoder
 import kotlin.math.ceil
 import kotlin.math.max
@@ -96,7 +96,7 @@ class DesktopHttpUrlTransport : DesktopDisbandHttpTransport {
         body: ByteArray?,
         readTimeoutMs: Int
     ): DesktopHttpResponse {
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+        val conn = (URI.create(url).toURL().openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 20_000
             readTimeout = readTimeoutMs
@@ -207,8 +207,10 @@ class DesktopDisbandClient(
         sourceBuffer: DesktopAudioBuffer,
         maxPollAttempts: Int = 45,
         waitPerPollSec: Int = 20,
+        isCancelled: () -> Boolean = { false },
         onStatus: (jobId: String?, status: String, charge: Int?) -> Unit = { _, _, _ -> }
     ): Pair<DesktopDisbandJobResponse, List<DesktopSeparatedStem>> {
+        if (isCancelled()) throw InterruptedException("Stem separation cancelled")
         val wavBytes = DesktopWavCodec.encodeToBytes(sourceBuffer)
         val stemIds = stems.map { it.apiId }
         val cleanName = (sourceBuffer.name.ifBlank { "samplfie2_mix" }.replace(Regex("[^a-zA-Z0-9._-]"), "_")) + ".wav"
@@ -219,10 +221,22 @@ class DesktopDisbandClient(
 
         var polls = 0
         while (!isTerminal(job.status) && polls < maxPollAttempts) {
+            if (isCancelled()) throw InterruptedException("Stem separation cancelled")
             polls++
+            val t0 = System.currentTimeMillis()
             job = pollSeparationStatus(baseUrl, apiKey, job.id, waitPerPollSec, stemIds, "wav")
             onStatus(job.id, job.status.uppercase(), job.charge)
+            val elapsed = System.currentTimeMillis() - t0
+            if (!isTerminal(job.status) && elapsed < 500L) {
+                var slept = 0L
+                while (slept < 600L) {
+                    if (isCancelled()) throw InterruptedException("Stem separation cancelled")
+                    Thread.sleep(100L)
+                    slept += 100L
+                }
+            }
         }
+        if (isCancelled()) throw InterruptedException("Stem separation cancelled")
         if (job.status.equals("failed", true) || job.status.equals("error", true)) {
             throw RuntimeException(job.error ?: "Disband job ${job.id} failed")
         }
@@ -236,6 +250,7 @@ class DesktopDisbandClient(
         }
         val out = mutableListOf<DesktopSeparatedStem>()
         for (ref in refs) {
+            if (isCancelled()) throw InterruptedException("Stem separation cancelled")
             onStatus(job.id, "DOWNLOADING ${ref.stemId.uppercase()}", charge)
             val bytes = downloadStemAudio(baseUrl, apiKey, job.id, ref.stemId, ref.format, ref.url)
             val buf = DesktopWavCodec.readWav(bytes, name = "${sourceBuffer.name}_${ref.stemId}")

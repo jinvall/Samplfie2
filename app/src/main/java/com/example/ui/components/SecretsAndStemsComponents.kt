@@ -463,6 +463,8 @@ fun DisbandStemSeparationPanel(
     onSendStemToLooper: (String, Int) -> Unit,
     onAddStemToTimeline: (String, Int) -> Unit,
     onSendAllStemsToTimeline: () -> Unit,
+    onSendAllStemsToLooper: () -> Unit = {},
+    onExportStemWav: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showSubStems by remember { mutableStateOf(false) }
@@ -680,13 +682,22 @@ fun DisbandStemSeparationPanel(
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                     color = EmeraldSignal
                 )
-                HardwareChipToggle(
-                    label = "ALL -> TRACKS",
-                    selected = false,
-                    onClick = onSendAllStemsToTimeline,
-                    accentColor = EmeraldSignal,
-                    modifier = Modifier.testTag("stems_all_to_tracks_button")
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    HardwareChipToggle(
+                        label = "ALL -> LOOPS",
+                        selected = false,
+                        onClick = onSendAllStemsToLooper,
+                        accentColor = NeonCyan,
+                        modifier = Modifier.testTag("stems_all_to_looper_button")
+                    )
+                    HardwareChipToggle(
+                        label = "ALL -> TRACKS",
+                        selected = false,
+                        onClick = onSendAllStemsToTimeline,
+                        accentColor = EmeraldSignal,
+                        modifier = Modifier.testTag("stems_all_to_tracks_button")
+                    )
+                }
             }
             Spacer(modifier = Modifier.height(6.dp))
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -696,7 +707,8 @@ fun DisbandStemSeparationPanel(
                         suggestedSlot = idx % 4,
                         onLoadToDeck = { onLoadStemToDeck(stem.stemId) },
                         onSendToLooper = { onSendStemToLooper(stem.stemId, idx % 4) },
-                        onSendToTrack = { onAddStemToTimeline(stem.stemId, idx % 4) }
+                        onSendToTrack = { onAddStemToTimeline(stem.stemId, idx % 4) },
+                        onSaveWav = { onExportStemWav(stem.stemId) }
                     )
                 }
             }
@@ -711,7 +723,8 @@ private fun SeparatedStemRow(
     suggestedSlot: Int,
     onLoadToDeck: () -> Unit,
     onSendToLooper: () -> Unit,
-    onSendToTrack: () -> Unit
+    onSendToTrack: () -> Unit,
+    onSaveWav: () -> Unit
 ) {
     Surface(
         color = ObsidianChassis,
@@ -762,6 +775,13 @@ private fun SeparatedStemRow(
                     onClick = onSendToTrack,
                     accentColor = MagentaFx,
                     modifier = Modifier.testTag("stem_to_track_${stem.stemId}")
+                )
+                HardwareChipToggle(
+                    label = "-> .WAV",
+                    selected = false,
+                    onClick = onSaveWav,
+                    accentColor = AmberHot,
+                    modifier = Modifier.testTag("stem_save_wav_${stem.stemId}")
                 )
             }
         }

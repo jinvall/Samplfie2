@@ -3,6 +3,7 @@ package com.samplfie.desktop.ui
 import com.samplfie.desktop.DesktopStudioUiState
 import com.samplfie.desktop.model.DesktopLiveMode
 import com.samplfie.desktop.model.DesktopStompState
+import com.samplfie.desktop.network.CollabPeerDevice
 import com.samplfie.desktop.studio.DesktopSyncedPlayheadState
 import java.awt.BasicStroke
 import java.awt.BorderLayout
@@ -37,8 +38,15 @@ class LiveStagePanel(
     private val onToggleSyncedPlay: () -> Unit,
     private val onExportWav: () -> Unit,
     private val onExportMp3: () -> Unit,
-    private val onPushHandoff: () -> Unit
+    private val onPushHandoff: () -> Unit,
+    private val onOpenCollabDialog: () -> Unit = {},
+    private val onToggleBandRec: () -> Unit = {}
 ) : JPanel() {
+
+    private val collabStrip = DesktopBandCollabStrip(
+        onOpenCollabDialog = onOpenCollabDialog,
+        onToggleBandRec = onToggleBandRec
+    )
 
     private var updating = false
     private var stompState = DesktopStompState()
@@ -81,6 +89,8 @@ class LiveStagePanel(
             add(StudioTheme.hardwareButton("SYNC ALL", StudioTheme.EmeraldSignal, filled = true) { onToggleSyncedPlay() })
         }
         root.add(modeBar)
+        root.add(Box.createVerticalStrut(10))
+        root.add(collabStrip)
         root.add(Box.createVerticalStrut(10))
 
         // Main Split: Left Stompbox Rack Controls + Right Interactive X/Y Pad
@@ -156,9 +166,14 @@ class LiveStagePanel(
         }, BorderLayout.CENTER)
     }
 
-    fun updateState(ui: DesktopStudioUiState, sync: DesktopSyncedPlayheadState) {
+    fun updateState(
+        ui: DesktopStudioUiState,
+        sync: DesktopSyncedPlayheadState,
+        collabPeers: List<CollabPeerDevice> = emptyList()
+    ) {
         updating = true
         try {
+            collabStrip.updateState(collabPeers, ui.bandRecState)
             stompState = ui.stompState
             modeLabel.text = "${stompState.liveMode.title} (${if (stompState.engaged) "ACTIVE" else "BYPASSED"})"
             bpmBadge.text = "${sync.bpm.toInt()} BPM • BAR ${sync.bar}.${sync.beat}"

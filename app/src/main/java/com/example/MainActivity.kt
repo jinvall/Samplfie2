@@ -1,7 +1,10 @@
 package com.example
 
 import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -57,6 +60,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.example.ui.components.AllStemsConfirmationDialog
+import com.example.ui.components.CollabConnectDialog
 import com.example.ui.components.SecretsVaultDialog
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -110,11 +114,26 @@ class MainActivity : ComponentActivity() {
 fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val requiredAudioReadPermission = remember {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_AUDIO
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+    }
     var hasMicPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
                 context,
                 Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    var hasAudioReadPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context,
+                requiredAudioReadPermission
             ) == PackageManager.PERMISSION_GRANTED
         )
     }
@@ -125,6 +144,10 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                 hasMicPermission = ContextCompat.checkSelfPermission(
                     context,
                     Manifest.permission.RECORD_AUDIO
+                ) == PackageManager.PERMISSION_GRANTED
+                hasAudioReadPermission = ContextCompat.checkSelfPermission(
+                    context,
+                    requiredAudioReadPermission
                 ) == PackageManager.PERMISSION_GRANTED
             }
         }
@@ -142,8 +165,34 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: SecurityException) {
+            }
             viewModel.importAudioUri(uri)
         }
+    }
+
+    val launchAudioPickerSafely = {
+        try {
+            importAudioLauncher.launch(arrayOf("audio/*"))
+        } catch (_: ActivityNotFoundException) {
+            try {
+                importAudioLauncher.launch(arrayOf("*/*"))
+            } catch (ex: Exception) {
+                Toast.makeText(context, "No audio file picker found: ${ex.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    val audioReadPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        hasAudioReadPermission = granted
+        launchAudioPickerSafely()
     }
 
     val selectedSpoke by viewModel.selectedSpoke.collectAsStateWithLifecycle()
@@ -154,6 +203,9 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
     val secretsState by viewModel.secretsState.collectAsStateWithLifecycle()
     val stemState by viewModel.stemState.collectAsStateWithLifecycle()
     val showSecretsVault by viewModel.showSecretsVault.collectAsStateWithLifecycle()
+    val showCollabSheet by viewModel.showCollabSheet.collectAsStateWithLifecycle()
+    val collabPeers by viewModel.collabPeers.collectAsStateWithLifecycle()
+    val bandRecState by viewModel.bandRecState.collectAsStateWithLifecycle()
     val fxRack by viewModel.fxRack.collectAsStateWithLifecycle()
     val stompbox by viewModel.stompbox.collectAsStateWithLifecycle()
     val editorState by viewModel.editorState.collectAsStateWithLifecycle()
@@ -190,6 +242,28 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
             onSaveSecret = { k, v, hint -> viewModel.saveSecretKey(k, v, hint) },
             onDeleteSecret = { k -> viewModel.deleteSecretKey(k) },
             onDismiss = { viewModel.setShowSecretsVault(false) }
+        )
+    }
+
+    if (showCollabSheet) {
+        CollabConnectDialog(
+            peers = collabPeers,
+            bandRecState = bandRecState,
+            defaultHost = rigConfig.ipAddress,
+            defaultPort = rigConfig.port,
+            nodeName = rigConfig.nodeName,
+            onRefreshDiscovery = { viewModel.refreshNearbyDiscovery() },
+            onSelectMyStyle = { style, slot -> viewModel.setMyCollabStyle(style, slot) },
+            onConnectPeer = { host, port, name, platform, style ->
+                viewModel.connectCollabPeer(host, port, name, platform, style)
+            },
+            onDisconnectPeer = { peerId -> viewModel.disconnectCollabPeer(peerId) },
+            onRemoveKnownPeer = { peerId -> viewModel.removeKnownCollabPeer(peerId) },
+            onUpdatePeerStyleAndTrack = { peerId, style, slot ->
+                viewModel.updateCollabPeerStyleAndTrack(peerId, style, slot)
+            },
+            onToggleBandRec = { viewModel.toggleLiveBandRecording() },
+            onDismiss = { viewModel.setShowCollabSheet(false) }
         )
     }
 
@@ -259,8 +333,14 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
     }
 
     val openAudioPicker = {
-        importAudioLauncher.launch(arrayOf("audio/*"))
+        if (hasAudioReadPermission) {
+            launchAudioPickerSafely()
+        } else {
+            audioReadPermissionLauncher.launch(requiredAudioReadPermission)
+        }
     }
+
+    val connectedPeerCount = collabPeers.count { it.isConnected }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val isWideStudioLayout = maxWidth >= 700.dp
@@ -279,7 +359,10 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                     hasAudio = hasAudio,
                     bpm = syncedPlayhead.bpm,
                     hasDisbandKey = secretsState.hasDisbandKey,
+                    connectedPeerCount = connectedPeerCount,
+                    isBandRecording = bandRecState.isRecording,
                     onReturnToBooth = { viewModel.selectSpoke(StudioSpoke.BOOTH) },
+                    onOpenCollabDialog = { viewModel.setShowCollabSheet(true) },
                     onOpenSecretsVault = { viewModel.setShowSecretsVault(true) },
                     onExportMp3Click = { showExportDialog = true },
                     modifier = Modifier.statusBarsPadding()
@@ -326,6 +409,15 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                         onExportMp3Click = { showExportDialog = true },
                         onStreamTxClick = { viewModel.streamActiveAudioOverNetwork() },
                         hasDisbandKey = secretsState.hasDisbandKey,
+                        masterVolume = rigConfig.masterVolume,
+                        isMasterMuted = rigConfig.isMasterMuted,
+                        connectedPeerCount = connectedPeerCount,
+                        myStyleShortTag = bandRecState.myStyle.shortTag,
+                        isBandRecording = bandRecState.isRecording,
+                        onSetMasterVolume = { viewModel.setMasterVolume(it) },
+                        onToggleMasterMute = { viewModel.toggleMasterMute() },
+                        onOpenCollabDialog = { viewModel.setShowCollabSheet(true) },
+                        onToggleBandRec = { viewModel.toggleLiveBandRecording() },
                         onOpenSecretsVault = { viewModel.setShowSecretsVault(true) },
                         onPushHandoffClick = { viewModel.pushSessionToPeer() }
                     )
@@ -352,6 +444,14 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                             midiState = midiState,
                             hasAudio = hasAudio,
                             workspaceConfig = workspaceConfig,
+                            masterVolume = rigConfig.masterVolume,
+                            isMasterMuted = rigConfig.isMasterMuted,
+                            connectedPeerCount = connectedPeerCount,
+                            myStyleShortTag = bandRecState.myStyle.shortTag,
+                            isBandRecording = bandRecState.isRecording,
+                            onSetMasterVolume = { viewModel.setMasterVolume(it) },
+                            onToggleMasterMute = { viewModel.toggleMasterMute() },
+                            onOpenCollabDialog = { viewModel.setShowCollabSheet(true) },
                             onSelectSpoke = { viewModel.selectSpoke(it) },
                             onToggleSyncedPlay = { viewModel.toggleSyncedTransport() },
                             onToggleDeckPlay = { viewModel.togglePlay() },
@@ -383,6 +483,10 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                                 secretsState = secretsState,
                                 stemState = stemState,
                                 workspaceConfig = workspaceConfig,
+                                collabPeers = collabPeers,
+                                bandRecState = bandRecState,
+                                masterVolume = rigConfig.masterVolume,
+                                isMasterMuted = rigConfig.isMasterMuted,
                                 peerLabel = "${rigConfig.ipAddress}:${rigConfig.port}",
                                 onSelectSpoke = { viewModel.selectSpoke(it) },
                                 onToggleSyncedPlay = { viewModel.toggleSyncedTransport() },
@@ -395,6 +499,10 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                                 onExportWavClick = { viewModel.exportAsWav("samplfie2_booth") },
                                 onExportMp3Click = { showExportDialog = true },
                                 onStreamTxClick = { viewModel.streamActiveAudioOverNetwork() },
+                                onSetMasterVolume = { viewModel.setMasterVolume(it) },
+                                onToggleMasterMute = { viewModel.toggleMasterMute() },
+                                onOpenCollabDialog = { viewModel.setShowCollabSheet(true) },
+                                onToggleBandRec = { viewModel.toggleLiveBandRecording() },
                                 onPushHandoffClick = { viewModel.pushSessionToPeer() },
                                 onGrabHandoffClick = { viewModel.grabSessionFromPeer() },
                                 onApplyPendingHandoff = { viewModel.applyPendingHandoff() },
@@ -410,6 +518,8 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                                 onSendStemToLooper = { stemId, slotId -> viewModel.sendSeparatedStemToLooper(stemId, slotId) },
                                 onAddStemToTimeline = { stemId, trackId -> viewModel.addSeparatedStemToTimeline(stemId, trackId) },
                                 onSendAllStemsToTimeline = { viewModel.sendAllSeparatedStemsToTimeline() },
+                                onSendAllStemsToLooper = { viewModel.sendAllSeparatedStemsToLooper() },
+                                onExportStemWav = { viewModel.exportSeparatedStemWav(it) },
                                 showWheel = !isWideStudioLayout
                             )
 
@@ -558,6 +668,11 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                                 onCaptureRxToDeck = { viewModel.captureReceivedAudioToDeck() },
                                 onPushHandoff = { viewModel.pushSessionToPeer() },
                                 onGrabHandoff = { viewModel.grabSessionFromPeer() },
+                                collabPeers = collabPeers,
+                                bandRecState = bandRecState,
+                                onOpenCollabDialog = { viewModel.setShowCollabSheet(true) },
+                                onToggleBandRec = { viewModel.toggleLiveBandRecording() },
+                                onSelectMyStyle = { viewModel.setMyCollabStyle(it) },
                                 onExportWav = { viewModel.exportAsWav(it) },
                                 onExportMp3 = { viewModel.exportAsMp3(it) }
                             )

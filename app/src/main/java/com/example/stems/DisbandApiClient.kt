@@ -5,7 +5,7 @@ import com.example.audio.WavCodec
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.net.HttpURLConnection
-import java.net.URL
+import java.net.URI
 import java.net.URLEncoder
 
 data class DisbandHttpResponse(
@@ -35,7 +35,7 @@ class HttpUrlConnectionDisbandTransport : DisbandHttpTransport {
         body: ByteArray?,
         readTimeoutMs: Int
     ): DisbandHttpResponse {
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+        val conn = (URI.create(url).toURL().openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 20_000
             readTimeout = readTimeoutMs
@@ -179,8 +179,10 @@ class DisbandApiClient(
         sourceBuffer: AudioBuffer,
         maxPollAttempts: Int = 45,
         waitPerPollSec: Int = 20,
+        isCancelled: () -> Boolean = { false },
         onStatusUpdate: (jobId: String?, status: String, charge: Int?) -> Unit = { _, _, _ -> }
     ): Pair<DisbandJobResponse, List<SeparatedStemTrack>> {
+        if (isCancelled()) throw InterruptedException("Stem separation cancelled")
         val wavBytes = WavCodec.encodeToBytes(sourceBuffer)
         val stemIds = stems.map { it.apiId }
         val cleanName = (sourceBuffer.name.ifBlank { "samplfie2_mix" }
@@ -199,7 +201,9 @@ class DisbandApiClient(
 
         var polls = 0
         while (!isTerminalStatus(job.status) && polls < maxPollAttempts) {
+            if (isCancelled()) throw InterruptedException("Stem separation cancelled")
             polls++
+            val t0 = System.currentTimeMillis()
             job = pollSeparationStatus(
                 baseUrl = baseUrl,
                 apiKey = apiKey,
@@ -209,7 +213,18 @@ class DisbandApiClient(
                 format = "wav"
             )
             onStatusUpdate(job.id, job.status.uppercase(), job.charge)
+            val elapsed = System.currentTimeMillis() - t0
+            if (!isTerminalStatus(job.status) && elapsed < 500L) {
+                var slept = 0L
+                while (slept < 600L) {
+                    if (isCancelled()) throw InterruptedException("Stem separation cancelled")
+                    Thread.sleep(100L)
+                    slept += 100L
+                }
+            }
         }
+
+        if (isCancelled()) throw InterruptedException("Stem separation cancelled")
 
         if (job.status.equals("failed", ignoreCase = true) || job.status.equals("error", ignoreCase = true)) {
             throw DisbandApiException(500, job.error ?: "Disband job ${job.id} failed")
@@ -227,6 +242,7 @@ class DisbandApiClient(
         }
 
         for (ref in refs) {
+            if (isCancelled()) throw InterruptedException("Stem separation cancelled")
             onStatusUpdate(job.id, "DOWNLOADING ${ref.stemId.uppercase()}", charge)
             val rawStemBytes = downloadStemAudio(
                 baseUrl = baseUrl,

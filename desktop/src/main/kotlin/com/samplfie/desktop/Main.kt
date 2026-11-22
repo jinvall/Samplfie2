@@ -3,6 +3,7 @@ package com.samplfie.desktop
 import com.samplfie.desktop.model.DesktopStation
 import com.samplfie.desktop.ui.ChromaticTunerPanel
 import com.samplfie.desktop.ui.CircularHubSidebar
+import com.samplfie.desktop.ui.DesktopCollabDialog
 import com.samplfie.desktop.ui.DesktopSecretsVaultDialog
 import com.samplfie.desktop.ui.DesktopStemSeparationPanel
 import com.samplfie.desktop.ui.FxAndStompPanel
@@ -52,6 +53,7 @@ class SamplfieDesktopFrame(
 
     private val topStatusLabel = StudioTheme.hardwareLabel("READY", StudioTheme.NeonCyan, StudioTheme.MonoFont)
     private val stationTitleLabel = StudioTheme.hardwareLabel("SIGNAL & WAV DECK EDITOR", StudioTheme.TextPrimary, StudioTheme.TitleFont)
+    private val topBandBtn = StudioTheme.hardwareButton("BAND (0/4)", StudioTheme.EmeraldSignal) { openCollabDialog() }
     private val topSecretsBtn = StudioTheme.hardwareButton("KEYS VAULT", StudioTheme.AmberHot) { openSecretsVaultDialog() }
     private val navPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 2)).apply { isOpaque = false }
     private var lastVisibleNav: List<DesktopStation> = emptyList()
@@ -68,7 +70,11 @@ class SamplfieDesktopFrame(
         onGrabHandoff = { controller.grabSessionFromPeer() },
         onOpenWav = { chooseAndOpenWav() },
         onSaveWav = { chooseAndSaveWav() },
-        onExportMp3 = { chooseAndExportMp3() }
+        onExportMp3 = { chooseAndExportMp3() },
+        onMasterVolumeChanged = { controller.setMasterVolume(it) },
+        onToggleMasterMute = { controller.toggleMasterMute() },
+        onOpenCollabDialog = { openCollabDialog() },
+        onToggleBandRec = { controller.toggleLiveBandRecording() }
     )
 
     private val boothPanel = ProductionBoothPanel(
@@ -89,7 +95,11 @@ class SamplfieDesktopFrame(
         onLoadStemToDeck = { controller.loadSeparatedStemToDeck(it) },
         onSendStemToLoop = { stemId, slotId -> controller.sendSeparatedStemToLooper(stemId, slotId) },
         onAddStemToTrack = { stemId, trackId -> controller.addSeparatedStemToTimeline(stemId, trackId) },
-        onSendAllStemsToTracks = { controller.sendAllSeparatedStemsToTimeline() }
+        onSendAllStemsToTracks = { controller.sendAllSeparatedStemsToTimeline() },
+        onSendAllStemsToLooper = { controller.sendAllSeparatedStemsToLooper() },
+        onSaveStemWav = { stemId -> chooseAndSaveStemWav(stemId) },
+        onOpenCollabDialog = { openCollabDialog() },
+        onToggleBandRec = { controller.toggleLiveBandRecording() }
     )
 
     private val editorPanel = SignalEditorPanel(
@@ -175,7 +185,9 @@ class SamplfieDesktopFrame(
         onToggleSyncedPlay = { controller.arrangement.toggleSyncedTransport() },
         onExportWav = { chooseAndSaveWav() },
         onExportMp3 = { chooseAndExportMp3() },
-        onPushHandoff = { controller.pushSessionToPeer() }
+        onPushHandoff = { controller.pushSessionToPeer() },
+        onOpenCollabDialog = { openCollabDialog() },
+        onToggleBandRec = { controller.toggleLiveBandRecording() }
     )
 
     private val tunerPanel = ChromaticTunerPanel(
@@ -206,7 +218,9 @@ class SamplfieDesktopFrame(
         onCaptureRxToEditor = { controller.captureNetworkStreamToEditor() },
         onTransmitActive = { controller.transmitActiveOverNetwork() },
         onPushHandoff = { controller.pushSessionToPeer() },
-        onGrabHandoff = { controller.grabSessionFromPeer() }
+        onGrabHandoff = { controller.grabSessionFromPeer() },
+        onOpenCollabDialog = { openCollabDialog() },
+        onToggleBandRec = { controller.toggleLiveBandRecording() }
     )
 
     private val refreshTimer = Timer(50) { syncUi() }
@@ -261,6 +275,7 @@ class SamplfieDesktopFrame(
             }
             val right = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
                 isOpaque = false
+                add(topBandBtn)
                 add(StudioTheme.hardwareButton("STEMS (DISBAND)", StudioTheme.MagentaFx) {
                     controller.selectStation(DesktopStation.BOOTH)
                 })
@@ -351,28 +366,52 @@ class SamplfieDesktopFrame(
         val vmc = controller.vmcState.value
         val stems = controller.stemState.value
         val secrets = controller.secretsState.value
+        val collabPeers = controller.collabPeers.value
+        val linkedCount = collabPeers.count { it.isConnected }
 
         if (ui.workspaceConfig.visibleStations != lastVisibleNav) {
             rebuildNavButtons(ui.workspaceConfig.visibleStations)
         }
 
+        topBandBtn.text = if (ui.bandRecState.isRecording) "REC $linkedCount/4" else "BAND $linkedCount/4 (${ui.bandRecState.myStyle.shortTag})"
+        topBandBtn.foreground = if (ui.bandRecState.isRecording) StudioTheme.TacCoral else if (linkedCount > 0) StudioTheme.EmeraldSignal else StudioTheme.NeonCyan
         topSecretsBtn.text = if (secrets.hasDisbandKey) "KEYS OK" else "SET KEYS"
         topSecretsBtn.foreground = if (secrets.hasDisbandKey) StudioTheme.EmeraldSignal else StudioTheme.AmberHot
         stationTitleLabel.text = "· ${ui.station.fullTitle}"
         topStatusLabel.text = ui.statusLine
         cardLayout.show(cardHost, ui.station.name)
 
-        hubSidebar.updateState(ui, play, mic, net)
-        boothPanel.updateState(ui, play, net, sync, stems, secrets)
+        hubSidebar.updateState(ui, play, mic, net, collabPeers)
+        boothPanel.updateState(ui, play, net, sync, stems, secrets, collabPeers)
         editorPanel.updateState(ui, play)
         samplesPanel.updateState(looper, refiner)
         instrumentsPanel.updateState(seq, vmc)
         tracksPanel.updateState(tl, sync)
         fxPanel.updateState(ui)
-        livePanel.updateState(ui, sync)
+        livePanel.updateState(ui, sync, collabPeers)
         tunerPanel.updateState(ui)
         vmcPanel.updateState(vmc)
-        netPanel.updateState(ui, net)
+        netPanel.updateState(ui, net, collabPeers)
+    }
+
+    private fun openCollabDialog() {
+        val ui = controller.uiState.value
+        DesktopCollabDialog(
+            owner = this,
+            defaultHost = ui.rigConfig.txHost,
+            defaultPort = ui.rigConfig.txPort,
+            nodeName = ui.workspaceConfig.nodeName,
+            onRefreshDiscovery = { controller.refreshNearbyDiscovery() },
+            onSelectMyStyle = { st, slot -> controller.setMyCollabStyle(st, slot) },
+            onConnectPeer = { host, port, name, plat, st ->
+                controller.connectCollabPeer(host, port, name, plat, st)
+            },
+            onDisconnectPeer = { id -> controller.disconnectCollabPeer(id) },
+            onUpdatePeerStyleAndTrack = { id, st, slot -> controller.updateCollabPeerStyleAndTrack(id, st, slot) },
+            onToggleBandRec = { controller.toggleLiveBandRecording() },
+            peersProvider = { controller.collabPeers.value },
+            bandStateProvider = { controller.uiState.value.bandRecState }
+        ).isVisible = true
     }
 
     private fun openSecretsVaultDialog() {
@@ -426,6 +465,17 @@ class SamplfieDesktopFrame(
             val f = if (chooser.selectedFile.extension.equals("wav", true)) chooser.selectedFile
             else File(chooser.selectedFile.absolutePath + ".wav")
             controller.exportWav(f)
+        }
+    }
+
+    private fun chooseAndSaveStemWav(stemId: String) {
+        val chooser = JFileChooser(controller.defaultExportDir).apply {
+            selectedFile = File(controller.defaultExportDir, "samplfie2_${stemId}_stem.wav")
+        }
+        if (chooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
+            val f = if (chooser.selectedFile.extension.equals("wav", true)) chooser.selectedFile
+            else File(chooser.selectedFile.absolutePath + ".wav")
+            controller.exportSeparatedStemWav(stemId, f)
         }
     }
 

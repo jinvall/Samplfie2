@@ -79,10 +79,23 @@ class AudioPlaybackEngine(
     @Volatile
     private var chunkSizeFrames = 1024
 
+    @Volatile
+    private var masterGain = 0.85f
+
+    @Volatile
+    private var masterMuted = false
+
     private var playJob: Job? = null
 
     private val _state = MutableStateFlow(PlaybackState())
     val state: StateFlow<PlaybackState> = _state.asStateFlow()
+
+    fun setMasterVolume(volume: Float, muted: Boolean) {
+        masterGain = volume.coerceIn(0f, 1f)
+        masterMuted = muted
+    }
+
+    fun effectiveMasterGain(): Float = if (masterMuted) 0f else masterGain
 
     fun setBuffer(buffer: AudioBuffer?, bufferSizeFrames: Int = chunkSizeFrames) {
         updateBufferHot(buffer, bufferSizeFrames, preserveLoopPlayback = false)
@@ -248,9 +261,9 @@ class AudioPlaybackEngine(
                         continue
                     }
                     val slice = buf.samples.copyOfRange(sampleStart, sampleEnd)
-
+                    val outGain = effectiveMasterGain()
                     val shorts = ShortArray(slice.size) { i ->
-                        (slice[i].coerceIn(-1f, 1f) * 32767f).toInt().coerceIn(-32768, 32767).toShort()
+                        ((slice[i] * outGain).coerceIn(-1f, 1f) * 32767f).toInt().coerceIn(-32768, 32767).toShort()
                     }
                     if (track != null) {
                         track.write(shorts, 0, shorts.size)

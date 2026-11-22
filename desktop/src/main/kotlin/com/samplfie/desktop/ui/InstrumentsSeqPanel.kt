@@ -29,7 +29,10 @@ class InstrumentsSeqPanel(
     private val onSetSwing: (Float) -> Unit,
     private val onBounceSeqToTimeline: () -> Unit,
     private val onRefreshMidi: () -> Unit,
-    private val onOpenVmcMapper: () -> Unit
+    private val onOpenVmcMapper: () -> Unit,
+    private val onToggleCompanionOverdubRx: () -> Unit = {},
+    private val onClearPattern: () -> Unit = {},
+    private val onUndoPattern: () -> Unit = {}
 ) : JPanel() {
 
     private var updating = false
@@ -40,6 +43,9 @@ class InstrumentsSeqPanel(
     private val bpmSlider = StudioTheme.hardwareSlider(60, 180, 124)
     private val swingLabel = StudioTheme.hardwareLabel("SWING 8%", StudioTheme.NeonCyan, StudioTheme.MonoFont)
     private val swingSlider = StudioTheme.hardwareSlider(0, 45, 8)
+    private val companionRxBtn = StudioTheme.hardwareButton("COMPANION OVERDUB RX: ON", StudioTheme.EmeraldSignal, filled = true) {
+        onToggleCompanionOverdubRx()
+    }
     private val midiSummary = StudioTheme.hardwareLabel("MIDI PORTS: 0 IN / 0 OUT", StudioTheme.NeonCyan, StudioTheme.MonoFont)
 
     private val stepButtons = Array(4) { arrayOfNulls<JButton>(16) }
@@ -75,6 +81,9 @@ class InstrumentsSeqPanel(
             }
             add(swingSlider)
             add(StudioTheme.hardwareButton("BOUNCE BEAT -> TRACK 3", StudioTheme.VioletMod) { onBounceSeqToTimeline() })
+            add(companionRxBtn)
+            add(StudioTheme.hardwareButton("UNDO PASS", StudioTheme.NeonCyan) { onUndoPattern() })
+            add(StudioTheme.hardwareButton("CLEAR PAT", StudioTheme.TacCoral) { onClearPattern() })
         }
         root.add(ctrlBar)
         root.add(Box.createVerticalStrut(8))
@@ -181,6 +190,11 @@ class InstrumentsSeqPanel(
             bpmLabel.text = "${seq.bpm.toInt()} BPM"
             swingSlider.value = (seq.swing * 100f).toInt().coerceIn(0, 45)
             swingLabel.text = "SWING ${(seq.swing * 100f).toInt()}%"
+            companionRxBtn.text = if (seq.companionOverdubRx) {
+                "COMPANION RX: ON (STEP ${seq.companionStepCursor + 1})"
+            } else {
+                "COMPANION RX: OFF"
+            }
             midiSummary.text = "MIDI PORTS: ${vmc.hardwareInputs.size} IN / ${vmc.hardwareOutputs.size} OUT • ${vmc.lastEventSummary}"
 
             seq.lanes.forEachIndexed { laneIdx, lane ->

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<devices>
+    <device manufacturer="Samplfie2 Studio" product="Drum Pad MIDI Companion" private="false">
+        <input-port name="Companion MIDI In" />
+        <output-port name="Drum Pad MIDI Out" />
+    </device>
+</devices>

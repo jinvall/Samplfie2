@@ -17,7 +17,11 @@ data class RigConfig(
     val a4ReferenceHz: Double = 440.0,
     val nodeName: String = "ANDROID WORKSTATION",
     val autoResumeOnHandoff: Boolean = true,
-    val autoAcceptIncomingHandoff: Boolean = true
+    val autoAcceptIncomingHandoff: Boolean = true,
+    val masterVolume: Float = 0.85f,
+    val isMasterMuted: Boolean = false,
+    val myStyleName: String = "VOCALS",
+    val knownPeersSpec: String = ""
 ) {
     fun isValidPort(): Boolean = port in 1..65535
     fun isValidBindPort(): Boolean = bindPort in 1..65535
