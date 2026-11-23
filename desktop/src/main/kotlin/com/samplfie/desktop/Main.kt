@@ -161,7 +161,8 @@ class SamplfieDesktopFrame(
         onReset = { controller.resetToOriginal() },
         onGenerateSignal = { type, hz -> controller.generateTestSignal(type, hz) },
         onSpecFreqRange = { lo, hi -> controller.updateSpecFreqRange(lo, hi) },
-        onOpenTools = { controller.selectStation(DesktopStation.TOOLS) }
+        onOpenTools = { controller.selectStation(DesktopStation.TOOLS) },
+        onFadesChange = { fin, fout -> controller.setDeckFades(fin, fout) }
     )
 
     private val samplesPanel = SamplesLooperPanel(
@@ -184,7 +185,9 @@ class SamplfieDesktopFrame(
         onResetLoop = { controller.arrangement.resetLoopRefiner() },
         onAuditionLoop = { controller.auditionRefinerLoop() },
         onCommitRefiner = { controller.arrangement.commitRefinerToSlot() },
-        onSendRefinerToDeck = { controller.sendRefinerToDeck() }
+        onSendRefinerToDeck = { controller.sendRefinerToDeck() },
+        onSetRefinerFades = { fin, fout -> controller.arrangement.setLoopRefinerFades(fin, fout) },
+        onToggleSlotLock = { controller.toggleLoopSlotLock(it) }
     )
 
     private val instrumentsPanel = InstrumentsSeqPanel(
@@ -228,7 +231,8 @@ class SamplfieDesktopFrame(
         },
         onSendDrumPieceToDeck = { slotId, beater ->
             controller.sendDrumPieceToDeck(slotId, beater)
-        }
+        },
+        onToggleLaneLock = { controller.toggleSequencerLaneLock(it) }
     )
 
     private val tracksPanel = TracksTimelinePanel(

@@ -288,9 +288,11 @@ class SignalEditorPanel(
     private val onReset: () -> Unit,
     private val onGenerateSignal: (SignalWaveformType, Double) -> Unit,
     private val onSpecFreqRange: (Float, Float) -> Unit = { _, _ -> },
-    private val onOpenTools: () -> Unit = {}
+    private val onOpenTools: () -> Unit = {},
+    private val onFadesChange: (Float, Float) -> Unit = { _, _ -> }
 ) : JPanel() {
 
+    private var updating = false
     private var uiState = DesktopStudioUiState()
     private var playState = DesktopPlaybackState()
 
@@ -316,8 +318,10 @@ class SignalEditorPanel(
     private val undoBtn = StudioTheme.hardwareButton("UNDO", StudioTheme.AmberHot) { onUndo() }
     private val resetBtn = StudioTheme.hardwareButton("RESET", StudioTheme.TacCoral) { onReset() }
 
-    private val fadeInSlider = StudioTheme.hardwareSlider(0, 150, 10)
-    private val fadeOutSlider = StudioTheme.hardwareSlider(0, 150, 15)
+    private val fadeInSlider = StudioTheme.hardwareSlider(0, 2000, 10)
+    private val fadeOutSlider = StudioTheme.hardwareSlider(0, 2000, 15)
+    private val fadeInValLabel = StudioTheme.hardwareLabel("10 ms", StudioTheme.NeonCyan, StudioTheme.MonoFont)
+    private val fadeOutValLabel = StudioTheme.hardwareLabel("15 ms", StudioTheme.AmberHot, StudioTheme.MonoFont)
 
     private val genTypeBox = StudioTheme.styleComboBox(JComboBox(SignalWaveformType.entries.toTypedArray()))
     private val genFreqSpinner = StudioTheme.styleSpinner(JSpinner(SpinnerNumberModel(440.0, 20.0, 8000.0, 10.0)), baseWidth = 96, baseHeight = 32)
@@ -392,10 +396,24 @@ class SignalEditorPanel(
             add(Box.createVerticalStrut(8))
 
             val fadeRow = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 10, 4).apply {
-                add(StudioTheme.hardwareLabel("FADE IN (ms):", StudioTheme.TextSecondary))
-                add(fadeInSlider.apply { StudioTheme.setScaledPrefSize(this, 140, 28) })
-                add(StudioTheme.hardwareLabel("FADE OUT (ms):", StudioTheme.TextSecondary))
-                add(fadeOutSlider.apply { StudioTheme.setScaledPrefSize(this, 140, 28) })
+                fadeInSlider.addChangeListener {
+                    fadeInValLabel.text = "${fadeInSlider.value} ms"
+                    if (!updating) {
+                        onFadesChange(fadeInSlider.value.toFloat(), fadeOutSlider.value.toFloat())
+                    }
+                }
+                fadeOutSlider.addChangeListener {
+                    fadeOutValLabel.text = "${fadeOutSlider.value} ms"
+                    if (!updating) {
+                        onFadesChange(fadeInSlider.value.toFloat(), fadeOutSlider.value.toFloat())
+                    }
+                }
+                add(StudioTheme.hardwareLabel("FADE IN:", StudioTheme.TextSecondary))
+                add(fadeInSlider.apply { StudioTheme.setScaledPrefSize(this, 160, 28) })
+                add(fadeInValLabel)
+                add(StudioTheme.hardwareLabel("FADE OUT:", StudioTheme.TextSecondary))
+                add(fadeOutSlider.apply { StudioTheme.setScaledPrefSize(this, 160, 28) })
+                add(fadeOutValLabel)
                 add(StudioTheme.hardwareButton("APPLY FADES", StudioTheme.EmeraldSignal) {
                     onApplyFades(fadeInSlider.value.toFloat(), fadeOutSlider.value.toFloat())
                 })
@@ -438,38 +456,52 @@ class SignalEditorPanel(
         play: DesktopPlaybackState,
         tools: DesktopToolsState = DesktopToolsState()
     ) {
-        uiState = ui
-        playState = play
+        updating = true
+        try {
+            uiState = ui
+            playState = play
 
-        val buf = ui.processedBuffer ?: ui.dryBuffer
-        val sr = buf?.sampleRate ?: ui.rigConfig.sampleRate
-        val fmtLabel = buf?.sampleFormat?.shortLabel ?: "16-BIT"
-        val dur = buf?.durationSeconds ?: 0f
-        headerMeta.text = "${buf?.name ?: "EMPTY"} • ${"%.2f".format(dur)}s • ${sr}Hz • $fmtLabel • ${buf?.channels ?: 1}CH • RMS ${"%.2f".format(buf?.rmsLevel() ?: 0f)}"
-        selectionMeta.text = "SEL IN ${"%.2f".format(ui.selectionStart * dur)}s  |  OUT ${"%.2f".format(ui.selectionEnd * dur)}s  |  SPEC ${tools.specFreqLowHz.toInt()}-${tools.specFreqHighHz.toInt()} Hz"
-        playSelBtn.text = if (ui.playSelectionOnly) "SEL ONLY: ON" else "SEL ONLY: OFF"
-        undoBtn.isEnabled = ui.canUndo
-        resetBtn.isEnabled = ui.rawBuffer != null
+            val buf = ui.processedBuffer ?: ui.dryBuffer
+            val sr = buf?.sampleRate ?: ui.rigConfig.sampleRate
+            val fmtLabel = buf?.sampleFormat?.shortLabel ?: "16-BIT"
+            val dur = buf?.durationSeconds ?: 0f
+            headerMeta.text = "${buf?.name ?: "EMPTY"} • ${"%.2f".format(dur)}s • ${sr}Hz • $fmtLabel • ${buf?.channels ?: 1}CH • RMS ${"%.2f".format(buf?.rmsLevel() ?: 0f)}"
+            selectionMeta.text = "SEL IN ${"%.2f".format(ui.selectionStart * dur)}s  |  OUT ${"%.2f".format(ui.selectionEnd * dur)}s  |  SPEC ${tools.specFreqLowHz.toInt()}-${tools.specFreqHighHz.toInt()} Hz"
+            playSelBtn.text = if (ui.playSelectionOnly) "SEL ONLY: ON" else "SEL ONLY: OFF"
+            undoBtn.isEnabled = ui.canUndo
+            resetBtn.isEnabled = ui.rawBuffer != null
 
-        val showWave = ui.visualizerMode == VisualizerMode.WAVE || ui.visualizerMode == VisualizerMode.W_SPEC || ui.visualizerMode == VisualizerMode.DUAL
-        val showSpec = ui.visualizerMode == VisualizerMode.SPEC || ui.visualizerMode == VisualizerMode.W_SPEC
-        val showFft = ui.visualizerMode == VisualizerMode.FFT || ui.visualizerMode == VisualizerMode.DUAL
+            if (!fadeInSlider.valueIsAdjusting) {
+                fadeInSlider.value = ui.fadeInMs.toInt().coerceIn(0, 2000)
+                fadeInValLabel.text = "${fadeInSlider.value} ms"
+            }
+            if (!fadeOutSlider.valueIsAdjusting) {
+                fadeOutSlider.value = ui.fadeOutMs.toInt().coerceIn(0, 2000)
+                fadeOutValLabel.text = "${fadeOutSlider.value} ms"
+            }
 
-        waveformCanvas.isVisible = showWave
-        spectrogramCanvas.isVisible = showSpec
-        spectrumCanvas.isVisible = showFft
+            val showWave = ui.visualizerMode == VisualizerMode.WAVE || ui.visualizerMode == VisualizerMode.W_SPEC || ui.visualizerMode == VisualizerMode.DUAL
+            val showSpec = ui.visualizerMode == VisualizerMode.SPEC || ui.visualizerMode == VisualizerMode.W_SPEC
+            val showFft = ui.visualizerMode == VisualizerMode.FFT || ui.visualizerMode == VisualizerMode.DUAL
 
-        spectrogramCanvas.updateSpectrogram(
-            data = ui.spectrogram,
-            palette = tools.specPalette,
-            selectionStart = ui.selectionStart,
-            selectionEnd = ui.selectionEnd,
-            freqLowHz = tools.specFreqLowHz,
-            freqHighHz = tools.specFreqHighHz,
-            playheadFraction = play.playheadFraction
-        )
-        waveformCanvas.repaint()
-        spectrumCanvas.repaint()
+            waveformCanvas.isVisible = showWave
+            spectrogramCanvas.isVisible = showSpec
+            spectrumCanvas.isVisible = showFft
+
+            spectrogramCanvas.updateSpectrogram(
+                data = ui.spectrogram,
+                palette = tools.specPalette,
+                selectionStart = ui.selectionStart,
+                selectionEnd = ui.selectionEnd,
+                freqLowHz = tools.specFreqLowHz,
+                freqHighHz = tools.specFreqHighHz,
+                playheadFraction = play.playheadFraction
+            )
+            waveformCanvas.repaint()
+            spectrumCanvas.repaint()
+        } finally {
+            updating = false
+        }
     }
 
     private inner class WaveformCanvas : JPanel() {

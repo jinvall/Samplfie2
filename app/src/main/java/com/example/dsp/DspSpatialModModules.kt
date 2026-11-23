@@ -54,7 +54,7 @@ internal object DspSpatialModModules {
                     signal = y
                 }
                 lastOut[c] = signal.coerceIn(-1f, 1f)
-                out[idx] = (x * dry + lastOut[c] * mix).coerceIn(-1f, 1f)
+                out[idx] = ((x * dry + lastOut[c] * mix) * params.level.coerceIn(0f, 2f)).coerceIn(-1f, 1f)
             }
         }
         return out
@@ -90,7 +90,7 @@ internal object DspSpatialModModules {
                 val buf = delayBuf[c]
                 val delayed = readFractional(buf, writePtr, delaySamples)
                 buf[writePtr] = (x + delayed * fb).coerceIn(-1f, 1f)
-                out[idx] = (x * dry + delayed * mix).coerceIn(-1f, 1f)
+                out[idx] = ((x * dry + delayed * mix) * params.level.coerceIn(0f, 2f)).coerceIn(-1f, 1f)
             }
             writePtr = (writePtr + 1) % delayBuf[0].size
         }
@@ -136,7 +136,7 @@ internal object DspSpatialModModules {
                 }
                 wet /= voiceCount.toFloat()
                 lpState[c] += lpAlpha * (wet - lpState[c])
-                out[idx] = (x * dry + lpState[c] * mix).coerceIn(-1f, 1f)
+                out[idx] = ((x * dry + lpState[c] * mix) * params.level.coerceIn(0f, 2f)).coerceIn(-1f, 1f)
             }
             writePtr = (writePtr + 1) % delayBuf[0].size
         }
@@ -190,14 +190,14 @@ internal object DspSpatialModModules {
 
                 val wet = dopplerHorn * hornAm * params.hornBalance * 1.4f +
                     lowDrum * drumAm * (1f - params.hornBalance) * 1.4f
-                out[idx] = (samples[idx] * dry + wet * mix).coerceIn(-1f, 1f)
+                out[idx] = ((samples[idx] * dry + wet * mix) * params.level.coerceIn(0f, 2f)).coerceIn(-1f, 1f)
             }
             writePtr = (writePtr + 1) % hornBuf[0].size
         }
         return out
     }
 
-    // 10. Echo (Tape-style delay with wow/flutter modulation + saturation + HF damping)
+    // 10. Echo (Tape-style delay with wow/flutter + saturation + HF damping + optional reverse grain delay)
     fun applyEcho(
         samples: FloatArray,
         sampleRate: Int,
@@ -210,12 +210,16 @@ internal object DspSpatialModModules {
         val baseDelaySamples = ((params.delayMs.coerceIn(20f, 1500f) / 1000f) * sampleRate).coerceAtLeast(8f)
         val maxSamples = (baseDelaySamples + 0.008f * sampleRate).toInt().coerceAtLeast(32)
         val delayBuf = Array(channels) { FloatArray(maxSamples + 4) }
+        val revLines = if (params.reverseDelay) {
+            Array(channels) { ReverseDelayLine(baseDelaySamples.toInt()) }
+        } else null
         var writePtr = 0
         val fb = params.feedback.coerceIn(0f, 0.9f)
         val damp = (1f - params.damping.coerceIn(0f, 0.92f)).coerceIn(0.05f, 1f)
         val dampState = FloatArray(channels)
         val mix = params.mix.coerceIn(0f, 1f)
         val dry = 1f - mix
+        val levelGain = params.level.coerceIn(0f, 2f)
         val sat = 1f + params.saturation.coerceIn(0f, 1f) * 3f
         val wowDepthSamples = params.wowFlutter.coerceIn(0f, 1f) * 0.0025f * sampleRate
 
@@ -225,22 +229,30 @@ internal object DspSpatialModModules {
             for (c in 0 until channels) {
                 val idx = f * channels + c
                 val x = samples[idx]
-                val delayed = readFractional(delayBuf[c], writePtr, dSamples)
+                val delayed = if (revLines != null) {
+                    revLines[c].readReversed()
+                } else {
+                    readFractional(delayBuf[c], writePtr, dSamples)
+                }
                 dampState[c] += damp * (delayed - dampState[c])
                 val saturatedFb = if (params.saturation > 0.01f) {
                     tanh((x + dampState[c] * fb) * sat) / tanh(sat)
                 } else {
                     x + dampState[c] * fb
+                }.coerceIn(-1f, 1f)
+                if (revLines != null) {
+                    revLines[c].push(saturatedFb)
+                } else {
+                    delayBuf[c][writePtr] = saturatedFb
                 }
-                delayBuf[c][writePtr] = saturatedFb.coerceIn(-1f, 1f)
-                out[idx] = (x * dry + delayed * mix).coerceIn(-1f, 1f)
+                out[idx] = ((x * dry + delayed * mix) * levelGain).coerceIn(-1f, 1f)
             }
             writePtr = (writePtr + 1) % delayBuf[0].size
         }
         return out
     }
 
-    // 11. Delay (Digital delay with optional BPM sync, HP/LP feedback filters & stereo spread)
+    // 11. Delay (Digital delay with optional BPM sync, HP/LP feedback filters, stereo spread & reverse delay)
     fun applyDelay(
         samples: FloatArray,
         sampleRate: Int,
@@ -261,10 +273,14 @@ internal object DspSpatialModModules {
         val delayBuf = Array(channels) { c ->
             FloatArray(if (c == 1) secondaryDelaySamples else baseDelaySamples)
         }
+        val revLines = if (params.reverseDelay) {
+            Array(channels) { c -> ReverseDelayLine(if (c == 1) secondaryDelaySamples else baseDelaySamples) }
+        } else null
         val ptrs = IntArray(channels)
         val fb = params.feedback.coerceIn(0f, 0.92f)
         val mix = params.mix.coerceIn(0f, 1f)
         val dry = 1f - mix
+        val levelGain = params.level.coerceIn(0f, 2f)
 
         val lpAlpha = (1f - exp(-2f * PI.toFloat() * params.lowPassHz.coerceIn(800f, sampleRate * 0.45f) / sampleRate))
             .coerceIn(0.05f, 1f)
@@ -273,24 +289,92 @@ internal object DspSpatialModModules {
         val lpState = FloatArray(channels)
         val hpPrevIn = FloatArray(channels)
         val hpPrevOut = FloatArray(channels)
+        val lastDelayed = FloatArray(channels)
 
         for (f in 0 until frames) {
             for (c in 0 until channels) {
+                lastDelayed[c] = if (revLines != null) {
+                    revLines[c].readReversed()
+                } else {
+                    delayBuf[c][ptrs[c]]
+                }
+            }
+            for (c in 0 until channels) {
                 val idx = f * channels + c
                 val x = samples[idx]
-                val buf = delayBuf[c]
-                val delayed = buf[ptrs[c]]
+                val delayed = lastDelayed[c]
                 val hp = hpAlpha * (hpPrevOut[c] + delayed - hpPrevIn[c])
                 hpPrevIn[c] = delayed
                 hpPrevOut[c] = hp
                 lpState[c] += lpAlpha * (hp - lpState[c])
 
-                val crossChannel = if (channels == 2) delayBuf[1 - c][ptrs[1 - c]] else delayed
+                val crossChannel = if (channels == 2) lastDelayed[1 - c] else delayed
                 val feedbackSample = lpState[c] * (1f - params.stereoSpread * 0.5f) + crossChannel * (params.stereoSpread * 0.5f)
-                buf[ptrs[c]] = (x + feedbackSample * fb).coerceIn(-1f, 1f)
-                ptrs[c] = (ptrs[c] + 1) % buf.size
-                out[idx] = (x * dry + delayed * mix).coerceIn(-1f, 1f)
+                val fbSample = (x + feedbackSample * fb).coerceIn(-1f, 1f)
+                if (revLines != null) {
+                    revLines[c].push(fbSample)
+                } else {
+                    val buf = delayBuf[c]
+                    buf[ptrs[c]] = fbSample
+                    ptrs[c] = (ptrs[c] + 1) % buf.size
+                }
+                out[idx] = ((x * dry + delayed * mix) * levelGain).coerceIn(-1f, 1f)
             }
+        }
+        return out
+    }
+
+    // 11b. Analog Delay (BBD compander warmth, LFO clock drift, progressive LPF feedback, reverse delay + level)
+    fun applyAnalogDelay(
+        samples: FloatArray,
+        sampleRate: Int,
+        channels: Int,
+        params: AnalogDelayParams
+    ): FloatArray {
+        if (!params.enabled || samples.isEmpty()) return samples
+        val out = FloatArray(samples.size)
+        val frames = samples.size / channels
+        val baseDelaySamples = ((params.delayMs.coerceIn(20f, 1200f) / 1000f) * sampleRate).coerceAtLeast(32f)
+        val maxSamples = (baseDelaySamples + 0.012f * sampleRate).toInt().coerceAtLeast(64)
+        val delayBuf = Array(channels) { FloatArray(maxSamples + 4) }
+        val revLines = if (params.reverseDelay) {
+            Array(channels) { ReverseDelayLine(baseDelaySamples.toInt()) }
+        } else null
+        var writePtr = 0
+        val fb = params.feedback.coerceIn(0f, 0.92f)
+        val mix = params.mix.coerceIn(0f, 1f)
+        val dry = 1f - mix
+        val levelGain = params.level.coerceIn(0f, 2f)
+        val sat = 1f + params.saturation.coerceIn(0f, 1f) * 3.8f
+        val satNorm = 1f / max(0.25f, tanh(sat * 0.7f))
+        val modRate = params.modRateHz.coerceIn(0.1f, 6f)
+        val modSamples = params.modDepth.coerceIn(0f, 1f) * 0.0045f * sampleRate
+        val warmthAlpha = (1f - exp(-2f * PI.toFloat() * params.warmthHz.coerceIn(500f, 6500f) / sampleRate))
+            .coerceIn(0.03f, 0.99f)
+        val lpState = FloatArray(channels)
+
+        for (f in 0 until frames) {
+            val lfo = sin(2.0 * PI * modRate * f / sampleRate).toFloat()
+            val dSamples = (baseDelaySamples + lfo * modSamples).coerceAtLeast(1f)
+            for (c in 0 until channels) {
+                val idx = f * channels + c
+                val x = samples[idx]
+                val rawDelayed = if (revLines != null) {
+                    revLines[c].readReversed()
+                } else {
+                    readFractional(delayBuf[c], writePtr, dSamples)
+                }
+                lpState[c] += warmthAlpha * (rawDelayed - lpState[c])
+                val warmDelayed = tanh(lpState[c] * sat) * satNorm
+                val toWrite = (x + warmDelayed * fb).coerceIn(-1f, 1f)
+                if (revLines != null) {
+                    revLines[c].push(toWrite)
+                } else {
+                    delayBuf[c][writePtr] = toWrite
+                }
+                out[idx] = ((x * dry + warmDelayed * mix) * levelGain).coerceIn(-1f, 1f)
+            }
+            writePtr = (writePtr + 1) % delayBuf[0].size
         }
         return out
     }
@@ -385,16 +469,17 @@ internal object DspSpatialModModules {
         }
 
         val width = params.stereoWidth.coerceIn(0f, 1.5f)
+        val levelGain = params.level.coerceIn(0f, 2f)
         for (f in 0 until frames) {
             if (channels == 2) {
                 val wL = wetChannels[0][f]
                 val wR = wetChannels[1][f]
                 val mid = (wL + wR) * 0.5f
                 val side = (wL - wR) * 0.5f * width
-                out[f * 2] = (samples[f * 2] * dry + (mid + side) * mix).coerceIn(-1f, 1f)
-                out[f * 2 + 1] = (samples[f * 2 + 1] * dry + (mid - side) * mix).coerceIn(-1f, 1f)
+                out[f * 2] = ((samples[f * 2] * dry + (mid + side) * mix) * levelGain).coerceIn(-1f, 1f)
+                out[f * 2 + 1] = ((samples[f * 2 + 1] * dry + (mid - side) * mix) * levelGain).coerceIn(-1f, 1f)
             } else {
-                out[f] = (samples[f] * dry + wetChannels[0][f] * mix).coerceIn(-1f, 1f)
+                out[f] = ((samples[f] * dry + wetChannels[0][f] * mix) * levelGain).coerceIn(-1f, 1f)
             }
         }
         return out
@@ -407,5 +492,30 @@ internal object DspSpatialModModules {
         val i1 = (i0 + 1) % size
         val frac = readPos - readPos.toInt()
         return buffer[i0] * (1f - frac) + buffer[i1] * frac
+    }
+
+    internal class ReverseDelayLine(rawBlockLen: Int) {
+        private val blockLen = rawBlockLen.coerceIn(64, 96000)
+        private val writeBuf = FloatArray(blockLen)
+        private val readBuf = FloatArray(blockLen)
+        private var cursor = 0
+        private val edgeSamples = min(64, max(4, blockLen / 10)).toFloat()
+
+        fun readReversed(): Float {
+            val revIdx = blockLen - 1 - cursor
+            val dist = min(cursor, revIdx).toFloat()
+            val taper = (dist / edgeSamples).coerceIn(0f, 1f)
+            return readBuf[revIdx] * taper
+        }
+
+        fun push(sample: Float) {
+            writeBuf[cursor] = sample
+            cursor++
+            if (cursor >= blockLen) {
+                System.arraycopy(writeBuf, 0, readBuf, 0, blockLen)
+                writeBuf.fill(0f)
+                cursor = 0
+            }
+        }
     }
 }

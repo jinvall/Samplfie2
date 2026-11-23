@@ -446,7 +446,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
             statusBanner = banner
         )
         playbackEngine.setSelectionBounds(0f, 1f, _editorState.value.playSelectionOnly)
-        studioEngine.setSequencerSampleForLane(0, buffer)
+        studioEngine.setSequencerSampleIfUnlocked(0, buffer)
         reprocessFxChain(buffer, preserveLoopPlayback = keepLoop)
     }
 
@@ -500,8 +500,25 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
             statusBanner = "EXTRACTED ${"%.2f".format(extracted.durationSeconds)}s${if (keepLoop) " • LOOP PERSISTING" else ""}"
         )
         playbackEngine.setSelectionBounds(0f, 1f, _editorState.value.playSelectionOnly)
-        studioEngine.setSequencerSampleForLane(0, extracted)
+        studioEngine.setSequencerSampleIfUnlocked(0, extracted)
         reprocessFxChain(extracted, preserveLoopPlayback = keepLoop)
+    }
+
+    fun setDeckFades(fadeInMs: Float, fadeOutMs: Float) {
+        _editorState.value = _editorState.value.copy(
+            fadeInMs = fadeInMs.coerceIn(0f, 2000f),
+            fadeOutMs = fadeOutMs.coerceIn(0f, 2000f)
+        )
+    }
+
+    fun applyDeckFades() {
+        val currentDry = _editorState.value.dryBuffer ?: return
+        val fin = _editorState.value.fadeInMs.coerceIn(0f, 2000f)
+        val fout = _editorState.value.fadeOutMs.coerceIn(0f, 2000f)
+        mutateDryBufferWithUndo(
+            nextDry = currentDry.applyFadeInOut(fin, fout),
+            banner = "APPLIED FADE IN ${fin.toInt()}ms / OUT ${fout.toInt()}ms"
+        )
     }
 
     fun undoExtraction() {
@@ -518,7 +535,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
             statusBanner = if (keepLoop) "RESTORED PREVIOUS EDIT (LOOP ACTIVE)" else "RESTORED PREVIOUS EDIT"
         )
         playbackEngine.setSelectionBounds(0f, 1f, _editorState.value.playSelectionOnly)
-        studioEngine.setSequencerSampleForLane(0, prev)
+        studioEngine.setSequencerSampleIfUnlocked(0, prev)
         reprocessFxChain(prev, preserveLoopPlayback = keepLoop)
     }
 
@@ -537,7 +554,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
             statusBanner = if (keepLoop) "RESET TO ORIGINAL .WAV (LOOP ACTIVE)" else "RESET TO ORIGINAL .WAV"
         )
         playbackEngine.setSelectionBounds(0f, 1f, _editorState.value.playSelectionOnly)
-        studioEngine.setSequencerSampleForLane(0, raw)
+        studioEngine.setSequencerSampleIfUnlocked(0, raw)
         reprocessFxChain(raw, preserveLoopPlayback = keepLoop)
     }
 
@@ -671,12 +688,17 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
 
     fun sendEditorToLoopSlot(slotId: Int) {
         val buf = activeOutputBuffer() ?: return
-        studioEngine.assignBufferToLoopSlot(slotId, buf, buf.name)
+        val frozen = buf.copy(samples = buf.samples.copyOf())
+        studioEngine.assignBufferToLoopSlot(slotId, frozen, frozen.name)
         loadLoopSlotIntoRefiner(slotId)
-        _editorState.value = _editorState.value.copy(statusBanner = "ASSIGNED TO LOOP ${'A' + slotId}")
+        _editorState.value = _editorState.value.copy(statusBanner = "BOUND & LOCKED TO LOOP ${'A' + slotId}")
     }
 
+    fun toggleLoopSlotLock(slotId: Int) = studioEngine.toggleLoopSlotLock(slotId)
+
     fun loadLoopSlotIntoRefiner(slotId: Int) {
+        val curFadeIn = _loopEditorState.value.fadeInMs
+        val curFadeOut = _loopEditorState.value.fadeOutMs
         val slot = studioEngine.looperState.value.slots.firstOrNull { it.id == slotId }
         val buf = slot?.buffer ?: activeOutputBuffer()
         if (buf == null) {
@@ -688,20 +710,23 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
             )
             return
         }
+        val frozen = buf.copy(samples = buf.samples.copyOf())
         if (slot?.buffer == null) {
-            studioEngine.assignBufferToLoopSlot(slotId, buf, buf.name)
+            studioEngine.assignBufferToLoopSlot(slotId, frozen, frozen.name)
         }
         viewModelScope.launch(Dispatchers.Default) {
-            val peaks = AudioAnalyzer.computeWaveformPeaks(buf, 110)
+            val peaks = AudioAnalyzer.computeWaveformPeaks(frozen, 110)
             withContext(Dispatchers.Main) {
                 _loopEditorState.value = LoopEditorState(
                     selectedSlotId = slotId,
-                    rawSlotBuffer = buf,
-                    workingBuffer = buf,
+                    rawSlotBuffer = frozen,
+                    workingBuffer = frozen.copy(samples = frozen.samples.copyOf()),
                     peaks = peaks,
                     loopStartFrac = 0f,
                     loopEndFrac = 1f,
-                    statusNote = "REFINING LOOP ${'A' + slotId} (${"%.2f".format(buf.durationSeconds)}s)"
+                    fadeInMs = curFadeIn,
+                    fadeOutMs = curFadeOut,
+                    statusNote = "REFINING LOOP ${'A' + slotId} (${"%.2f".format(frozen.durationSeconds)}s)"
                 )
             }
         }
@@ -728,8 +753,8 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
 
     fun setLoopRefinerFades(fadeInMs: Float, fadeOutMs: Float) {
         _loopEditorState.value = _loopEditorState.value.copy(
-            fadeInMs = fadeInMs.coerceIn(0f, 200f),
-            fadeOutMs = fadeOutMs.coerceIn(0f, 200f)
+            fadeInMs = fadeInMs.coerceIn(0f, 2000f),
+            fadeOutMs = fadeOutMs.coerceIn(0f, 2000f)
         )
     }
 
@@ -853,9 +878,12 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
 
     fun sendEditorToSequencerLane(laneId: Int = 0) {
         val buf = activeOutputBuffer() ?: return
-        studioEngine.setSequencerSampleForLane(laneId, buf)
-        _editorState.value = _editorState.value.copy(statusBanner = "SAMPLE ASSIGNED TO SEQ LANE ${laneId + 1}")
+        val frozen = buf.copy(samples = buf.samples.copyOf())
+        studioEngine.setSequencerSampleForLane(laneId, frozen, lockSample = true)
+        _editorState.value = _editorState.value.copy(statusBanner = "BOUND & LOCKED -> SEQ LANE ${laneId + 1}")
     }
+
+    fun toggleSequencerLaneLock(laneId: Int) = studioEngine.toggleSequencerLaneLock(laneId)
 
     fun triggerSequencerLaneOneShot(laneId: Int) {
         val lane = studioEngine.sequencerState.value.lanes.getOrNull(laneId) ?: return
@@ -2252,7 +2280,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         if (report != null) {
             _toolsState.value = _toolsState.value.copy(lastToolReport = report)
         }
-        studioEngine.setSequencerSampleForLane(0, nextDry)
+        studioEngine.setSequencerSampleIfUnlocked(0, nextDry)
         reprocessFxChain(nextDry, preserveLoopPlayback = keepLoop)
     }
 

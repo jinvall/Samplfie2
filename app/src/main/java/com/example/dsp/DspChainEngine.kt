@@ -37,9 +37,10 @@ object DspChainEngine {
         val sr = source.sampleRate
         val ch = source.channels
 
-        // 1. Cleanup & Pitch/Time
+        // 1. Cleanup, Pitch/Time & Octave
         working = DspModules.applyNoiseRemoval(working, sr, ch, rack.noiseRemoval)
         working = DspModules.applyPitchAndSpeed(working, sr, ch, rack.pitchSpeed)
+        working = DspModules.applyOctave(working, sr, ch, rack.octave)
 
         // 2. Dynamics & Saturation (honors Stompbox Drive/Dyn Kill)
         if (!stompActive || !stompbox.killDrive) {
@@ -97,6 +98,12 @@ object DspChainEngine {
                 ch,
                 rack.delay.copy(mix = (rack.delay.mix * spaceScale).coerceIn(0f, 1f)),
                 bpm = bpm
+            )
+            working = DspModules.applyAnalogDelay(
+                working,
+                sr,
+                ch,
+                rack.analogDelay.copy(mix = (rack.analogDelay.mix * spaceScale).coerceIn(0f, 1f))
             )
             working = DspModules.applyReverb(
                 working,

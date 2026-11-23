@@ -97,6 +97,7 @@ fun SamplesSpokeScreen(
     onAuditionLoopRefiner: () -> Unit,
     onCommitRefinerToSlot: () -> Unit,
     onSendRefinerToDeck: () -> Unit,
+    onToggleLoopSlotLock: (Int) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -220,7 +221,7 @@ fun SamplesSpokeScreen(
                     ) {
                         if (hasEditorAudio) {
                             HardwareChipToggle(
-                                label = "LOAD",
+                                label = if (slot.isSampleLocked) "REBIND" else "BIND",
                                 selected = false,
                                 onClick = { onAssignEditorToLoop(slot.id) },
                                 accentColor = NeonCyan,
@@ -261,6 +262,15 @@ fun SamplesSpokeScreen(
                             selected = slot.bars == barCount,
                             onClick = { onSetLoopBars(slot.id, barCount) },
                             accentColor = AmberHot
+                        )
+                    }
+                    if (slotLoaded) {
+                        HardwareChipToggle(
+                            label = if (slot.isSampleLocked) "LOCKED" else "OPEN",
+                            selected = slot.isSampleLocked,
+                            onClick = { onToggleLoopSlotLock(slot.id) },
+                            accentColor = AmberHot,
+                            modifier = Modifier.testTag("loop_lock_${slot.id}")
                         )
                     }
                     Spacer(modifier = Modifier.weight(1f))
@@ -379,7 +389,7 @@ fun SamplesSpokeScreen(
                             label = "FADE IN",
                             valueText = "${loopEditorState.fadeInMs.toInt()} ms",
                             value = loopEditorState.fadeInMs,
-                            valueRange = 0f..150f,
+                            valueRange = 0f..2000f,
                             accentColor = EmeraldSignal,
                             onValueChange = { onSetLoopFades(it, loopEditorState.fadeOutMs) }
                         )
@@ -389,7 +399,7 @@ fun SamplesSpokeScreen(
                             label = "FADE OUT",
                             valueText = "${loopEditorState.fadeOutMs.toInt()} ms",
                             value = loopEditorState.fadeOutMs,
-                            valueRange = 0f..150f,
+                            valueRange = 0f..2000f,
                             accentColor = EmeraldSignal,
                             onValueChange = { onSetLoopFades(loopEditorState.fadeInMs, it) }
                         )

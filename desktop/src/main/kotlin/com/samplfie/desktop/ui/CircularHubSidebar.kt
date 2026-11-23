@@ -20,6 +20,8 @@ import java.awt.RadialGradientPaint
 import java.awt.RenderingHints
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.awt.event.MouseMotionAdapter
+import java.awt.event.MouseWheelEvent
 import java.awt.geom.Arc2D
 import java.awt.geom.Ellipse2D
 import java.awt.geom.RoundRectangle2D
@@ -27,14 +29,16 @@ import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JPanel
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
  * Persistent Circular Production Hub Sidebar matching Samplfie2 Android's musician's studio view.
- * Keeps Master Transport, Customizable 8-Spoke Circular Radar Wheel, Peer Session Handoff,
- * VU Peak Metering, Stomp Bypass, Linux Mic Capture, and File I/O permanently visible across all stations.
+ * Keeps Master Transport, Customizable 8-Spoke Circular Radar Wheel with Center Master Volume Control,
+ * Peer Session Handoff, VU Peak Metering, Stomp Bypass, Linux Mic Capture, and File I/O visible across all stations.
  */
 class CircularHubSidebar(
     private val onSelectStation: (DesktopStation) -> Unit,
@@ -115,9 +119,9 @@ class CircularHubSidebar(
         inner.add(Box.createVerticalStrut(6))
 
         wheelCanvas.alignmentX = LEFT_ALIGNMENT
-        StudioTheme.setScaledPrefSize(wheelCanvas, 326, 326)
+        StudioTheme.setScaledPrefSize(wheelCanvas, 340, 340)
         StudioTheme.setScaledMinSize(wheelCanvas, 260, 260)
-        StudioTheme.setScaledMaxSize(wheelCanvas, Int.MAX_VALUE, 460)
+        StudioTheme.setScaledMaxSize(wheelCanvas, Int.MAX_VALUE, 480)
         inner.add(wheelCanvas)
         inner.add(Box.createVerticalStrut(8))
 
@@ -211,7 +215,7 @@ class CircularHubSidebar(
                 "MASTER BYPASS"
             }
 
-            val volPct = (ui.masterVolume.coerceIn(0f, 1f) * 100f).toInt()
+            val volPct = (ui.masterVolume.coerceIn(0f, 1f) * 100f).roundToInt()
             if (!masterVolumeSlider.valueIsAdjusting) {
                 masterVolumeSlider.value = volPct
             }
@@ -236,34 +240,89 @@ class CircularHubSidebar(
     private inner class CircularWheelCanvas : JPanel() {
         private var spokeHits = emptyList<SpokeHit>()
         private var hubCircle = Ellipse2D.Double()
+        private var boothNavHit = RoundRectangle2D.Double()
+        private var volMinusHit = RoundRectangle2D.Double()
+        private var muteHit = RoundRectangle2D.Double()
+        private var volPlusHit = RoundRectangle2D.Double()
+
+        private var dragStartY: Int? = null
+        private var dragStartVol: Float = 0.85f
+        private var didDragVol = false
 
         init {
             isOpaque = false
             cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            toolTipText = "Click BOOTH/spokes, - / MUTE / +, or drag/scroll wheel inside Hub Center for Master Volume"
+
             addMouseListener(object : MouseAdapter() {
-                override fun mouseClicked(e: MouseEvent) {
+                override fun mousePressed(e: MouseEvent) {
                     val p = Point(e.x, e.y)
-                    if (hubCircle.contains(p)) {
-                        onSelectStation(DesktopStation.BOOTH)
+                    didDragVol = false
+                    if (hubCircle.contains(p) &&
+                        !boothNavHit.contains(p) &&
+                        !volMinusHit.contains(p) &&
+                        !muteHit.contains(p) &&
+                        !volPlusHit.contains(p)
+                    ) {
+                        dragStartY = e.y
+                        dragStartVol = uiState.masterVolume
+                    } else {
+                        dragStartY = null
+                    }
+                }
+
+                override fun mouseReleased(e: MouseEvent) {
+                    if (didDragVol) {
+                        dragStartY = null
+                        didDragVol = false
                         return
                     }
-                    spokeHits.firstOrNull { it.rect.contains(p) }?.let { hit ->
-                        onSelectStation(hit.station)
+                    dragStartY = null
+                    val p = Point(e.x, e.y)
+                    when {
+                        volMinusHit.contains(p) -> onMasterVolumeChanged((uiState.masterVolume - 0.05f).coerceIn(0f, 1f))
+                        volPlusHit.contains(p) -> onMasterVolumeChanged((uiState.masterVolume + 0.05f).coerceIn(0f, 1f))
+                        muteHit.contains(p) -> onToggleMasterMute()
+                        boothNavHit.contains(p) -> onSelectStation(DesktopStation.BOOTH)
+                        hubCircle.contains(p) -> onToggleMasterMute()
+                        else -> spokeHits.firstOrNull { it.rect.contains(p) }?.let { onSelectStation(it.station) }
                     }
                 }
             })
+
+            addMouseMotionListener(object : MouseMotionAdapter() {
+                override fun mouseDragged(e: MouseEvent) {
+                    val sy = dragStartY ?: return
+                    val dy = sy - e.y
+                    if (abs(dy) >= 3) {
+                        didDragVol = true
+                        val sensitivity = StudioTheme.sf(110f).coerceAtLeast(60f)
+                        val nextVol = (dragStartVol + dy / sensitivity).coerceIn(0f, 1f)
+                        onMasterVolumeChanged(nextVol)
+                    }
+                }
+            })
+
+            addMouseWheelListener { e: MouseWheelEvent ->
+                if (hubCircle.contains(e.point) && !e.isControlDown) {
+                    val delta = if (e.wheelRotation < 0) 0.04f else -0.04f
+                    onMasterVolumeChanged((uiState.masterVolume + delta).coerceIn(0f, 1f))
+                    e.consume()
+                }
+            }
         }
 
         override fun paintComponent(g: Graphics) {
             super.paintComponent(g)
             val g2 = g.create() as Graphics2D
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
 
             val cx = width / 2.0
             val cy = height / 2.0
             val minDim = min(width, height).toDouble()
             val outerR = minDim * 0.365
-            val innerR = minDim * 0.185
+            val innerR = minDim * 0.21
 
             g2.paint = RadialGradientPaint(
                 cx.toFloat(), cy.toFloat(), (minDim * 0.49).toFloat(),
@@ -294,8 +353,8 @@ class CircularHubSidebar(
                 )
             }
             val count = wheelStations.size
-            val nodeW = minDim * (if (count > 5) 0.23 else 0.27)
-            val nodeH = minDim * (if (count > 5) 0.125 else 0.145)
+            val nodeW = minDim * (if (count > 5) 0.225 else 0.265)
+            val nodeH = minDim * (if (count > 5) 0.12 else 0.14)
             val hits = mutableListOf<SpokeHit>()
 
             wheelStations.forEachIndexed { idx, st ->
@@ -318,8 +377,8 @@ class CircularHubSidebar(
                 g2.drawLine(startX.toInt(), startY.toInt(), endX.toInt(), endY.toInt())
 
                 val pad = StudioTheme.sd(2.0)
-                val boxX = (cx + (minDim * 0.36) * cos(rad) - nodeW / 2.0).coerceIn(pad, width - nodeW - pad)
-                val boxY = (cy + (minDim * 0.36) * sin(rad) - nodeH / 2.0).coerceIn(pad, height - nodeH - pad)
+                val boxX = (cx + (minDim * 0.365) * cos(rad) - nodeW / 2.0).coerceIn(pad, width - nodeW - pad)
+                val boxY = (cy + (minDim * 0.365) * sin(rad) - nodeH / 2.0).coerceIn(pad, height - nodeH - pad)
                 val arc = StudioTheme.sd(10.0)
                 val rr = RoundRectangle2D.Double(boxX, boxY, nodeW, nodeH, arc, arc)
                 hits.add(SpokeHit(st, rr, accent, deg))
@@ -341,7 +400,7 @@ class CircularHubSidebar(
                     DesktopStation.SAMPLES -> "LOOPS"
                     DesktopStation.INSTRUMENTS -> "SEQ"
                     DesktopStation.TRACKS -> "SYNC"
-                    DesktopStation.FX_STOMP -> "${uiState.fxState.activeCount} FX"
+                    DesktopStation.FX_STOMP -> "${uiState.fxState.activeCount}/14 FX"
                     DesktopStation.LIVE -> uiState.stompState.liveMode.name.take(5)
                     DesktopStation.TOOLS -> "PRO"
                     DesktopStation.TUNER -> uiState.tunerReading.fullNote
@@ -356,44 +415,94 @@ class CircularHubSidebar(
             spokeHits = hits
 
             val peak = maxOf(playState.livePeak, micState.peakLevel, netState.rxLivePeak)
-            val vuR = innerR * 1.22
+            val vuR = innerR * 1.15
             g2.color = StudioTheme.HairlineDivider
             g2.stroke = StudioTheme.stroke(3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
             g2.draw(Arc2D.Double(cx - vuR, cy - vuR, vuR * 2, vuR * 2, 90.0, -360.0, Arc2D.OPEN))
             val sweep = if (playState.isPlaying) -(playState.playheadFraction * 360.0).coerceAtLeast(18.0) else -(peak * 360.0).coerceAtLeast(35.0)
             g2.color = if (playState.isPlaying) StudioTheme.EmeraldSignal else StudioTheme.NeonCyan
-            g2.stroke = StudioTheme.stroke(4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+            g2.stroke = StudioTheme.stroke(3.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
             g2.draw(Arc2D.Double(cx - vuR, cy - vuR, vuR * 2, vuR * 2, 90.0, sweep, Arc2D.OPEN))
 
-            val hubR = innerR * 0.94
+            // Center Hub Chassis + Master Volume Rotary Arc
+            val hubR = innerR * 0.96
             hubCircle = Ellipse2D.Double(cx - hubR, cy - hubR, hubR * 2, hubR * 2)
             g2.color = StudioTheme.ObsidianChassis
             g2.fill(hubCircle)
-            g2.color = if (uiState.station == DesktopStation.BOOTH) StudioTheme.AmberHot
-            else if (playState.isPlaying) StudioTheme.EmeraldSignal
-            else StudioTheme.NeonCyan
-            g2.stroke = StudioTheme.stroke(2f)
-            g2.draw(hubCircle)
 
-            g2.font = StudioTheme.font("SansSerif", Font.BOLD, 10.5f)
-            val hubTitle = "BOOTH"
+            val masterVol = uiState.masterVolume.coerceIn(0f, 1f)
+            val muted = uiState.isMasterMuted
+            val volPct = (masterVol * 100f).roundToInt()
+
+            // Background arc & active Master Volume Arc (270 degrees clockwise from bottom-left 225° -> -270°)
+            val arcR = hubR * 0.90
+            g2.color = StudioTheme.HairlineDivider
+            g2.stroke = StudioTheme.stroke(4.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+            g2.draw(Arc2D.Double(cx - arcR, cy - arcR, arcR * 2, arcR * 2, 225.0, -270.0, Arc2D.OPEN))
+
+            val volColor = if (muted) StudioTheme.TacCoral else StudioTheme.EmeraldSignal
+            g2.color = volColor
+            g2.stroke = StudioTheme.stroke(4.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+            g2.draw(Arc2D.Double(cx - arcR, cy - arcR, arcR * 2, arcR * 2, 225.0, -(270.0 * masterVol), Arc2D.OPEN))
+
+            // Top pill: BOOTH nav
+            val navW = hubR * 0.98
+            val navH = hubR * 0.30
+            boothNavHit = RoundRectangle2D.Double(cx - navW / 2.0, cy - hubR * 0.72, navW, navH, StudioTheme.sd(8.0), StudioTheme.sd(8.0))
+            g2.color = if (uiState.station == DesktopStation.BOOTH) StudioTheme.withAlpha(StudioTheme.AmberHot, 65) else StudioTheme.withAlpha(StudioTheme.NeonCyan, 35)
+            g2.fill(boothNavHit)
+            g2.color = if (uiState.station == DesktopStation.BOOTH) StudioTheme.AmberHot else StudioTheme.NeonCyan
+            g2.stroke = StudioTheme.stroke(1.2f)
+            g2.draw(boothNavHit)
+            g2.font = StudioTheme.font("SansSerif", Font.BOLD, 9.5f)
             val fmHub = g2.fontMetrics
-            g2.color = StudioTheme.NeonCyan
-            g2.drawString(hubTitle, (cx - fmHub.stringWidth(hubTitle) / 2).toFloat(), (cy - hubR * 0.25).toFloat())
+            g2.drawString("BOOTH", (cx - fmHub.stringWidth("BOOTH") / 2.0).toFloat(), (boothNavHit.y + (navH + fmHub.ascent - fmHub.descent) / 2.0).toFloat())
 
-            val stateText = if (playState.isPlaying) "PLAYING" else if (micState.isRecording) "REC" else "READY"
-            g2.font = StudioTheme.font("Monospaced", Font.BOLD, 11.5f)
-            val fmSt = g2.fontMetrics
-            g2.color = if (playState.isPlaying) StudioTheme.EmeraldSignal else StudioTheme.TextPrimary
-            g2.drawString(stateText, (cx - fmSt.stringWidth(stateText) / 2).toFloat(), (cy + hubR * 0.12).toFloat())
+            // Center readout: Master Level & transport state
+            val mstText = if (muted) "MUTED" else "MST $volPct%"
+            g2.font = StudioTheme.font("Monospaced", Font.BOLD, 12.5f)
+            val fmMst = g2.fontMetrics
+            g2.color = volColor
+            g2.drawString(mstText, (cx - fmMst.stringWidth(mstText) / 2.0).toFloat(), (cy + fmMst.ascent * 0.25).toFloat())
 
-            val stationTag = uiState.station.shortLabel
-            g2.font = StudioTheme.font("Monospaced", Font.PLAIN, 9.5f)
-            val fmTag = g2.fontMetrics
+            val subStatus = if (playState.isPlaying) "PLAYING" else if (micState.isRecording) "REC" else uiState.station.shortLabel
+            g2.font = StudioTheme.font("Monospaced", Font.PLAIN, 8.5f)
+            val fmSub = g2.fontMetrics
             g2.color = StudioTheme.TextSecondary
-            g2.drawString(stationTag, (cx - fmTag.stringWidth(stationTag) / 2).toFloat(), (cy + hubR * 0.45).toFloat())
+            g2.drawString(subStatus, (cx - fmSub.stringWidth(subStatus) / 2.0).toFloat(), (cy - fmMst.ascent * 0.72).toFloat())
+
+            // Bottom master control pills inside center hub: [-] [MUTE/VOL] [+]
+            val ctrlY = cy + hubR * 0.26
+            val ctrlH = hubR * 0.34
+            val sideW = hubR * 0.36
+            val midW = hubR * 0.62
+            val gap = hubR * 0.06
+            val totalW = sideW * 2 + midW + gap * 2
+            val startCtrlX = cx - totalW / 2.0
+
+            volMinusHit = RoundRectangle2D.Double(startCtrlX, ctrlY, sideW, ctrlH, StudioTheme.sd(7.0), StudioTheme.sd(7.0))
+            muteHit = RoundRectangle2D.Double(startCtrlX + sideW + gap, ctrlY, midW, ctrlH, StudioTheme.sd(7.0), StudioTheme.sd(7.0))
+            volPlusHit = RoundRectangle2D.Double(startCtrlX + sideW + gap * 2 + midW, ctrlY, sideW, ctrlH, StudioTheme.sd(7.0), StudioTheme.sd(7.0))
+
+            drawMiniHubBtn(g2, volMinusHit, "-", StudioTheme.NeonCyan, filled = false)
+            drawMiniHubBtn(g2, muteHit, if (muted) "UNMT" else "MUTE", if (muted) StudioTheme.TacCoral else StudioTheme.AmberHot, filled = muted)
+            drawMiniHubBtn(g2, volPlusHit, "+", StudioTheme.NeonCyan, filled = false)
 
             g2.dispose()
+        }
+
+        private fun drawMiniHubBtn(g2: Graphics2D, rect: RoundRectangle2D.Double, label: String, accent: Color, filled: Boolean) {
+            g2.color = if (filled) accent else StudioTheme.withAlpha(accent, 34)
+            g2.fill(rect)
+            g2.color = accent
+            g2.stroke = StudioTheme.stroke(1.1f)
+            g2.draw(rect)
+            g2.font = StudioTheme.font("Monospaced", Font.BOLD, 9f)
+            val fm = g2.fontMetrics
+            g2.color = if (filled) StudioTheme.ObsidianChassis else StudioTheme.TextPrimary
+            val tx = (rect.x + (rect.width - fm.stringWidth(label)) / 2.0).toFloat()
+            val ty = (rect.y + (rect.height + fm.ascent - fm.descent) / 2.0).toFloat()
+            g2.drawString(label, tx, ty)
         }
     }
 

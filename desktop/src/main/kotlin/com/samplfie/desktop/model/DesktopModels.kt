@@ -11,7 +11,7 @@ enum class DesktopStation(val shortLabel: String, val fullTitle: String, val bad
     SAMPLES("SAMPLES", "LOOPER & SAMPLE REFINER", "LOOPS"),
     INSTRUMENTS("INST", "16-STEP SEQ & MIDI", "SYNTH"),
     TRACKS("TRACKS", "SYNCED TRACK TIMELINE", "SYNC"),
-    FX_STOMP("FX RACK", "12-MODULE PRO DSP RACK", "DSP"),
+    FX_STOMP("FX RACK", "14-MODULE PRO DSP RACK", "DSP"),
     LIVE("LIVE", "LIVE STOMPBOX & RELEASE", "STAGE"),
     TOOLS("TOOLS", "PRO TOOLS & PLUGINS", "PRO"),
     TUNER("TUNER", "CHROMATIC & STROBE TUNER", "PITCH"),
@@ -293,44 +293,162 @@ data class DesktopAudioBuffer(
     }
 }
 
+enum class DesktopWahMode(val label: String) {
+    AUTO_ENV("AUTO ENV"),
+    LFO_SWEEP("LFO SWEEP"),
+    MANUAL_PEDAL("PEDAL")
+}
+
+enum class DesktopDelayDivision(val label: String, val quarterMultiplier: Float) {
+    FREE_MS("FREE", 1f),
+    QUARTER("1/4", 1f),
+    DOTTED_EIGHTH("1/8D", 0.75f),
+    EIGHTH("1/8", 0.5f),
+    SIXTEENTH("1/16", 0.25f)
+}
+
 data class DesktopFxState(
     val masterBypass: Boolean = false,
+    // 1. Noise Gate / Cleanup
     val noiseGateEnabled: Boolean = false,
     val noiseThresholdDb: Float = -46f,
+    val noiseReductionDb: Float = 24f,
+    val noiseHighPassEnabled: Boolean = true,
+    val noiseHighPassHz: Float = 80f,
+    val noiseAttackMs: Float = 3f,
+    val noiseReleaseMs: Float = 65f,
+    val noiseKneeDb: Float = 6f,
+    val noiseGateLevel: Float = 1.0f,
+    // 2. Pitch & Time
     val pitchEnabled: Boolean = false,
     val pitchSemitones: Float = 0f,
+    val pitchFineCents: Float = 0f,
     val speedFactor: Float = 1f,
+    val pitchVinylLink: Boolean = false,
+    val pitchGrainMs: Float = 32f,
+    val pitchLevel: Float = 1.0f,
+    // 3. Gain / Comp / Limiter
     val gainEnabled: Boolean = false,
     val gainDb: Float = 0f,
     val normalize: Boolean = false,
+    val softLimiter: Boolean = true,
+    val limiterCeilingDb: Float = -0.5f,
+    val compressionRatio: Float = 1.5f,
+    val stereoWidth: Float = 1.0f,
+    val gainLevel: Float = 1.0f,
+    // 4. Octave (-1 Oct / +1 Oct)
+    val octaveEnabled: Boolean = false,
+    val octaveSubMix: Float = 0.65f,
+    val octaveUpMix: Float = 0.35f,
+    val octaveSubToneHz: Float = 900f,
+    val octaveDryMix: Float = 0.7f,
+    val octaveLevel: Float = 1.0f,
+    // 5. Tube Overdrive
     val overdriveEnabled: Boolean = false,
     val driveAmount: Float = 4f,
+    val overdriveToneHz: Float = 4200f,
+    val overdriveAsymmetry: Float = 0.25f,
+    val overdrivePreHpHz: Float = 120f,
+    val overdriveMix: Float = 0.65f,
+    val overdriveLevel: Float = 1.0f,
+    // 6. Auto-Wah Filter
     val wahEnabled: Boolean = false,
+    val wahMode: DesktopWahMode = DesktopWahMode.AUTO_ENV,
+    val wahRateHz: Float = 1.6f,
     val wahFreqHz: Float = 950f,
+    val wahResonanceQ: Float = 3.5f,
+    val wahEnvSens: Float = 0.6f,
+    val wahPedalPos: Float = 0.5f,
+    val wahMix: Float = 0.85f,
+    val wahLevel: Float = 1.0f,
+    // 7. Multi-Stage Phaser
     val phaserEnabled: Boolean = false,
-    val phaserMix: Float = 0.5f,
+    val phaserStages: Int = 4,
+    val phaserRateHz: Float = 0.8f,
+    val phaserDepth: Float = 0.75f,
+    val phaserCenterHz: Float = 900f,
+    val phaserFeedback: Float = 0.55f,
+    val phaserStereoOffset: Float = 0.35f,
+    val phaserMix: Float = 0.55f,
+    val phaserLevel: Float = 1.0f,
+    // 8. Flanger
     val flangerEnabled: Boolean = false,
+    val flangerRateHz: Float = 0.6f,
+    val flangerDepthMs: Float = 3.0f,
+    val flangerManualMs: Float = 0.8f,
+    val flangerFeedback: Float = 0.5f,
+    val flangerSpread: Float = 0.4f,
     val flangerMix: Float = 0.5f,
+    val flangerLevel: Float = 1.0f,
+    // 9. Stereo Chorus
     val chorusEnabled: Boolean = false,
+    val chorusVoices: Int = 3,
+    val chorusRateHz: Float = 1.1f,
+    val chorusDepthMs: Float = 6.5f,
+    val chorusBaseMs: Float = 14f,
+    val chorusHighCutHz: Float = 7500f,
     val chorusMix: Float = 0.45f,
+    val chorusLevel: Float = 1.0f,
+    // 10. Rotary Leslie Speaker
     val rotaryEnabled: Boolean = false,
     val rotaryRateHz: Float = 3.2f,
+    val rotaryDepth: Float = 0.75f,
+    val rotaryHornBalance: Float = 0.6f,
+    val rotaryFastMode: Boolean = false,
+    val rotaryBrake: Boolean = false,
+    val rotaryCrossoverHz: Float = 800f,
+    val rotaryCabinetDrive: Float = 0.15f,
+    val rotaryMix: Float = 0.8f,
+    val rotaryLevel: Float = 1.0f,
+    // 11. Tape Echo
     val echoEnabled: Boolean = false,
     val echoDelayMs: Float = 240f,
-    val echoFeedback: Float = 0.4f,
-    val echoMix: Float = 0.35f,
+    val echoFeedback: Float = 0.42f,
+    val echoDamping: Float = 0.4f,
+    val echoWowFlutter: Float = 0.25f,
+    val echoSaturation: Float = 0.2f,
+    val echoReverseDelay: Boolean = false,
+    val echoMix: Float = 0.38f,
+    val echoLevel: Float = 1.0f,
+    // 12. Digital Delay
     val delayEnabled: Boolean = false,
     val delayTimeMs: Float = 360f,
-    val delayMix: Float = 0.3f,
+    val delayBpmSync: Boolean = false,
+    val delayDivision: DesktopDelayDivision = DesktopDelayDivision.FREE_MS,
+    val delayFeedback: Float = 0.4f,
+    val delaySpread: Float = 0.5f,
+    val delayHighPassHz: Float = 140f,
+    val delayLowPassHz: Float = 6500f,
+    val delayReverseDelay: Boolean = false,
+    val delayMix: Float = 0.35f,
+    val delayLevel: Float = 1.0f,
+    // 13. Analog BBD Delay
+    val analogDelayEnabled: Boolean = false,
+    val analogDelayMs: Float = 310f,
+    val analogDelayFeedback: Float = 0.52f,
+    val analogDelayWarmthHz: Float = 2400f,
+    val analogDelaySaturation: Float = 0.35f,
+    val analogDelayModDepth: Float = 0.3f,
+    val analogDelayModRateHz: Float = 0.7f,
+    val analogDelayReverseDelay: Boolean = false,
+    val analogDelayMix: Float = 0.45f,
+    val analogDelayLevel: Float = 1.0f,
+    // 14. Concert Reverb
     val reverbEnabled: Boolean = false,
     val reverbSize: Float = 0.6f,
-    val reverbMix: Float = 0.35f
+    val reverbDamping: Float = 0.35f,
+    val reverbPreDelayMs: Float = 18f,
+    val reverbEarlyReflections: Float = 0.45f,
+    val reverbStereoWidth: Float = 0.75f,
+    val reverbLowCutHz: Float = 120f,
+    val reverbMix: Float = 0.35f,
+    val reverbLevel: Float = 1.0f
 ) {
     val activeCount: Int
         get() = listOf(
-            noiseGateEnabled, pitchEnabled, gainEnabled, overdriveEnabled,
+            noiseGateEnabled, pitchEnabled, gainEnabled, octaveEnabled, overdriveEnabled,
             wahEnabled, phaserEnabled, flangerEnabled, chorusEnabled,
-            rotaryEnabled, echoEnabled, delayEnabled, reverbEnabled
+            rotaryEnabled, echoEnabled, delayEnabled, analogDelayEnabled, reverbEnabled
         ).count { it }
 }
 
@@ -363,9 +481,12 @@ object DesktopPresetFactory {
         DesktopPreset.CLEAN_VOCAL -> DesktopFxState(
             noiseGateEnabled = true,
             noiseThresholdDb = -44f,
+            noiseReductionDb = 28f,
+            noiseHighPassHz = 95f,
             gainEnabled = true,
             gainDb = 2.5f,
             normalize = true,
+            compressionRatio = 2.2f,
             reverbEnabled = true,
             reverbSize = 0.35f,
             reverbMix = 0.18f
@@ -373,9 +494,12 @@ object DesktopPresetFactory {
         DesktopPreset.ACID_WAH -> DesktopFxState(
             overdriveEnabled = true,
             driveAmount = 6.5f,
+            overdriveAsymmetry = 0.35f,
             wahEnabled = true,
             wahFreqHz = 1100f,
+            wahResonanceQ = 5.2f,
             phaserEnabled = true,
+            phaserStages = 6,
             phaserMix = 0.55f
         )
         DesktopPreset.DUB_SPACE -> DesktopFxState(
@@ -383,9 +507,10 @@ object DesktopPresetFactory {
             echoDelayMs = 280f,
             echoFeedback = 0.55f,
             echoMix = 0.45f,
-            delayEnabled = true,
-            delayTimeMs = 420f,
-            delayMix = 0.38f,
+            analogDelayEnabled = true,
+            analogDelayMs = 375f,
+            analogDelayFeedback = 0.58f,
+            analogDelayMix = 0.42f,
             reverbEnabled = true,
             reverbSize = 0.8f,
             reverbMix = 0.45f
@@ -394,6 +519,8 @@ object DesktopPresetFactory {
             gainEnabled = true,
             gainDb = 1.8f,
             normalize = true,
+            compressionRatio = 2.4f,
+            stereoWidth = 1.15f,
             chorusEnabled = true,
             chorusMix = 0.2f,
             reverbEnabled = true,

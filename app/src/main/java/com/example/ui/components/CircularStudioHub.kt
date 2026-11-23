@@ -193,7 +193,7 @@ internal fun buildStudioSpokes(
             StudioSpoke.FX_RACK -> SpokeDescriptor(
                 spoke = StudioSpoke.FX_RACK,
                 title = "FX RACK",
-                subtitle = "${fxRack.activeCount}/12 FX",
+                subtitle = "${fxRack.activeCount}/14 FX",
                 angleDeg = angle,
                 accent = VioletMod,
                 icon = Icons.Filled.Tune

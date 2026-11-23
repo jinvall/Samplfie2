@@ -59,7 +59,8 @@ data class NoiseRemovalParams(
     val highPassFreqHz: Float = 80f,
     val attackMs: Float = 3f,
     val releaseMs: Float = 65f,
-    val kneeWidthDb: Float = 6f
+    val kneeWidthDb: Float = 6f,
+    val level: Float = 1.0f
 )
 
 data class PitchSpeedParams(
@@ -68,7 +69,8 @@ data class PitchSpeedParams(
     val speedFactor: Float = 1.0f,
     val vinylLink: Boolean = false,
     val fineCents: Float = 0f,
-    val grainSizeMs: Float = 32f
+    val grainSizeMs: Float = 32f,
+    val level: Float = 1.0f
 )
 
 data class GainParams(
@@ -78,7 +80,17 @@ data class GainParams(
     val softLimiter: Boolean = true,
     val limiterCeilingDb: Float = -0.5f,
     val compressionRatio: Float = 1.5f,
-    val stereoWidth: Float = 1.0f
+    val stereoWidth: Float = 1.0f,
+    val level: Float = 1.0f
+)
+
+data class OctaveParams(
+    val enabled: Boolean = false,
+    val subOctaveMix: Float = 0.65f,
+    val octaveUpMix: Float = 0.35f,
+    val subToneHz: Float = 900f,
+    val dryMix: Float = 0.7f,
+    val level: Float = 1.0f
 )
 
 data class OverdriveParams(
@@ -87,7 +99,8 @@ data class OverdriveParams(
     val toneHz: Float = 4200f,
     val mix: Float = 0.65f,
     val asymmetry: Float = 0.25f,
-    val preHighPassHz: Float = 120f
+    val preHighPassHz: Float = 120f,
+    val level: Float = 1.0f
 )
 
 data class WahParams(
@@ -98,7 +111,8 @@ data class WahParams(
     val envSensitivity: Float = 0.6f,
     val mix: Float = 0.85f,
     val mode: WahMode = WahMode.AUTO_ENV,
-    val manualPedalPos: Float = 0.5f
+    val manualPedalPos: Float = 0.5f,
+    val level: Float = 1.0f
 )
 
 data class PhaserParams(
@@ -109,7 +123,8 @@ data class PhaserParams(
     val mix: Float = 0.6f,
     val stages: Int = 4,
     val centerFreqHz: Float = 900f,
-    val stereoPhaseOffset: Float = 0.35f
+    val stereoPhaseOffset: Float = 0.35f,
+    val level: Float = 1.0f
 )
 
 data class FlangerParams(
@@ -119,7 +134,8 @@ data class FlangerParams(
     val feedback: Float = 0.5f,
     val mix: Float = 0.55f,
     val manualDelayMs: Float = 0.8f,
-    val stereoSpread: Float = 0.4f
+    val stereoSpread: Float = 0.4f,
+    val level: Float = 1.0f
 )
 
 data class ChorusParams(
@@ -129,7 +145,8 @@ data class ChorusParams(
     val mix: Float = 0.5f,
     val voices: Int = 3,
     val baseDelayMs: Float = 14f,
-    val highCutHz: Float = 7500f
+    val highCutHz: Float = 7500f,
+    val level: Float = 1.0f
 )
 
 data class RotaryParams(
@@ -141,7 +158,8 @@ data class RotaryParams(
     val fastMode: Boolean = false,
     val brake: Boolean = false,
     val crossoverHz: Float = 800f,
-    val cabinetDrive: Float = 0.15f
+    val cabinetDrive: Float = 0.15f,
+    val level: Float = 1.0f
 )
 
 data class EchoParams(
@@ -151,7 +169,9 @@ data class EchoParams(
     val damping: Float = 0.4f,
     val mix: Float = 0.45f,
     val wowFlutter: Float = 0.25f,
-    val saturation: Float = 0.2f
+    val saturation: Float = 0.2f,
+    val reverseDelay: Boolean = false,
+    val level: Float = 1.0f
 )
 
 data class DelayParams(
@@ -163,7 +183,22 @@ data class DelayParams(
     val bpmSync: Boolean = false,
     val division: DelayNoteDivision = DelayNoteDivision.FREE_MS,
     val highPassHz: Float = 140f,
-    val lowPassHz: Float = 6500f
+    val lowPassHz: Float = 6500f,
+    val reverseDelay: Boolean = false,
+    val level: Float = 1.0f
+)
+
+data class AnalogDelayParams(
+    val enabled: Boolean = false,
+    val delayMs: Float = 310f,
+    val feedback: Float = 0.52f,
+    val warmthHz: Float = 2400f,
+    val saturation: Float = 0.35f,
+    val modDepth: Float = 0.3f,
+    val modRateHz: Float = 0.7f,
+    val reverseDelay: Boolean = false,
+    val mix: Float = 0.45f,
+    val level: Float = 1.0f
 )
 
 data class ReverbParams(
@@ -174,7 +209,8 @@ data class ReverbParams(
     val mix: Float = 0.35f,
     val earlyReflections: Float = 0.45f,
     val stereoWidth: Float = 0.75f,
-    val lowCutHz: Float = 120f
+    val lowCutHz: Float = 120f,
+    val level: Float = 1.0f
 )
 
 data class FxRackState(
@@ -182,6 +218,7 @@ data class FxRackState(
     val noiseRemoval: NoiseRemovalParams = NoiseRemovalParams(),
     val pitchSpeed: PitchSpeedParams = PitchSpeedParams(),
     val gain: GainParams = GainParams(),
+    val octave: OctaveParams = OctaveParams(),
     val overdrive: OverdriveParams = OverdriveParams(),
     val wah: WahParams = WahParams(),
     val phaser: PhaserParams = PhaserParams(),
@@ -190,6 +227,7 @@ data class FxRackState(
     val rotarySpeaker: RotaryParams = RotaryParams(),
     val echo: EchoParams = EchoParams(),
     val delay: DelayParams = DelayParams(),
+    val analogDelay: AnalogDelayParams = AnalogDelayParams(),
     val reverb: ReverbParams = ReverbParams()
 ) {
     val activeCount: Int
@@ -197,6 +235,7 @@ data class FxRackState(
             noiseRemoval.enabled,
             pitchSpeed.enabled,
             gain.enabled,
+            octave.enabled,
             overdrive.enabled,
             wah.enabled,
             phaser.enabled,
@@ -205,6 +244,7 @@ data class FxRackState(
             rotarySpeaker.enabled,
             echo.enabled,
             delay.enabled,
+            analogDelay.enabled,
             reverb.enabled
         ).count { it }
 }

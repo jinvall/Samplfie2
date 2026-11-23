@@ -69,12 +69,12 @@ fun FxRackScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "12-MODULE PRO DSP RACK",
+                        text = "14-MODULE PRO DSP RACK",
                         style = MaterialTheme.typography.titleMedium,
                         color = TextPrimary
                     )
                     Text(
-                        text = "${fxRack.activeCount}/12 ACTIVE • ${if (fxRack.masterBypass) "A/B DRY BYPASS" else "FX ENGAGED"}",
+                        text = "${fxRack.activeCount}/14 ACTIVE • ${if (fxRack.masterBypass) "A/B DRY BYPASS" else "FX ENGAGED"}",
                         style = MaterialTheme.typography.labelSmall,
                         color = if (fxRack.masterBypass) AmberHot else NeonCyan
                     )
@@ -127,12 +127,19 @@ fun FxRackScreen(
         // 1. Noise Removal (Expanded)
         FxModuleCard(
             title = "1. NOISE REMOVAL",
-            subtitle = "Variable HPF + Attack/Release/Knee Gate",
+            subtitle = "Variable HPF + Attack/Release/Knee Gate + Level",
             enabled = fxRack.noiseRemoval.enabled,
             accentColor = EmeraldSignal,
             testTag = "fx_toggle_noise_removal",
             onToggle = { onUpdateFxRack { copy(noiseRemoval = noiseRemoval.copy(enabled = it)) } }
         ) {
+            HardwareChipToggle(
+                label = "HIGH-PASS FILTER",
+                selected = fxRack.noiseRemoval.highPass80Hz,
+                onClick = { onUpdateFxRack { copy(noiseRemoval = noiseRemoval.copy(enabled = true, highPass80Hz = !noiseRemoval.highPass80Hz)) } },
+                accentColor = EmeraldSignal
+            )
+            Spacer(modifier = Modifier.height(4.dp))
             HardwareParameterSlider(
                 label = "THRESHOLD",
                 valueText = "${fxRack.noiseRemoval.thresholdDb.toInt()} dB",
@@ -154,8 +161,17 @@ fun FxRackScreen(
                 valueText = "${fxRack.noiseRemoval.highPassFreqHz.toInt()} Hz",
                 value = fxRack.noiseRemoval.highPassFreqHz,
                 valueRange = 30f..250f,
+                enabled = fxRack.noiseRemoval.highPass80Hz,
                 accentColor = EmeraldSignal,
                 onValueChange = { v -> onUpdateFxRack { copy(noiseRemoval = noiseRemoval.copy(enabled = true, highPass80Hz = true, highPassFreqHz = v)) } }
+            )
+            HardwareParameterSlider(
+                label = "ATTACK",
+                valueText = "${"%.1f".format(fxRack.noiseRemoval.attackMs)} ms",
+                value = fxRack.noiseRemoval.attackMs,
+                valueRange = 0.5f..25f,
+                accentColor = EmeraldSignal,
+                onValueChange = { v -> onUpdateFxRack { copy(noiseRemoval = noiseRemoval.copy(enabled = true, attackMs = v)) } }
             )
             HardwareParameterSlider(
                 label = "RELEASE",
@@ -165,12 +181,28 @@ fun FxRackScreen(
                 accentColor = EmeraldSignal,
                 onValueChange = { v -> onUpdateFxRack { copy(noiseRemoval = noiseRemoval.copy(enabled = true, releaseMs = v)) } }
             )
+            HardwareParameterSlider(
+                label = "KNEE WIDTH",
+                valueText = "${fxRack.noiseRemoval.kneeWidthDb.toInt()} dB",
+                value = fxRack.noiseRemoval.kneeWidthDb,
+                valueRange = 0f..18f,
+                accentColor = EmeraldSignal,
+                onValueChange = { v -> onUpdateFxRack { copy(noiseRemoval = noiseRemoval.copy(enabled = true, kneeWidthDb = v)) } }
+            )
+            HardwareParameterSlider(
+                label = "LEVEL GAIN",
+                valueText = "${(fxRack.noiseRemoval.level * 100).toInt()}%",
+                value = fxRack.noiseRemoval.level,
+                valueRange = 0f..2f,
+                accentColor = EmeraldSignal,
+                onValueChange = { v -> onUpdateFxRack { copy(noiseRemoval = noiseRemoval.copy(enabled = true, level = v)) } }
+            )
         }
 
         // 2. Pitch & Speed (Expanded)
         FxModuleCard(
             title = "2. PITCH & SPEED",
-            subtitle = "WSOLA Grain + Fine Cents + Vinyl Link",
+            subtitle = "WSOLA Grain + Fine Cents + Vinyl Link + Level",
             enabled = fxRack.pitchSpeed.enabled,
             accentColor = NeonCyan,
             testTag = "fx_toggle_pitch_speed",
@@ -202,18 +234,36 @@ fun FxRackScreen(
                 accentColor = NeonCyan,
                 onValueChange = { v -> onUpdateFxRack { copy(pitchSpeed = pitchSpeed.copy(enabled = true, speedFactor = v)) } }
             )
+            HardwareParameterSlider(
+                label = "GRAIN SIZE",
+                valueText = "${fxRack.pitchSpeed.grainSizeMs.toInt()} ms",
+                value = fxRack.pitchSpeed.grainSizeMs,
+                valueRange = 12f..80f,
+                enabled = !fxRack.pitchSpeed.vinylLink,
+                accentColor = NeonCyan,
+                onValueChange = { v -> onUpdateFxRack { copy(pitchSpeed = pitchSpeed.copy(enabled = true, grainSizeMs = v)) } }
+            )
             HardwareChipToggle(
                 label = "VINYL TURNTABLE LINK (PITCH = SPEED)",
                 selected = fxRack.pitchSpeed.vinylLink,
                 onClick = { onUpdateFxRack { copy(pitchSpeed = pitchSpeed.copy(enabled = true, vinylLink = !pitchSpeed.vinylLink)) } },
                 accentColor = NeonCyan
             )
+            Spacer(modifier = Modifier.height(4.dp))
+            HardwareParameterSlider(
+                label = "LEVEL GAIN",
+                valueText = "${(fxRack.pitchSpeed.level * 100).toInt()}%",
+                value = fxRack.pitchSpeed.level,
+                valueRange = 0f..2f,
+                accentColor = NeonCyan,
+                onValueChange = { v -> onUpdateFxRack { copy(pitchSpeed = pitchSpeed.copy(enabled = true, level = v)) } }
+            )
         }
 
         // 3. Gain & Dynamics (Expanded)
         FxModuleCard(
             title = "3. GAIN & DYNAMICS",
-            subtitle = "Compressor + Limiter Ceiling + Stereo Width",
+            subtitle = "Compressor + Limiter Ceiling + Stereo Width + Level",
             enabled = fxRack.gain.enabled,
             accentColor = EmeraldSignal,
             testTag = "fx_toggle_gain",
@@ -234,6 +284,15 @@ fun FxRackScreen(
                 valueRange = 1f..6f,
                 accentColor = EmeraldSignal,
                 onValueChange = { v -> onUpdateFxRack { copy(gain = gain.copy(enabled = true, compressionRatio = v)) } }
+            )
+            HardwareParameterSlider(
+                label = "LIMITER CEILING",
+                valueText = "${"%.1f".format(fxRack.gain.limiterCeilingDb)} dB",
+                value = fxRack.gain.limiterCeilingDb,
+                valueRange = -6f..0f,
+                enabled = fxRack.gain.softLimiter,
+                accentColor = AmberHot,
+                onValueChange = { v -> onUpdateFxRack { copy(gain = gain.copy(enabled = true, softLimiter = true, limiterCeilingDb = v)) } }
             )
             HardwareParameterSlider(
                 label = "STEREO WIDTH",
@@ -257,12 +316,72 @@ fun FxRackScreen(
                     accentColor = AmberHot
                 )
             }
+            Spacer(modifier = Modifier.height(4.dp))
+            HardwareParameterSlider(
+                label = "LEVEL GAIN",
+                valueText = "${(fxRack.gain.level * 100).toInt()}%",
+                value = fxRack.gain.level,
+                valueRange = 0f..2f,
+                accentColor = EmeraldSignal,
+                onValueChange = { v -> onUpdateFxRack { copy(gain = gain.copy(enabled = true, level = v)) } }
+            )
         }
 
-        // 4. Overdrive (Expanded)
+        // 4. Octave (-1 Oct / +1 Oct)
         FxModuleCard(
-            title = "4. OVERDRIVE",
-            subtitle = "Pre-HPF + Asymmetric Tube Bias + Tone LPF",
+            title = "4. OCTAVE (-1 / +1 OCT)",
+            subtitle = "Warm Sub Divider (-1 Oct) + Upper Octave Harmonic + Level",
+            enabled = fxRack.octave.enabled,
+            accentColor = VioletMod,
+            testTag = "fx_toggle_octave",
+            onToggle = { onUpdateFxRack { copy(octave = octave.copy(enabled = it)) } }
+        ) {
+            HardwareParameterSlider(
+                label = "SUB (-1 OCTAVE)",
+                valueText = "${(fxRack.octave.subOctaveMix * 100).toInt()}%",
+                value = fxRack.octave.subOctaveMix,
+                valueRange = 0f..1f,
+                accentColor = VioletMod,
+                onValueChange = { v -> onUpdateFxRack { copy(octave = octave.copy(enabled = true, subOctaveMix = v)) } }
+            )
+            HardwareParameterSlider(
+                label = "UPPER (+1 OCTAVE)",
+                valueText = "${(fxRack.octave.octaveUpMix * 100).toInt()}%",
+                value = fxRack.octave.octaveUpMix,
+                valueRange = 0f..1f,
+                accentColor = VioletMod,
+                onValueChange = { v -> onUpdateFxRack { copy(octave = octave.copy(enabled = true, octaveUpMix = v)) } }
+            )
+            HardwareParameterSlider(
+                label = "SUB LPF TONE",
+                valueText = "${fxRack.octave.subToneHz.toInt()} Hz",
+                value = fxRack.octave.subToneHz,
+                valueRange = 250f..2400f,
+                accentColor = VioletMod,
+                onValueChange = { v -> onUpdateFxRack { copy(octave = octave.copy(enabled = true, subToneHz = v)) } }
+            )
+            HardwareParameterSlider(
+                label = "DRY BLEND",
+                valueText = "${(fxRack.octave.dryMix * 100).toInt()}%",
+                value = fxRack.octave.dryMix,
+                valueRange = 0f..1f,
+                accentColor = VioletMod,
+                onValueChange = { v -> onUpdateFxRack { copy(octave = octave.copy(enabled = true, dryMix = v)) } }
+            )
+            HardwareParameterSlider(
+                label = "LEVEL GAIN",
+                valueText = "${(fxRack.octave.level * 100).toInt()}%",
+                value = fxRack.octave.level,
+                valueRange = 0f..2f,
+                accentColor = VioletMod,
+                onValueChange = { v -> onUpdateFxRack { copy(octave = octave.copy(enabled = true, level = v)) } }
+            )
+        }
+
+        // 5. Overdrive (Expanded)
+        FxModuleCard(
+            title = "5. OVERDRIVE",
+            subtitle = "Pre-HPF + Asymmetric Tube Bias + Tone LPF + Level",
             enabled = fxRack.overdrive.enabled,
             accentColor = TacCoral,
             testTag = "fx_toggle_overdrive",
@@ -285,6 +404,14 @@ fun FxRackScreen(
                 onValueChange = { v -> onUpdateFxRack { copy(overdrive = overdrive.copy(enabled = true, asymmetry = v)) } }
             )
             HardwareParameterSlider(
+                label = "PRE-HPF CUTOFF",
+                valueText = "${fxRack.overdrive.preHighPassHz.toInt()} Hz",
+                value = fxRack.overdrive.preHighPassHz,
+                valueRange = 30f..450f,
+                accentColor = TacCoral,
+                onValueChange = { v -> onUpdateFxRack { copy(overdrive = overdrive.copy(enabled = true, preHighPassHz = v)) } }
+            )
+            HardwareParameterSlider(
                 label = "TONE LPF",
                 valueText = "${fxRack.overdrive.toneHz.toInt()} Hz",
                 value = fxRack.overdrive.toneHz,
@@ -300,12 +427,20 @@ fun FxRackScreen(
                 accentColor = TacCoral,
                 onValueChange = { v -> onUpdateFxRack { copy(overdrive = overdrive.copy(enabled = true, mix = v)) } }
             )
+            HardwareParameterSlider(
+                label = "LEVEL GAIN",
+                valueText = "${(fxRack.overdrive.level * 100).toInt()}%",
+                value = fxRack.overdrive.level,
+                valueRange = 0f..2f,
+                accentColor = TacCoral,
+                onValueChange = { v -> onUpdateFxRack { copy(overdrive = overdrive.copy(enabled = true, level = v)) } }
+            )
         }
 
-        // 5. Wah (Expanded with Mode Switch + Manual Pedal)
+        // 6. Wah (Expanded with Mode Switch + Manual Pedal + Level)
         FxModuleCard(
-            title = "5. AUTO / LFO / PEDAL WAH",
-            subtitle = "State-Variable Bandpass · 3 Sweep Modes",
+            title = "6. AUTO / LFO / PEDAL WAH",
+            subtitle = "State-Variable Bandpass · 3 Sweep Modes + Level",
             enabled = fxRack.wah.enabled,
             accentColor = AmberHot,
             testTag = "fx_toggle_wah",
@@ -356,12 +491,36 @@ fun FxRackScreen(
                 accentColor = AmberHot,
                 onValueChange = { v -> onUpdateFxRack { copy(wah = wah.copy(enabled = true, rateHz = v)) } }
             )
+            HardwareParameterSlider(
+                label = "ENV SENSITIVITY",
+                valueText = "${(fxRack.wah.envSensitivity * 100).toInt()}%",
+                value = fxRack.wah.envSensitivity,
+                valueRange = 0f..1f,
+                accentColor = AmberHot,
+                onValueChange = { v -> onUpdateFxRack { copy(wah = wah.copy(enabled = true, envSensitivity = v)) } }
+            )
+            HardwareParameterSlider(
+                label = "MIX",
+                valueText = "${(fxRack.wah.mix * 100).toInt()}%",
+                value = fxRack.wah.mix,
+                valueRange = 0f..1f,
+                accentColor = AmberHot,
+                onValueChange = { v -> onUpdateFxRack { copy(wah = wah.copy(enabled = true, mix = v)) } }
+            )
+            HardwareParameterSlider(
+                label = "LEVEL GAIN",
+                valueText = "${(fxRack.wah.level * 100).toInt()}%",
+                value = fxRack.wah.level,
+                valueRange = 0f..2f,
+                accentColor = AmberHot,
+                onValueChange = { v -> onUpdateFxRack { copy(wah = wah.copy(enabled = true, level = v)) } }
+            )
         }
 
-        // 6. Phaser (Expanded with 4/6/8 Stages + Center Freq + Stereo Offset)
+        // 7. Phaser (Expanded with 4/6/8 Stages + Center Freq + Stereo Offset + Level)
         FxModuleCard(
-            title = "6. PHASER",
-            subtitle = "4/6/8-Stage Stereo All-Pass Network",
+            title = "7. PHASER",
+            subtitle = "4/6/8-Stage Stereo All-Pass Network + Level",
             enabled = fxRack.phaser.enabled,
             accentColor = VioletMod,
             testTag = "fx_toggle_phaser",
@@ -389,6 +548,14 @@ fun FxRackScreen(
                 onValueChange = { v -> onUpdateFxRack { copy(phaser = phaser.copy(enabled = true, rateHz = v)) } }
             )
             HardwareParameterSlider(
+                label = "DEPTH",
+                valueText = "${(fxRack.phaser.depth * 100).toInt()}%",
+                value = fxRack.phaser.depth,
+                valueRange = 0f..1f,
+                accentColor = VioletMod,
+                onValueChange = { v -> onUpdateFxRack { copy(phaser = phaser.copy(enabled = true, depth = v)) } }
+            )
+            HardwareParameterSlider(
                 label = "CENTER FREQ",
                 valueText = "${fxRack.phaser.centerFreqHz.toInt()} Hz",
                 value = fxRack.phaser.centerFreqHz,
@@ -405,6 +572,14 @@ fun FxRackScreen(
                 onValueChange = { v -> onUpdateFxRack { copy(phaser = phaser.copy(enabled = true, feedback = v)) } }
             )
             HardwareParameterSlider(
+                label = "STEREO PHASE OFFSET",
+                valueText = "${(fxRack.phaser.stereoPhaseOffset * 100).toInt()}%",
+                value = fxRack.phaser.stereoPhaseOffset,
+                valueRange = 0f..1f,
+                accentColor = VioletMod,
+                onValueChange = { v -> onUpdateFxRack { copy(phaser = phaser.copy(enabled = true, stereoPhaseOffset = v)) } }
+            )
+            HardwareParameterSlider(
                 label = "MIX",
                 valueText = "${(fxRack.phaser.mix * 100).toInt()}%",
                 value = fxRack.phaser.mix,
@@ -412,9 +587,17 @@ fun FxRackScreen(
                 accentColor = VioletMod,
                 onValueChange = { v -> onUpdateFxRack { copy(phaser = phaser.copy(enabled = true, mix = v)) } }
             )
+            HardwareParameterSlider(
+                label = "LEVEL GAIN",
+                valueText = "${(fxRack.phaser.level * 100).toInt()}%",
+                value = fxRack.phaser.level,
+                valueRange = 0f..2f,
+                accentColor = VioletMod,
+                onValueChange = { v -> onUpdateFxRack { copy(phaser = phaser.copy(enabled = true, level = v)) } }
+            )
         }
 
-        // 7–12. Spatial & Modulation Cards
+        // 8–14. Spatial, Delay (Echo, Digital, Analog BBD + Reverse Delay) & Modulation Cards
         FxRackSpatialAndModCards(fxRack = fxRack, onUpdateFxRack = onUpdateFxRack)
     }
 }

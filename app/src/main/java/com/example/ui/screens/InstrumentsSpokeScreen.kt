@@ -100,6 +100,7 @@ fun InstrumentsSpokeScreen(
     onSetDrumAddonBeaterSide: (String, BeaterSide) -> Unit = { _, _ -> },
     onRouteDrumPieceToSeqLane: (String, Int, BeaterSide) -> Unit = { _, _, _ -> },
     onSendDrumPieceToDeck: (String, BeaterSide) -> Unit = { _, _ -> },
+    onToggleLaneLock: (Int) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val laneColors = listOf(NeonCyan, TacCoral, AmberHot, EmeraldSignal)
@@ -247,15 +248,23 @@ fun InstrumentsSpokeScreen(
                         style = MaterialTheme.typography.titleSmall,
                         color = if (lane.isMuted) TextMuted else laneColor
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (hasEditorAudio) {
                             HardwareChipToggle(
-                                label = "USE DECK",
+                                label = "BIND DECK",
                                 selected = false,
                                 onClick = { onAssignEditorToSeqLane(lane.id) },
-                                accentColor = NeonCyan
+                                accentColor = NeonCyan,
+                                modifier = Modifier.testTag("seq_bind_${lane.id}")
                             )
                         }
+                        HardwareChipToggle(
+                            label = if (lane.isSampleLocked) "LOCKED" else "OPEN",
+                            selected = lane.isSampleLocked,
+                            onClick = { onToggleLaneLock(lane.id) },
+                            accentColor = AmberHot,
+                            modifier = Modifier.testTag("seq_lock_${lane.id}")
+                        )
                         HardwareChipToggle(
                             label = if (lane.isMuted) "MUTED" else "ACTIVE",
                             selected = !lane.isMuted,

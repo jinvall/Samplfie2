@@ -57,7 +57,8 @@ class InstrumentsSeqPanel(
     private val onSetDrumAddonStyle: (String, DrumKitStyle) -> Unit = { _, _ -> },
     private val onSetDrumAddonBeaterSide: (String, BeaterSide) -> Unit = { _, _ -> },
     private val onRouteDrumPieceToSeqLane: (String, Int, BeaterSide) -> Unit = { _, _, _ -> },
-    private val onSendDrumPieceToDeck: (String, BeaterSide) -> Unit = { _, _ -> }
+    private val onSendDrumPieceToDeck: (String, BeaterSide) -> Unit = { _, _ -> },
+    private val onToggleLaneLock: (Int) -> Unit = {}
 ) : JPanel() {
 
     private val drumKitPanel = DesktopDrumKitPanel(
@@ -99,6 +100,7 @@ class InstrumentsSeqPanel(
     private val stepButtons = Array(4) { arrayOfNulls<JButton>(16) }
     private val laneNameLabels = arrayOfNulls<javax.swing.JLabel>(4)
     private val laneMuteButtons = arrayOfNulls<JButton>(4)
+    private val laneLockButtons = arrayOfNulls<JButton>(4)
 
     init {
         background = StudioTheme.ObsidianChassis
@@ -170,7 +172,7 @@ class InstrumentsSeqPanel(
                 }.apply {
                     isOpaque = false
                     val leftCtrl = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 4, 2).apply {
-                        StudioTheme.setScaledPrefSize(this, 240, 40)
+                        StudioTheme.setScaledPrefSize(this, 310, 40)
                         val nameLbl = StudioTheme.hardwareLabel("LANE ${laneId + 1}", StudioTheme.TextPrimary, StudioTheme.MonoFont).apply {
                             StudioTheme.setScaledPrefSize(this, 96, 26)
                         }
@@ -182,9 +184,14 @@ class InstrumentsSeqPanel(
                         val useDeckBtn = StudioTheme.hardwareButton("DECK", StudioTheme.NeonCyan) { onAssignDeckToLane(laneId) }.apply {
                             StudioTheme.setScaledPrefSize(this, 68, 28)
                         }
+                        val lockBtn = StudioTheme.hardwareButton("OPEN", StudioTheme.TextSecondary) { onToggleLaneLock(laneId) }.apply {
+                            StudioTheme.setScaledPrefSize(this, 66, 28)
+                        }
+                        laneLockButtons[laneId] = lockBtn
                         add(nameLbl)
                         add(muteBtn)
                         add(useDeckBtn)
+                        add(lockBtn)
                     }
 
                     val stepsGrid = JPanel(GridLayout(1, 16, StudioTheme.s(4), 0)).apply {
@@ -235,9 +242,13 @@ class InstrumentsSeqPanel(
         try {
             lastSeqState = seq
             playSeqBtn.text = if (seq.isPlaying) "STOP SEQ" else "RUN SEQ"
-            bpmSlider.value = seq.bpm.toInt().coerceIn(60, 180)
+            if (!bpmSlider.valueIsAdjusting) {
+                bpmSlider.value = seq.bpm.toInt().coerceIn(60, 180)
+            }
             bpmLabel.text = "${seq.bpm.toInt()} BPM"
-            swingSlider.value = (seq.swing * 100f).toInt().coerceIn(0, 45)
+            if (!swingSlider.valueIsAdjusting) {
+                swingSlider.value = (seq.swing * 100f).toInt().coerceIn(0, 45)
+            }
             swingLabel.text = "SWING ${(seq.swing * 100f).toInt()}%"
             companionRxBtn.text = if (seq.companionOverdubRx) {
                 "COMPANION RX: ON (STEP ${seq.companionStepCursor + 1})"
@@ -249,6 +260,10 @@ class InstrumentsSeqPanel(
             seq.lanes.forEachIndexed { laneIdx, lane ->
                 laneNameLabels[laneIdx]?.text = lane.name
                 laneMuteButtons[laneIdx]?.text = if (lane.isMuted) "MUTED" else "M"
+                laneLockButtons[laneIdx]?.let { lb ->
+                    lb.text = if (lane.isSampleLocked) "LOCK" else "OPEN"
+                    lb.foreground = if (lane.isSampleLocked) StudioTheme.AmberHot else StudioTheme.TextSecondary
+                }
                 for (step in 0 until 16) {
                     val btn = stepButtons[laneIdx][step] ?: continue
                     val on = lane.steps.getOrElse(step) { false }

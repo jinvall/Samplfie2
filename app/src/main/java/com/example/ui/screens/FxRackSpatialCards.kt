@@ -88,10 +88,10 @@ internal fun FxRackSpatialAndModCards(
     fxRack: FxRackState,
     onUpdateFxRack: (FxRackState.() -> FxRackState) -> Unit
 ) {
-    // 7. Flanger
+    // 8. Flanger
     FxModuleCard(
-        title = "7. FLANGER",
-        subtitle = "Jet-Sweep Comb + Manual Sweep & Stereo Spread",
+        title = "8. FLANGER",
+        subtitle = "Jet-Sweep Comb + Manual Sweep, Stereo Spread & Level",
         enabled = fxRack.flanger.enabled,
         accentColor = MagentaFx,
         testTag = "fx_toggle_flanger",
@@ -137,12 +137,28 @@ internal fun FxRackSpatialAndModCards(
             accentColor = MagentaFx,
             onValueChange = { v -> onUpdateFxRack { copy(flanger = flanger.copy(enabled = true, stereoSpread = v)) } }
         )
+        HardwareParameterSlider(
+            label = "MIX",
+            valueText = "${(fxRack.flanger.mix * 100).toInt()}%",
+            value = fxRack.flanger.mix,
+            valueRange = 0f..1f,
+            accentColor = MagentaFx,
+            onValueChange = { v -> onUpdateFxRack { copy(flanger = flanger.copy(enabled = true, mix = v)) } }
+        )
+        HardwareParameterSlider(
+            label = "LEVEL GAIN",
+            valueText = "${(fxRack.flanger.level * 100).toInt()}%",
+            value = fxRack.flanger.level,
+            valueRange = 0f..2f,
+            accentColor = MagentaFx,
+            onValueChange = { v -> onUpdateFxRack { copy(flanger = flanger.copy(enabled = true, level = v)) } }
+        )
     }
 
-    // 8. Chorus
+    // 9. Chorus
     FxModuleCard(
-        title = "8. CHORUS",
-        subtitle = "2–4 Voice Ensemble + High-Cut Filter",
+        title = "9. CHORUS",
+        subtitle = "2–4 Voice Ensemble + High-Cut Filter + Level",
         enabled = fxRack.chorus.enabled,
         accentColor = NeonCyan,
         testTag = "fx_toggle_chorus",
@@ -170,6 +186,14 @@ internal fun FxRackSpatialAndModCards(
             onValueChange = { v -> onUpdateFxRack { copy(chorus = chorus.copy(enabled = true, rateHz = v)) } }
         )
         HardwareParameterSlider(
+            label = "BASE DELAY",
+            valueText = "${fxRack.chorus.baseDelayMs.toInt()} ms",
+            value = fxRack.chorus.baseDelayMs,
+            valueRange = 5f..30f,
+            accentColor = NeonCyan,
+            onValueChange = { v -> onUpdateFxRack { copy(chorus = chorus.copy(enabled = true, baseDelayMs = v)) } }
+        )
+        HardwareParameterSlider(
             label = "DEPTH",
             valueText = "${"%.1f".format(fxRack.chorus.depthMs)} ms",
             value = fxRack.chorus.depthMs,
@@ -193,12 +217,20 @@ internal fun FxRackSpatialAndModCards(
             accentColor = NeonCyan,
             onValueChange = { v -> onUpdateFxRack { copy(chorus = chorus.copy(enabled = true, mix = v)) } }
         )
+        HardwareParameterSlider(
+            label = "LEVEL GAIN",
+            valueText = "${(fxRack.chorus.level * 100).toInt()}%",
+            value = fxRack.chorus.level,
+            valueRange = 0f..2f,
+            accentColor = NeonCyan,
+            onValueChange = { v -> onUpdateFxRack { copy(chorus = chorus.copy(enabled = true, level = v)) } }
+        )
     }
 
-    // 9. Rotary Speaker
+    // 10. Rotary Speaker
     FxModuleCard(
-        title = "9. ROTARY SPEAKER",
-        subtitle = "Leslie Horn + Drum · Fast/Brake + Drive",
+        title = "10. ROTARY SPEAKER",
+        subtitle = "Leslie Horn + Drum · Fast/Brake + Drive + Level",
         enabled = fxRack.rotarySpeaker.enabled,
         accentColor = AmberHot,
         testTag = "fx_toggle_rotary",
@@ -228,12 +260,28 @@ internal fun FxRackSpatialAndModCards(
             onValueChange = { v -> onUpdateFxRack { copy(rotarySpeaker = rotarySpeaker.copy(enabled = true, rateHz = v)) } }
         )
         HardwareParameterSlider(
+            label = "DOPPLER DEPTH",
+            valueText = "${(fxRack.rotarySpeaker.depth * 100).toInt()}%",
+            value = fxRack.rotarySpeaker.depth,
+            valueRange = 0f..1f,
+            accentColor = AmberHot,
+            onValueChange = { v -> onUpdateFxRack { copy(rotarySpeaker = rotarySpeaker.copy(enabled = true, depth = v)) } }
+        )
+        HardwareParameterSlider(
             label = "CROSSOVER",
             valueText = "${fxRack.rotarySpeaker.crossoverHz.toInt()} Hz",
             value = fxRack.rotarySpeaker.crossoverHz,
             valueRange = 400f..1600f,
             accentColor = AmberHot,
             onValueChange = { v -> onUpdateFxRack { copy(rotarySpeaker = rotarySpeaker.copy(enabled = true, crossoverHz = v)) } }
+        )
+        HardwareParameterSlider(
+            label = "HORN BALANCE",
+            valueText = "${(fxRack.rotarySpeaker.hornBalance * 100).toInt()}%",
+            value = fxRack.rotarySpeaker.hornBalance,
+            valueRange = 0f..1f,
+            accentColor = AmberHot,
+            onValueChange = { v -> onUpdateFxRack { copy(rotarySpeaker = rotarySpeaker.copy(enabled = true, hornBalance = v)) } }
         )
         HardwareParameterSlider(
             label = "CABINET DRIVE",
@@ -251,17 +299,33 @@ internal fun FxRackSpatialAndModCards(
             accentColor = AmberHot,
             onValueChange = { v -> onUpdateFxRack { copy(rotarySpeaker = rotarySpeaker.copy(enabled = true, mix = v)) } }
         )
+        HardwareParameterSlider(
+            label = "LEVEL GAIN",
+            valueText = "${(fxRack.rotarySpeaker.level * 100).toInt()}%",
+            value = fxRack.rotarySpeaker.level,
+            valueRange = 0f..2f,
+            accentColor = AmberHot,
+            onValueChange = { v -> onUpdateFxRack { copy(rotarySpeaker = rotarySpeaker.copy(enabled = true, level = v)) } }
+        )
     }
 
-    // 10. Echo
+    // 11. Echo (+ Reverse Delay)
     FxModuleCard(
-        title = "10. TAPE ECHO",
-        subtitle = "Wow/Flutter + Tape Saturation + Damping",
+        title = "11. TAPE ECHO",
+        subtitle = "Wow/Flutter + Tape Sat + Reverse Delay + Level",
         enabled = fxRack.echo.enabled,
         accentColor = NeonCyan,
         testTag = "fx_toggle_echo",
         onToggle = { onUpdateFxRack { copy(echo = echo.copy(enabled = it)) } }
     ) {
+        HardwareChipToggle(
+            label = "REVERSE DELAY",
+            selected = fxRack.echo.reverseDelay,
+            onClick = { onUpdateFxRack { copy(echo = echo.copy(enabled = true, reverseDelay = !echo.reverseDelay)) } },
+            accentColor = MagentaFx,
+            modifier = Modifier.testTag("fx_echo_reverse")
+        )
+        Spacer(modifier = Modifier.height(4.dp))
         HardwareParameterSlider(
             label = "ECHO TIME",
             valueText = "${fxRack.echo.delayMs.toInt()} ms",
@@ -277,6 +341,14 @@ internal fun FxRackSpatialAndModCards(
             valueRange = 0f..0.88f,
             accentColor = NeonCyan,
             onValueChange = { v -> onUpdateFxRack { copy(echo = echo.copy(enabled = true, feedback = v)) } }
+        )
+        HardwareParameterSlider(
+            label = "HF DAMPING",
+            valueText = "${(fxRack.echo.damping * 100).toInt()}%",
+            value = fxRack.echo.damping,
+            valueRange = 0f..0.95f,
+            accentColor = NeonCyan,
+            onValueChange = { v -> onUpdateFxRack { copy(echo = echo.copy(enabled = true, damping = v)) } }
         )
         HardwareParameterSlider(
             label = "WOW & FLUTTER",
@@ -302,18 +374,33 @@ internal fun FxRackSpatialAndModCards(
             accentColor = NeonCyan,
             onValueChange = { v -> onUpdateFxRack { copy(echo = echo.copy(enabled = true, mix = v)) } }
         )
+        HardwareParameterSlider(
+            label = "LEVEL GAIN",
+            valueText = "${(fxRack.echo.level * 100).toInt()}%",
+            value = fxRack.echo.level,
+            valueRange = 0f..2f,
+            accentColor = NeonCyan,
+            onValueChange = { v -> onUpdateFxRack { copy(echo = echo.copy(enabled = true, level = v)) } }
+        )
     }
 
-    // 11. Delay
+    // 12. Digital Delay (+ Reverse Delay)
     FxModuleCard(
-        title = "11. DIGITAL DELAY",
-        subtitle = "BPM Sync Divisions + HP/LP Filters + Tap Spread",
+        title = "12. DIGITAL DELAY",
+        subtitle = "BPM Sync + HP/LP Filters + Reverse Delay + Level",
         enabled = fxRack.delay.enabled,
         accentColor = VioletMod,
         testTag = "fx_toggle_delay",
         onToggle = { onUpdateFxRack { copy(delay = delay.copy(enabled = it)) } }
     ) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            HardwareChipToggle(
+                label = "REVERSE DELAY",
+                selected = fxRack.delay.reverseDelay,
+                onClick = { onUpdateFxRack { copy(delay = delay.copy(enabled = true, reverseDelay = !delay.reverseDelay)) } },
+                accentColor = MagentaFx,
+                modifier = Modifier.testTag("fx_delay_reverse")
+            )
             HardwareChipToggle(
                 label = "BPM SYNC",
                 selected = fxRack.delay.bpmSync,
@@ -356,6 +443,14 @@ internal fun FxRackSpatialAndModCards(
             onValueChange = { v -> onUpdateFxRack { copy(delay = delay.copy(enabled = true, highPassHz = v)) } }
         )
         HardwareParameterSlider(
+            label = "LOW-PASS CUT",
+            valueText = "${fxRack.delay.lowPassHz.toInt()} Hz",
+            value = fxRack.delay.lowPassHz,
+            valueRange = 1200f..14000f,
+            accentColor = VioletMod,
+            onValueChange = { v -> onUpdateFxRack { copy(delay = delay.copy(enabled = true, lowPassHz = v)) } }
+        )
+        HardwareParameterSlider(
             label = "TAP SPREAD",
             valueText = "${(fxRack.delay.stereoSpread * 100).toInt()}%",
             value = fxRack.delay.stereoSpread,
@@ -371,12 +466,103 @@ internal fun FxRackSpatialAndModCards(
             accentColor = VioletMod,
             onValueChange = { v -> onUpdateFxRack { copy(delay = delay.copy(enabled = true, mix = v)) } }
         )
+        HardwareParameterSlider(
+            label = "LEVEL GAIN",
+            valueText = "${(fxRack.delay.level * 100).toInt()}%",
+            value = fxRack.delay.level,
+            valueRange = 0f..2f,
+            accentColor = VioletMod,
+            onValueChange = { v -> onUpdateFxRack { copy(delay = delay.copy(enabled = true, level = v)) } }
+        )
     }
 
-    // 12. Reverb
+    // 13. Analog BBD Delay (+ Reverse Delay)
     FxModuleCard(
-        title = "12. HALL REVERB",
-        subtitle = "Early Reflections + Stereo Width + Low-Cut",
+        title = "13. ANALOG BBD DELAY",
+        subtitle = "Warm BBD Bucket + Compander Sat + LFO Mod + Reverse + Level",
+        enabled = fxRack.analogDelay.enabled,
+        accentColor = AmberHot,
+        testTag = "fx_toggle_analog_delay",
+        onToggle = { onUpdateFxRack { copy(analogDelay = analogDelay.copy(enabled = it)) } }
+    ) {
+        HardwareChipToggle(
+            label = "REVERSE DELAY",
+            selected = fxRack.analogDelay.reverseDelay,
+            onClick = { onUpdateFxRack { copy(analogDelay = analogDelay.copy(enabled = true, reverseDelay = !analogDelay.reverseDelay)) } },
+            accentColor = MagentaFx,
+            modifier = Modifier.testTag("fx_analog_delay_reverse")
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        HardwareParameterSlider(
+            label = "BBD TIME",
+            valueText = "${fxRack.analogDelay.delayMs.toInt()} ms",
+            value = fxRack.analogDelay.delayMs,
+            valueRange = 30f..1000f,
+            accentColor = AmberHot,
+            onValueChange = { v -> onUpdateFxRack { copy(analogDelay = analogDelay.copy(enabled = true, delayMs = v)) } }
+        )
+        HardwareParameterSlider(
+            label = "FEEDBACK",
+            valueText = "${(fxRack.analogDelay.feedback * 100).toInt()}%",
+            value = fxRack.analogDelay.feedback,
+            valueRange = 0f..0.92f,
+            accentColor = AmberHot,
+            onValueChange = { v -> onUpdateFxRack { copy(analogDelay = analogDelay.copy(enabled = true, feedback = v)) } }
+        )
+        HardwareParameterSlider(
+            label = "WARMTH LPF",
+            valueText = "${fxRack.analogDelay.warmthHz.toInt()} Hz",
+            value = fxRack.analogDelay.warmthHz,
+            valueRange = 600f..6500f,
+            accentColor = AmberHot,
+            onValueChange = { v -> onUpdateFxRack { copy(analogDelay = analogDelay.copy(enabled = true, warmthHz = v)) } }
+        )
+        HardwareParameterSlider(
+            label = "COMPANDER SAT",
+            valueText = "${(fxRack.analogDelay.saturation * 100).toInt()}%",
+            value = fxRack.analogDelay.saturation,
+            valueRange = 0f..1f,
+            accentColor = AmberHot,
+            onValueChange = { v -> onUpdateFxRack { copy(analogDelay = analogDelay.copy(enabled = true, saturation = v)) } }
+        )
+        HardwareParameterSlider(
+            label = "CLOCK MOD DEPTH",
+            valueText = "${(fxRack.analogDelay.modDepth * 100).toInt()}%",
+            value = fxRack.analogDelay.modDepth,
+            valueRange = 0f..1f,
+            accentColor = AmberHot,
+            onValueChange = { v -> onUpdateFxRack { copy(analogDelay = analogDelay.copy(enabled = true, modDepth = v)) } }
+        )
+        HardwareParameterSlider(
+            label = "MOD RATE",
+            valueText = "${"%.2f".format(fxRack.analogDelay.modRateHz)} Hz",
+            value = fxRack.analogDelay.modRateHz,
+            valueRange = 0.1f..4f,
+            accentColor = AmberHot,
+            onValueChange = { v -> onUpdateFxRack { copy(analogDelay = analogDelay.copy(enabled = true, modRateHz = v)) } }
+        )
+        HardwareParameterSlider(
+            label = "MIX",
+            valueText = "${(fxRack.analogDelay.mix * 100).toInt()}%",
+            value = fxRack.analogDelay.mix,
+            valueRange = 0f..1f,
+            accentColor = AmberHot,
+            onValueChange = { v -> onUpdateFxRack { copy(analogDelay = analogDelay.copy(enabled = true, mix = v)) } }
+        )
+        HardwareParameterSlider(
+            label = "LEVEL GAIN",
+            valueText = "${(fxRack.analogDelay.level * 100).toInt()}%",
+            value = fxRack.analogDelay.level,
+            valueRange = 0f..2f,
+            accentColor = AmberHot,
+            onValueChange = { v -> onUpdateFxRack { copy(analogDelay = analogDelay.copy(enabled = true, level = v)) } }
+        )
+    }
+
+    // 14. Reverb
+    FxModuleCard(
+        title = "14. HALL REVERB",
+        subtitle = "Early Reflections + Stereo Width + Low-Cut + Level",
         enabled = fxRack.reverb.enabled,
         accentColor = EmeraldSignal,
         testTag = "fx_toggle_reverb",
@@ -391,12 +577,36 @@ internal fun FxRackSpatialAndModCards(
             onValueChange = { v -> onUpdateFxRack { copy(reverb = reverb.copy(enabled = true, roomSize = v)) } }
         )
         HardwareParameterSlider(
+            label = "PRE-DELAY",
+            valueText = "${fxRack.reverb.preDelayMs.toInt()} ms",
+            value = fxRack.reverb.preDelayMs,
+            valueRange = 0f..80f,
+            accentColor = EmeraldSignal,
+            onValueChange = { v -> onUpdateFxRack { copy(reverb = reverb.copy(enabled = true, preDelayMs = v)) } }
+        )
+        HardwareParameterSlider(
             label = "EARLY REFLECTIONS",
             valueText = "${(fxRack.reverb.earlyReflections * 100).toInt()}%",
             value = fxRack.reverb.earlyReflections,
             valueRange = 0f..1f,
             accentColor = EmeraldSignal,
             onValueChange = { v -> onUpdateFxRack { copy(reverb = reverb.copy(enabled = true, earlyReflections = v)) } }
+        )
+        HardwareParameterSlider(
+            label = "HF DAMPING",
+            valueText = "${(fxRack.reverb.damping * 100).toInt()}%",
+            value = fxRack.reverb.damping,
+            valueRange = 0f..0.95f,
+            accentColor = EmeraldSignal,
+            onValueChange = { v -> onUpdateFxRack { copy(reverb = reverb.copy(enabled = true, damping = v)) } }
+        )
+        HardwareParameterSlider(
+            label = "LOW-CUT HPF",
+            valueText = "${fxRack.reverb.lowCutHz.toInt()} Hz",
+            value = fxRack.reverb.lowCutHz,
+            valueRange = 20f..500f,
+            accentColor = EmeraldSignal,
+            onValueChange = { v -> onUpdateFxRack { copy(reverb = reverb.copy(enabled = true, lowCutHz = v)) } }
         )
         HardwareParameterSlider(
             label = "STEREO WIDTH",
@@ -407,20 +617,20 @@ internal fun FxRackSpatialAndModCards(
             onValueChange = { v -> onUpdateFxRack { copy(reverb = reverb.copy(enabled = true, stereoWidth = v)) } }
         )
         HardwareParameterSlider(
-            label = "PRE-DELAY",
-            valueText = "${fxRack.reverb.preDelayMs.toInt()} ms",
-            value = fxRack.reverb.preDelayMs,
-            valueRange = 0f..80f,
-            accentColor = EmeraldSignal,
-            onValueChange = { v -> onUpdateFxRack { copy(reverb = reverb.copy(enabled = true, preDelayMs = v)) } }
-        )
-        HardwareParameterSlider(
             label = "MIX",
             valueText = "${(fxRack.reverb.mix * 100).toInt()}%",
             value = fxRack.reverb.mix,
             valueRange = 0f..1f,
             accentColor = EmeraldSignal,
             onValueChange = { v -> onUpdateFxRack { copy(reverb = reverb.copy(enabled = true, mix = v)) } }
+        )
+        HardwareParameterSlider(
+            label = "LEVEL GAIN",
+            valueText = "${(fxRack.reverb.level * 100).toInt()}%",
+            value = fxRack.reverb.level,
+            valueRange = 0f..2f,
+            accentColor = EmeraldSignal,
+            onValueChange = { v -> onUpdateFxRack { copy(reverb = reverb.copy(enabled = true, level = v)) } }
         )
     }
 }

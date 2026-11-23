@@ -96,7 +96,8 @@ data class LoopSlot(
     val isActive: Boolean = false,
     val isMuted: Boolean = false,
     val bars: Int = 1,
-    val volume: Float = 0.85f
+    val volume: Float = 0.85f,
+    val isSampleLocked: Boolean = false
 )
 
 data class LooperState(
@@ -117,7 +118,8 @@ data class SequencerLane(
     val buffer: AudioBuffer,
     val steps: BooleanArray = BooleanArray(16),
     val isMuted: Boolean = false,
-    val volume: Float = 0.85f
+    val volume: Float = 0.85f,
+    val isSampleLocked: Boolean = false
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -127,6 +129,7 @@ data class SequencerLane(
             buffer == other.buffer &&
             isMuted == other.isMuted &&
             volume == other.volume &&
+            isSampleLocked == other.isSampleLocked &&
             steps.contentEquals(other.steps)
     }
 
@@ -137,6 +140,7 @@ data class SequencerLane(
         result = 31 * result + steps.contentHashCode()
         result = 31 * result + isMuted.hashCode()
         result = 31 * result + volume.hashCode()
+        result = 31 * result + isSampleLocked.hashCode()
         return result
     }
 }
@@ -295,12 +299,26 @@ class StudioEngine {
     // --- LOOPER ---
 
     fun assignBufferToLoopSlot(slotId: Int, buffer: AudioBuffer, label: String = buffer.name) {
+        val frozen = buffer.copy(samples = buffer.samples.copyOf())
         val updated = _looperState.value.slots.map { slot ->
             if (slot.id == slotId) {
-                slot.copy(buffer = buffer, label = label.take(16), isActive = true, isMuted = false)
+                slot.copy(
+                    buffer = frozen,
+                    label = label.take(16),
+                    isActive = true,
+                    isMuted = false,
+                    isSampleLocked = true
+                )
             } else {
                 slot
             }
+        }
+        _looperState.value = _looperState.value.copy(slots = updated)
+    }
+
+    fun toggleLoopSlotLock(slotId: Int) {
+        val updated = _looperState.value.slots.map { slot ->
+            if (slot.id == slotId && slot.buffer != null) slot.copy(isSampleLocked = !slot.isSampleLocked) else slot
         }
         _looperState.value = _looperState.value.copy(slots = updated)
     }
@@ -526,9 +544,29 @@ class StudioEngine {
 
     // --- 16-STEP SEQUENCER ---
 
-    fun setSequencerSampleForLane(laneId: Int, buffer: AudioBuffer) {
+    fun setSequencerSampleForLane(laneId: Int, buffer: AudioBuffer, lockSample: Boolean = true) {
+        val frozen = buffer.copy(samples = buffer.samples.copyOf())
         val updated = _sequencerState.value.lanes.map { lane ->
-            if (lane.id == laneId) lane.copy(buffer = buffer, name = buffer.name.take(12)) else lane
+            if (lane.id == laneId) {
+                lane.copy(buffer = frozen, name = frozen.name.take(12), isSampleLocked = lockSample)
+            } else lane
+        }
+        _sequencerState.value = _sequencerState.value.copy(lanes = updated)
+    }
+
+    fun setSequencerSampleIfUnlocked(laneId: Int, buffer: AudioBuffer) {
+        val frozen = buffer.copy(samples = buffer.samples.copyOf())
+        val updated = _sequencerState.value.lanes.map { lane ->
+            if (lane.id == laneId && !lane.isSampleLocked) {
+                lane.copy(buffer = frozen, name = frozen.name.take(12))
+            } else lane
+        }
+        _sequencerState.value = _sequencerState.value.copy(lanes = updated)
+    }
+
+    fun toggleSequencerLaneLock(laneId: Int) {
+        val updated = _sequencerState.value.lanes.map { lane ->
+            if (lane.id == laneId) lane.copy(isSampleLocked = !lane.isSampleLocked) else lane
         }
         _sequencerState.value = _sequencerState.value.copy(lanes = updated)
     }

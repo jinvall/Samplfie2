@@ -103,6 +103,8 @@ fun DeckEditorScreen(
     specFreqHighHz: Float = 3800f,
     onSpecFreqRangeChange: (Float, Float) -> Unit = { _, _ -> },
     onOpenTools: () -> Unit = {},
+    onFadesChange: (Float, Float) -> Unit = { _, _ -> },
+    onApplyFades: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val activeBuf = editorState.processedBuffer ?: editorState.dryBuffer
@@ -278,6 +280,42 @@ fun DeckEditorScreen(
                     ) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Reset Original WAV")
                     }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        HardwareParameterSlider(
+                            label = "FADE IN",
+                            valueText = "${editorState.fadeInMs.toInt()} ms",
+                            value = editorState.fadeInMs,
+                            valueRange = 0f..2000f,
+                            onValueChange = { onFadesChange(it, editorState.fadeOutMs) },
+                            accentColor = EmeraldSignal,
+                            testTag = "deck_fade_in_slider"
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        HardwareParameterSlider(
+                            label = "FADE OUT",
+                            valueText = "${editorState.fadeOutMs.toInt()} ms",
+                            value = editorState.fadeOutMs,
+                            valueRange = 0f..2000f,
+                            onValueChange = { onFadesChange(editorState.fadeInMs, it) },
+                            accentColor = EmeraldSignal,
+                            testTag = "deck_fade_out_slider"
+                        )
+                    }
+                    HardwareChipToggle(
+                        label = "APPLY FADES",
+                        selected = false,
+                        onClick = onApplyFades,
+                        accentColor = EmeraldSignal,
+                        modifier = Modifier.testTag("deck_apply_fades_button")
+                    )
                 }
             }
         }

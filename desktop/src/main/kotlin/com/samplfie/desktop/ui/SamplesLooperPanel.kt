@@ -47,7 +47,9 @@ class SamplesLooperPanel(
     private val onResetLoop: () -> Unit,
     private val onAuditionLoop: () -> Unit,
     private val onCommitRefiner: () -> Unit,
-    private val onSendRefinerToDeck: () -> Unit
+    private val onSendRefinerToDeck: () -> Unit,
+    private val onSetRefinerFades: (Float, Float) -> Unit = { _, _ -> },
+    private val onToggleSlotLock: (Int) -> Unit = {}
 ) : JPanel() {
 
     private var updating = false
@@ -72,6 +74,7 @@ class SamplesLooperPanel(
         val activeBtn: javax.swing.JButton,
         val muteBtn: javax.swing.JButton,
         val barsBtn: javax.swing.JButton,
+        val lockBtn: javax.swing.JButton,
         val clearBtn: javax.swing.JButton
     )
     private val slotWidgets = mutableListOf<SlotWidgets>()
@@ -80,8 +83,8 @@ class SamplesLooperPanel(
     private val refinerStatus = StudioTheme.hardwareLabel("REFINER READY", StudioTheme.EmeraldSignal, StudioTheme.MonoFont)
     private val startSlider = StudioTheme.hardwareSlider(0, 980, 0)
     private val endSlider = StudioTheme.hardwareSlider(20, 1000, 1000)
-    private val fadeInSlider = StudioTheme.hardwareSlider(0, 200, 8)
-    private val fadeOutSlider = StudioTheme.hardwareSlider(0, 200, 12)
+    private val fadeInSlider = StudioTheme.hardwareSlider(0, 2000, 8)
+    private val fadeOutSlider = StudioTheme.hardwareSlider(0, 2000, 12)
 
     init {
         background = StudioTheme.ObsidianChassis
@@ -118,7 +121,7 @@ class SamplesLooperPanel(
             for (slotId in 0 until 4) {
                 val title = StudioTheme.hardwareLabel("LOOP ${'A' + slotId}", StudioTheme.NeonCyan, StudioTheme.TitleFont)
                 val info = StudioTheme.hardwareLabel("EMPTY", StudioTheme.TextSecondary, StudioTheme.MonoFont)
-                val loadBtn = StudioTheme.hardwareButton("LOAD DECK", StudioTheme.NeonCyan) { onSendDeckToSlot(slotId) }
+                val loadBtn = StudioTheme.hardwareButton("BIND DECK", StudioTheme.NeonCyan) { onSendDeckToSlot(slotId) }
                 val refineBtn = StudioTheme.hardwareButton("REFINE", StudioTheme.EmeraldSignal) { onLoadSlotIntoRefiner(slotId) }
                 val activeBtn = StudioTheme.hardwareButton("OFF", StudioTheme.AmberHot) { onToggleSlotActive(slotId) }
                 val muteBtn = StudioTheme.hardwareButton("MUTE", StudioTheme.TacCoral) { onToggleSlotMute(slotId) }
@@ -127,8 +130,9 @@ class SamplesLooperPanel(
                     val nextBars = when (curBars) { 1 -> 2; 2 -> 4; else -> 1 }
                     onCycleSlotBars(slotId, nextBars)
                 }
+                val lockBtn = StudioTheme.hardwareButton("OPEN", StudioTheme.TextSecondary) { onToggleSlotLock(slotId) }
                 val clearBtn = StudioTheme.hardwareButton("CLR", StudioTheme.TextSecondary) { onClearSlot(slotId) }
-                slotWidgets += SlotWidgets(title, info, loadBtn, refineBtn, activeBtn, muteBtn, barsBtn, clearBtn)
+                slotWidgets += SlotWidgets(title, info, loadBtn, refineBtn, activeBtn, muteBtn, barsBtn, lockBtn, clearBtn)
 
                 val card = StudioTheme.hardwarePanel(StudioTheme.EmeraldSignal).apply {
                     layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -144,6 +148,7 @@ class SamplesLooperPanel(
                     val btnRow2 = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 6, 2).apply {
                         add(muteBtn)
                         add(barsBtn)
+                        add(lockBtn)
                         add(clearBtn)
                     }
                     add(topRow)
@@ -190,6 +195,16 @@ class SamplesLooperPanel(
                         onRefinerSelection(s, e)
                     }
                 }
+                fadeInSlider.addChangeListener {
+                    if (!updating) {
+                        onSetRefinerFades(fadeInSlider.value.toFloat(), fadeOutSlider.value.toFloat())
+                    }
+                }
+                fadeOutSlider.addChangeListener {
+                    if (!updating) {
+                        onSetRefinerFades(fadeInSlider.value.toFloat(), fadeOutSlider.value.toFloat())
+                    }
+                }
                 add(sliderBox("LOOP IN", startSlider))
                 add(sliderBox("LOOP OUT", endSlider))
                 add(sliderBox("FADE IN (ms)", fadeInSlider))
@@ -227,7 +242,9 @@ class SamplesLooperPanel(
             currentRefiner = refiner
 
             looperPlayBtn.text = if (looper.isRunning) "STOP LOOPER" else "RUN LOOPER"
-            bpmSlider.value = looper.bpm.toInt().coerceIn(60, 180)
+            if (!bpmSlider.valueIsAdjusting) {
+                bpmSlider.value = looper.bpm.toInt().coerceIn(60, 180)
+            }
             bpmLabel.text = "${looper.bpm.toInt()} BPM"
             barProgress.value = (looper.barProgress * 100f).toInt().coerceIn(0, 100)
 
@@ -239,13 +256,24 @@ class SamplesLooperPanel(
                 w.activeBtn.text = if (slot.isActive) "ACTIVE" else "OFF"
                 w.muteBtn.text = if (slot.isMuted) "MUTED" else "MUTE"
                 w.barsBtn.text = "${slot.bars}B"
+                w.lockBtn.text = if (slot.isSampleLocked) "LOCKED" else "OPEN"
+                w.lockBtn.foreground = if (slot.isSampleLocked) StudioTheme.AmberHot else StudioTheme.TextSecondary
+                w.lockBtn.isEnabled = slot.buffer != null
             }
 
             refinerStatus.text = refiner.statusNote
-            startSlider.value = (refiner.loopStartFrac * 1000f).toInt().coerceIn(0, 980)
-            endSlider.value = (refiner.loopEndFrac * 1000f).toInt().coerceIn(20, 1000)
-            fadeInSlider.value = refiner.fadeInMs.toInt().coerceIn(0, 200)
-            fadeOutSlider.value = refiner.fadeOutMs.toInt().coerceIn(0, 200)
+            if (!startSlider.valueIsAdjusting) {
+                startSlider.value = (refiner.loopStartFrac * 1000f).toInt().coerceIn(0, 980)
+            }
+            if (!endSlider.valueIsAdjusting) {
+                endSlider.value = (refiner.loopEndFrac * 1000f).toInt().coerceIn(20, 1000)
+            }
+            if (!fadeInSlider.valueIsAdjusting) {
+                fadeInSlider.value = refiner.fadeInMs.toInt().coerceIn(0, 2000)
+            }
+            if (!fadeOutSlider.valueIsAdjusting) {
+                fadeOutSlider.value = refiner.fadeOutMs.toInt().coerceIn(0, 2000)
+            }
             refinerCanvas.repaint()
         } finally {
             updating = false

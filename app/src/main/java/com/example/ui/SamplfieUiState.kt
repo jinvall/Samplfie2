@@ -36,7 +36,7 @@ enum class StudioSpoke(
     SAMPLES("SAMPLES", "LOOPER & SAMPLE REFINER", "LOOPS"),
     INSTRUMENTS("INST", "16-STEP SEQ & MIDI", "SYNTH"),
     TRACKS("TRACKS", "SYNCED TRACK TIMELINE", "SYNC"),
-    FX_RACK("FX", "12-MODULE PRO DSP RACK", "DSP"),
+    FX_RACK("FX", "14-MODULE PRO DSP RACK", "DSP"),
     LIVE("LIVE", "LIVE STOMPBOX & RELEASE", "STAGE"),
     TOOLS("TOOLS", "PRO TOOLS & PLUGINS", "PRO"),
     TUNER("TUNER", "CHROMATIC & STROBE TUNER", "PITCH"),
@@ -133,6 +133,8 @@ data class EditorState(
     val selectionStart: Float = 0f,
     val selectionEnd: Float = 1f,
     val playSelectionOnly: Boolean = false,
+    val fadeInMs: Float = 10f,
+    val fadeOutMs: Float = 15f,
     val canUndo: Boolean = false,
     val isProcessingFx: Boolean = false,
     val isImportingAudio: Boolean = false,
@@ -157,6 +159,8 @@ data class EditorState(
             selectionStart == other.selectionStart &&
             selectionEnd == other.selectionEnd &&
             playSelectionOnly == other.playSelectionOnly &&
+            fadeInMs == other.fadeInMs &&
+            fadeOutMs == other.fadeOutMs &&
             canUndo == other.canUndo &&
             isProcessingFx == other.isProcessingFx &&
             isImportingAudio == other.isImportingAudio &&
@@ -180,6 +184,8 @@ data class EditorState(
         result = 31 * result + selectionStart.hashCode()
         result = 31 * result + selectionEnd.hashCode()
         result = 31 * result + playSelectionOnly.hashCode()
+        result = 31 * result + fadeInMs.hashCode()
+        result = 31 * result + fadeOutMs.hashCode()
         result = 31 * result + canUndo.hashCode()
         result = 31 * result + isProcessingFx.hashCode()
         result = 31 * result + isImportingAudio.hashCode()

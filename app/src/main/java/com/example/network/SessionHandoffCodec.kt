@@ -2,17 +2,19 @@ package com.example.network
 
 import com.example.audio.AudioBuffer
 import com.example.audio.WavCodec
+import com.example.dsp.AnalogDelayParams
+import com.example.dsp.ChorusParams
+import com.example.dsp.DelayParams
 import com.example.dsp.EchoParams
 import com.example.dsp.FlangerParams
 import com.example.dsp.FxRackState
 import com.example.dsp.GainParams
 import com.example.dsp.LiveSessionMode
 import com.example.dsp.NoiseRemovalParams
+import com.example.dsp.OctaveParams
 import com.example.dsp.OverdriveParams
 import com.example.dsp.PhaserParams
 import com.example.dsp.PitchSpeedParams
-import com.example.dsp.DelayParams
-import com.example.dsp.ChorusParams
 import com.example.dsp.ReverbParams
 import com.example.dsp.RotaryParams
 import com.example.dsp.StompboxMasterState
@@ -68,34 +70,64 @@ data class SessionHandoffSnapshot(
             "fx.masterBypass" to fxRack.masterBypass.toString(),
             "fx.noiseGateEnabled" to fxRack.noiseRemoval.enabled.toString(),
             "fx.noiseThresholdDb" to fxRack.noiseRemoval.thresholdDb.toString(),
+            "fx.noiseLevel" to fxRack.noiseRemoval.level.toString(),
             "fx.pitchEnabled" to fxRack.pitchSpeed.enabled.toString(),
             "fx.pitchSemitones" to fxRack.pitchSpeed.pitchSemitones.toString(),
             "fx.speedFactor" to fxRack.pitchSpeed.speedFactor.toString(),
+            "fx.pitchLevel" to fxRack.pitchSpeed.level.toString(),
             "fx.gainEnabled" to fxRack.gain.enabled.toString(),
             "fx.gainDb" to fxRack.gain.gainDb.toString(),
             "fx.normalize" to fxRack.gain.normalize.toString(),
+            "fx.gainLevel" to fxRack.gain.level.toString(),
+            "fx.octaveEnabled" to fxRack.octave.enabled.toString(),
+            "fx.octaveSubMix" to fxRack.octave.subOctaveMix.toString(),
+            "fx.octaveUpMix" to fxRack.octave.octaveUpMix.toString(),
+            "fx.octaveSubToneHz" to fxRack.octave.subToneHz.toString(),
+            "fx.octaveDryMix" to fxRack.octave.dryMix.toString(),
+            "fx.octaveLevel" to fxRack.octave.level.toString(),
             "fx.overdriveEnabled" to fxRack.overdrive.enabled.toString(),
             "fx.driveAmount" to fxRack.overdrive.drive.toString(),
+            "fx.overdriveLevel" to fxRack.overdrive.level.toString(),
             "fx.wahEnabled" to fxRack.wah.enabled.toString(),
             "fx.wahFreqHz" to fxRack.wah.centerFreqHz.toString(),
+            "fx.wahLevel" to fxRack.wah.level.toString(),
             "fx.phaserEnabled" to fxRack.phaser.enabled.toString(),
             "fx.phaserMix" to fxRack.phaser.mix.toString(),
+            "fx.phaserLevel" to fxRack.phaser.level.toString(),
             "fx.flangerEnabled" to fxRack.flanger.enabled.toString(),
             "fx.flangerMix" to fxRack.flanger.mix.toString(),
+            "fx.flangerLevel" to fxRack.flanger.level.toString(),
             "fx.chorusEnabled" to fxRack.chorus.enabled.toString(),
             "fx.chorusMix" to fxRack.chorus.mix.toString(),
+            "fx.chorusLevel" to fxRack.chorus.level.toString(),
             "fx.rotaryEnabled" to fxRack.rotarySpeaker.enabled.toString(),
             "fx.rotaryRateHz" to fxRack.rotarySpeaker.rateHz.toString(),
+            "fx.rotaryLevel" to fxRack.rotarySpeaker.level.toString(),
             "fx.echoEnabled" to fxRack.echo.enabled.toString(),
             "fx.echoDelayMs" to fxRack.echo.delayMs.toString(),
             "fx.echoFeedback" to fxRack.echo.feedback.toString(),
             "fx.echoMix" to fxRack.echo.mix.toString(),
+            "fx.echoReverse" to fxRack.echo.reverseDelay.toString(),
+            "fx.echoLevel" to fxRack.echo.level.toString(),
             "fx.delayEnabled" to fxRack.delay.enabled.toString(),
             "fx.delayTimeMs" to fxRack.delay.delayMs.toString(),
+            "fx.delayFeedback" to fxRack.delay.feedback.toString(),
             "fx.delayMix" to fxRack.delay.mix.toString(),
+            "fx.delayReverse" to fxRack.delay.reverseDelay.toString(),
+            "fx.delayLevel" to fxRack.delay.level.toString(),
+            "fx.analogDelayEnabled" to fxRack.analogDelay.enabled.toString(),
+            "fx.analogDelayMs" to fxRack.analogDelay.delayMs.toString(),
+            "fx.analogDelayFeedback" to fxRack.analogDelay.feedback.toString(),
+            "fx.analogDelayWarmthHz" to fxRack.analogDelay.warmthHz.toString(),
+            "fx.analogDelaySaturation" to fxRack.analogDelay.saturation.toString(),
+            "fx.analogDelayModDepth" to fxRack.analogDelay.modDepth.toString(),
+            "fx.analogDelayMix" to fxRack.analogDelay.mix.toString(),
+            "fx.analogDelayReverse" to fxRack.analogDelay.reverseDelay.toString(),
+            "fx.analogDelayLevel" to fxRack.analogDelay.level.toString(),
             "fx.reverbEnabled" to fxRack.reverb.enabled.toString(),
             "fx.reverbSize" to fxRack.reverb.roomSize.toString(),
             "fx.reverbMix" to fxRack.reverb.mix.toString(),
+            "fx.reverbLevel" to fxRack.reverb.level.toString(),
             "stomp.engaged" to stompbox.engaged.toString(),
             "stomp.killDrive" to stompbox.killDrive.toString(),
             "stomp.killMod" to stompbox.killMod.toString(),
@@ -193,57 +225,91 @@ data class SessionHandoffSnapshot(
                 masterBypass = b("fx.masterBypass", false),
                 noiseRemoval = NoiseRemovalParams(
                     enabled = b("fx.noiseGateEnabled", false),
-                    thresholdDb = f("fx.noiseThresholdDb", -38f)
+                    thresholdDb = f("fx.noiseThresholdDb", -38f),
+                    level = f("fx.noiseLevel", 1.0f)
                 ),
                 pitchSpeed = PitchSpeedParams(
                     enabled = b("fx.pitchEnabled", false),
                     pitchSemitones = f("fx.pitchSemitones", 0f),
-                    speedFactor = f("fx.speedFactor", 1f)
+                    speedFactor = f("fx.speedFactor", 1f),
+                    level = f("fx.pitchLevel", 1.0f)
                 ),
                 gain = GainParams(
                     enabled = b("fx.gainEnabled", false),
                     gainDb = f("fx.gainDb", 0f),
-                    normalize = b("fx.normalize", false)
+                    normalize = b("fx.normalize", false),
+                    level = f("fx.gainLevel", 1.0f)
+                ),
+                octave = OctaveParams(
+                    enabled = b("fx.octaveEnabled", false),
+                    subOctaveMix = f("fx.octaveSubMix", 0.65f),
+                    octaveUpMix = f("fx.octaveUpMix", 0.35f),
+                    subToneHz = f("fx.octaveSubToneHz", 900f),
+                    dryMix = f("fx.octaveDryMix", 0.7f),
+                    level = f("fx.octaveLevel", 1.0f)
                 ),
                 overdrive = OverdriveParams(
                     enabled = b("fx.overdriveEnabled", false),
-                    drive = f("fx.driveAmount", 4f)
+                    drive = f("fx.driveAmount", 4f),
+                    level = f("fx.overdriveLevel", 1.0f)
                 ),
                 wah = WahParams(
                     enabled = b("fx.wahEnabled", false),
-                    centerFreqHz = f("fx.wahFreqHz", 950f)
+                    centerFreqHz = f("fx.wahFreqHz", 950f),
+                    level = f("fx.wahLevel", 1.0f)
                 ),
                 phaser = PhaserParams(
                     enabled = b("fx.phaserEnabled", false),
-                    mix = f("fx.phaserMix", 0.6f)
+                    mix = f("fx.phaserMix", 0.6f),
+                    level = f("fx.phaserLevel", 1.0f)
                 ),
                 flanger = FlangerParams(
                     enabled = b("fx.flangerEnabled", false),
-                    mix = f("fx.flangerMix", 0.55f)
+                    mix = f("fx.flangerMix", 0.55f),
+                    level = f("fx.flangerLevel", 1.0f)
                 ),
                 chorus = ChorusParams(
                     enabled = b("fx.chorusEnabled", false),
-                    mix = f("fx.chorusMix", 0.5f)
+                    mix = f("fx.chorusMix", 0.5f),
+                    level = f("fx.chorusLevel", 1.0f)
                 ),
                 rotarySpeaker = RotaryParams(
                     enabled = b("fx.rotaryEnabled", false),
-                    rateHz = f("fx.rotaryRateHz", 3.8f)
+                    rateHz = f("fx.rotaryRateHz", 3.8f),
+                    level = f("fx.rotaryLevel", 1.0f)
                 ),
                 echo = EchoParams(
                     enabled = b("fx.echoEnabled", false),
                     delayMs = f("fx.echoDelayMs", 320f),
                     feedback = f("fx.echoFeedback", 0.45f),
-                    mix = f("fx.echoMix", 0.45f)
+                    mix = f("fx.echoMix", 0.45f),
+                    reverseDelay = b("fx.echoReverse", false),
+                    level = f("fx.echoLevel", 1.0f)
                 ),
                 delay = DelayParams(
                     enabled = b("fx.delayEnabled", false),
                     delayMs = f("fx.delayTimeMs", 240f),
-                    mix = f("fx.delayMix", 0.4f)
+                    feedback = f("fx.delayFeedback", 0.4f),
+                    mix = f("fx.delayMix", 0.4f),
+                    reverseDelay = b("fx.delayReverse", false),
+                    level = f("fx.delayLevel", 1.0f)
+                ),
+                analogDelay = AnalogDelayParams(
+                    enabled = b("fx.analogDelayEnabled", false),
+                    delayMs = f("fx.analogDelayMs", 310f),
+                    feedback = f("fx.analogDelayFeedback", 0.52f),
+                    warmthHz = f("fx.analogDelayWarmthHz", 2400f),
+                    saturation = f("fx.analogDelaySaturation", 0.35f),
+                    modDepth = f("fx.analogDelayModDepth", 0.3f),
+                    mix = f("fx.analogDelayMix", 0.45f),
+                    reverseDelay = b("fx.analogDelayReverse", false),
+                    level = f("fx.analogDelayLevel", 1.0f)
                 ),
                 reverb = ReverbParams(
                     enabled = b("fx.reverbEnabled", false),
                     roomSize = f("fx.reverbSize", 0.65f),
-                    mix = f("fx.reverbMix", 0.35f)
+                    mix = f("fx.reverbMix", 0.35f),
+                    level = f("fx.reverbLevel", 1.0f)
                 )
             )
 

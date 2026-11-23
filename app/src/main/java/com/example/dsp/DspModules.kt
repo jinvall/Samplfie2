@@ -13,7 +13,7 @@ import kotlin.math.sqrt
 import kotlin.math.tanh
 
 /**
- * Collection of 12 pure-Kotlin floating-point audio DSP processors + Stompbox master Tilt EQ.
+ * Collection of 14 pure-Kotlin floating-point audio DSP processors + Stompbox master Tilt EQ.
  */
 object DspModules {
 
@@ -81,8 +81,9 @@ object DspModules {
                 }
             }
 
+            val levelGain = params.level.coerceIn(0f, 2f)
             for (c in 0 until channels) {
-                out[f * channels + c] *= gain
+                out[f * channels + c] = (out[f * channels + c] * gain * levelGain).coerceIn(-1f, 1f)
             }
         }
         return out
@@ -121,11 +122,14 @@ object DspModules {
             samples
         }
 
-        return if (abs(pitchRatio - 1f) > 0.005f) {
+        val pitchAdjusted = if (abs(pitchRatio - 1f) > 0.005f) {
             resampleByRatio(stretched, channels, pitchRatio)
         } else {
             stretched
         }
+        val levelGain = params.level.coerceIn(0f, 2f)
+        if (abs(levelGain - 1f) < 0.002f) return pitchAdjusted
+        return FloatArray(pitchAdjusted.size) { i -> (pitchAdjusted[i] * levelGain).coerceIn(-1f, 1f) }
     }
 
     private fun wsolaStretch(
@@ -273,6 +277,69 @@ object DspModules {
                 out[f * 2 + 1] = (mid - side).coerceIn(-1f, 1f)
             }
         }
+        val levelGain = params.level.coerceIn(0f, 2f)
+        if (abs(levelGain - 1f) >= 0.002f) {
+            for (i in out.indices) {
+                out[i] = (out[i] * levelGain).coerceIn(-1f, 1f)
+            }
+        }
+        return out
+    }
+
+    // 3b. Poly-Track Sub/Upper Octave Generator (-1 Oct analog divider + +1 Oct full-wave doubler)
+    fun applyOctave(
+        samples: FloatArray,
+        sampleRate: Int,
+        channels: Int,
+        params: OctaveParams
+    ): FloatArray {
+        if (!params.enabled || samples.isEmpty()) return samples
+        val out = FloatArray(samples.size)
+        val frames = samples.size / channels
+        val dryMix = params.dryMix.coerceIn(0f, 1f)
+        val subMix = params.subOctaveMix.coerceIn(0f, 1f)
+        val upMix = params.octaveUpMix.coerceIn(0f, 1f)
+        val levelGain = params.level.coerceIn(0f, 2f)
+
+        val subToneAlpha = (1f - exp(-2f * PI.toFloat() * params.subToneHz.coerceIn(250f, 4000f) / sampleRate))
+            .coerceIn(0.01f, 0.99f)
+        val dcAlpha = exp(-2f * PI.toFloat() * 35f / sampleRate).coerceIn(0.8f, 0.9999f)
+        val envAtk = exp(-1f / (0.003f * sampleRate))
+        val envRel = exp(-1f / (0.045f * sampleRate))
+
+        val prevSample = FloatArray(channels)
+        val flipState = FloatArray(channels) { 1f }
+        val subLp = FloatArray(channels)
+        val env = FloatArray(channels)
+        val upPrevIn = FloatArray(channels)
+        val upDcOut = FloatArray(channels)
+
+        for (f in 0 until frames) {
+            for (c in 0 until channels) {
+                val idx = f * channels + c
+                val x = samples[idx]
+                val ax = abs(x)
+                env[c] = if (ax > env[c]) envAtk * env[c] + (1f - envAtk) * ax else envRel * env[c] + (1f - envRel) * ax
+
+                if (prevSample[c] <= 0.0005f && x > 0.0005f) {
+                    flipState[c] = -flipState[c]
+                }
+                prevSample[c] = x
+
+                val rawSub = flipState[c] * env[c] * 1.45f
+                subLp[c] += subToneAlpha * (rawSub - subLp[c])
+
+                // +1 Octave full-wave harmonic doubler with DC blocker
+                val rect = abs(x)
+                val upHp = dcAlpha * (upDcOut[c] + rect - upPrevIn[c])
+                upPrevIn[c] = rect
+                upDcOut[c] = upHp
+                val octUp = tanh(upHp * 1.8f)
+
+                val mixed = x * dryMix + subLp[c] * subMix + octUp * upMix
+                out[idx] = (mixed * levelGain).coerceIn(-1f, 1f)
+            }
+        }
         return out
     }
 
@@ -302,6 +369,7 @@ object DspModules {
         val hpPrevOut = FloatArray(channels)
         val frames = samples.size / channels
 
+        val levelGain = params.level.coerceIn(0f, 2f)
         for (f in 0 until frames) {
             for (c in 0 until channels) {
                 val idx = f * channels + c
@@ -311,7 +379,7 @@ object DspModules {
                 hpPrevOut[c] = pre
                 val shaped = (tanh(pre * drive + bias) - tanh(bias)) * norm
                 lpState[c] += lpAlpha * (shaped - lpState[c])
-                out[idx] = (x * dry + lpState[c] * mix).coerceIn(-1f, 1f)
+                out[idx] = ((x * dry + lpState[c] * mix) * levelGain).coerceIn(-1f, 1f)
             }
         }
         return out
@@ -351,6 +419,7 @@ object DspModules {
             }.coerceIn(180f, sampleRate * 0.36f)
             val fCoeff = (2f * sin(PI.toFloat() * modFreq / sampleRate)).coerceIn(0.001f, 0.95f)
 
+            val levelGain = params.level.coerceIn(0f, 2f)
             for (c in 0 until channels) {
                 val idx = f * channels + c
                 val x = samples[idx]
@@ -360,7 +429,7 @@ object DspModules {
                     band[c] += fCoeff * 0.5f * high
                 }
                 val wet = (band[c] * 1.4f).coerceIn(-1f, 1f)
-                out[idx] = (x * dry + wet * mix).coerceIn(-1f, 1f)
+                out[idx] = ((x * dry + wet * mix) * levelGain).coerceIn(-1f, 1f)
             }
         }
         return out
@@ -422,6 +491,13 @@ object DspModules {
         params: DelayParams,
         bpm: Float = 124f
     ): FloatArray = DspSpatialModModules.applyDelay(samples, sampleRate, channels, params, bpm)
+
+    fun applyAnalogDelay(
+        samples: FloatArray,
+        sampleRate: Int,
+        channels: Int,
+        params: AnalogDelayParams
+    ): FloatArray = DspSpatialModModules.applyAnalogDelay(samples, sampleRate, channels, params)
 
     fun applyReverb(samples: FloatArray, sampleRate: Int, channels: Int, params: ReverbParams): FloatArray =
         DspSpatialModModules.applyReverb(samples, sampleRate, channels, params)

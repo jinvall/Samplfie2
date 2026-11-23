@@ -90,7 +90,8 @@ data class DesktopLoopSlot(
     val isActive: Boolean = false,
     val isMuted: Boolean = false,
     val bars: Int = 1,
-    val volume: Float = 0.85f
+    val volume: Float = 0.85f,
+    val isSampleLocked: Boolean = false
 )
 
 data class DesktopLooperState(
@@ -124,13 +125,15 @@ data class DesktopSequencerLane(
     val buffer: DesktopAudioBuffer,
     val steps: BooleanArray = BooleanArray(16),
     val isMuted: Boolean = false,
-    val volume: Float = 0.85f
+    val volume: Float = 0.85f,
+    val isSampleLocked: Boolean = false
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is DesktopSequencerLane) return false
         return id == other.id && name == other.name && buffer == other.buffer &&
-            isMuted == other.isMuted && volume == other.volume && steps.contentEquals(other.steps)
+            isMuted == other.isMuted && volume == other.volume &&
+            isSampleLocked == other.isSampleLocked && steps.contentEquals(other.steps)
     }
 
     override fun hashCode(): Int {
@@ -140,6 +143,7 @@ data class DesktopSequencerLane(
         r = 31 * r + steps.contentHashCode()
         r = 31 * r + isMuted.hashCode()
         r = 31 * r + volume.hashCode()
+        r = 31 * r + isSampleLocked.hashCode()
         return r
     }
 }
@@ -253,12 +257,27 @@ class DesktopArrangementEngine {
     // --- LOOPER ---
 
     fun assignBufferToLoopSlot(slotId: Int, buffer: DesktopAudioBuffer, label: String = buffer.name) {
+        val frozen = buffer.copy(samples = buffer.samples.copyOf())
         val updated = _looperState.value.slots.map { s ->
-            if (s.id == slotId) s.copy(buffer = buffer, label = label.take(16), isActive = true, isMuted = false)
-            else s
+            if (s.id == slotId) {
+                s.copy(
+                    buffer = frozen,
+                    label = label.take(16),
+                    isActive = true,
+                    isMuted = false,
+                    isSampleLocked = true
+                )
+            } else s
         }
         _looperState.value = _looperState.value.copy(slots = updated)
         loadLoopSlotIntoRefiner(slotId)
+    }
+
+    fun toggleLoopSlotLock(slotId: Int) {
+        val updated = _looperState.value.slots.map { s ->
+            if (s.id == slotId && s.buffer != null) s.copy(isSampleLocked = !s.isSampleLocked) else s
+        }
+        _looperState.value = _looperState.value.copy(slots = updated)
     }
 
     fun toggleLoopSlotActive(slotId: Int) {
@@ -297,29 +316,43 @@ class DesktopArrangementEngine {
     }
 
     fun loadLoopSlotIntoRefiner(slotId: Int, fallbackBuffer: DesktopAudioBuffer? = null) {
+        val curFadesIn = _loopRefinerState.value.fadeInMs
+        val curFadesOut = _loopRefinerState.value.fadeOutMs
         val slot = _looperState.value.slots.firstOrNull { it.id == slotId }
         val buf = slot?.buffer ?: fallbackBuffer
         if (buf == null) {
             _loopRefinerState.value = DesktopLoopRefinerState(
                 selectedSlotId = slotId,
+                fadeInMs = curFadesIn,
+                fadeOutMs = curFadesOut,
                 statusNote = "SLOT ${'A' + slotId} EMPTY — LOAD AUDIO FROM DECK"
             )
             return
         }
+        val frozen = buf.copy(samples = buf.samples.copyOf())
         if (slot?.buffer == null) {
             val updated = _looperState.value.slots.map {
-                if (it.id == slotId) it.copy(buffer = buf, label = buf.name.take(16), isActive = true) else it
+                if (it.id == slotId) it.copy(buffer = frozen, label = frozen.name.take(16), isActive = true, isSampleLocked = true) else it
             }
             _looperState.value = _looperState.value.copy(slots = updated)
         }
         _loopRefinerState.value = DesktopLoopRefinerState(
             selectedSlotId = slotId,
-            rawSlotBuffer = buf,
-            workingBuffer = buf,
-            envelope = SignalAnalyzer.computeWaveformEnvelope(buf, 110),
+            rawSlotBuffer = frozen,
+            workingBuffer = frozen.copy(samples = frozen.samples.copyOf()),
+            envelope = SignalAnalyzer.computeWaveformEnvelope(frozen, 110),
             loopStartFrac = 0f,
             loopEndFrac = 1f,
-            statusNote = "REFINING LOOP ${'A' + slotId} (${"%.2f".format(buf.durationSeconds)}s)"
+            fadeInMs = curFadesIn,
+            fadeOutMs = curFadesOut,
+            statusNote = "REFINING LOOP ${'A' + slotId} (${"%.2f".format(frozen.durationSeconds)}s)"
+        )
+    }
+
+    fun setLoopRefinerFades(fadeInMs: Float, fadeOutMs: Float) {
+        _loopRefinerState.value = _loopRefinerState.value.copy(
+            fadeInMs = fadeInMs.coerceIn(0f, 2000f),
+            fadeOutMs = fadeOutMs.coerceIn(0f, 2000f)
         )
     }
 
@@ -350,9 +383,11 @@ class DesktopArrangementEngine {
 
     fun applyLoopRefinerFades(fadeInMs: Float = _loopRefinerState.value.fadeInMs, fadeOutMs: Float = _loopRefinerState.value.fadeOutMs) {
         val cur = _loopRefinerState.value.workingBuffer ?: return
-        val next = cur.applyLinearFades(fadeInMs, fadeOutMs)
-        _loopRefinerState.value = _loopRefinerState.value.copy(fadeInMs = fadeInMs, fadeOutMs = fadeOutMs)
-        updateRefinerWorkingBuffer(next, "APPLIED ${fadeInMs.toInt()}/${fadeOutMs.toInt()}ms FADES")
+        val fin = fadeInMs.coerceIn(0f, 2000f)
+        val fout = fadeOutMs.coerceIn(0f, 2000f)
+        val next = cur.applyLinearFades(fin, fout)
+        _loopRefinerState.value = _loopRefinerState.value.copy(fadeInMs = fin, fadeOutMs = fout)
+        updateRefinerWorkingBuffer(next, "APPLIED ${fin.toInt()}/${fout.toInt()}ms FADES")
     }
 
     fun reverseLoopRefiner() {
@@ -484,9 +519,29 @@ class DesktopArrangementEngine {
 
     // --- 16-STEP SEQUENCER ---
 
-    fun setSequencerSampleForLane(laneId: Int, buffer: DesktopAudioBuffer) {
+    fun setSequencerSampleForLane(laneId: Int, buffer: DesktopAudioBuffer, lockSample: Boolean = true) {
+        val frozen = buffer.copy(samples = buffer.samples.copyOf())
         val updated = _sequencerState.value.lanes.map { lane ->
-            if (lane.id == laneId) lane.copy(buffer = buffer, name = buffer.name.take(12)) else lane
+            if (lane.id == laneId) {
+                lane.copy(buffer = frozen, name = frozen.name.take(12), isSampleLocked = lockSample)
+            } else lane
+        }
+        _sequencerState.value = _sequencerState.value.copy(lanes = updated)
+    }
+
+    fun setSequencerSampleIfUnlocked(laneId: Int, buffer: DesktopAudioBuffer) {
+        val frozen = buffer.copy(samples = buffer.samples.copyOf())
+        val updated = _sequencerState.value.lanes.map { lane ->
+            if (lane.id == laneId && !lane.isSampleLocked) {
+                lane.copy(buffer = frozen, name = frozen.name.take(12))
+            } else lane
+        }
+        _sequencerState.value = _sequencerState.value.copy(lanes = updated)
+    }
+
+    fun toggleSequencerLaneLock(laneId: Int) {
+        val updated = _sequencerState.value.lanes.map { lane ->
+            if (lane.id == laneId) lane.copy(isSampleLocked = !lane.isSampleLocked) else lane
         }
         _sequencerState.value = _sequencerState.value.copy(lanes = updated)
     }

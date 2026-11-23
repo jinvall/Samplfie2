@@ -603,7 +603,9 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                                 specFreqLowHz = toolsState.specFreqLowHz,
                                 specFreqHighHz = toolsState.specFreqHighHz,
                                 onSpecFreqRangeChange = { lo, hi -> viewModel.updateSpecFreqRange(lo, hi) },
-                                onOpenTools = { viewModel.selectSpoke(StudioSpoke.TOOLS) }
+                                onOpenTools = { viewModel.selectSpoke(StudioSpoke.TOOLS) },
+                                onFadesChange = { fin, fout -> viewModel.setDeckFades(fin, fout) },
+                                onApplyFades = { viewModel.applyDeckFades() }
                             )
 
                             StudioSpoke.SAMPLES -> SamplesSpokeScreen(
@@ -634,7 +636,8 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                                 onResetLoopRefiner = { viewModel.resetLoopRefiner() },
                                 onAuditionLoopRefiner = { viewModel.auditionLoopRefiner() },
                                 onCommitRefinerToSlot = { viewModel.commitRefinerToLoopSlot() },
-                                onSendRefinerToDeck = { viewModel.sendRefinerToDeck() }
+                                onSendRefinerToDeck = { viewModel.sendRefinerToDeck() },
+                                onToggleLoopSlotLock = { viewModel.toggleLoopSlotLock(it) }
                             )
 
                             StudioSpoke.INSTRUMENTS -> InstrumentsSpokeScreen(
@@ -680,7 +683,8 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                                 },
                                 onSendDrumPieceToDeck = { slotId, beater ->
                                     viewModel.sendDrumKitPieceToDeck(slotId, beater)
-                                }
+                                },
+                                onToggleLaneLock = { viewModel.toggleSequencerLaneLock(it) }
                             )
 
                             StudioSpoke.TRACKS -> TracksSpokeScreen(

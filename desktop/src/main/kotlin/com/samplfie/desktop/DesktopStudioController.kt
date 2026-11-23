@@ -310,7 +310,7 @@ class DesktopStudioController {
             statusLine = banner
         )
         soundEngine.setSelection(0f, 1f, _uiState.value.playSelectionOnly)
-        arrangement.setSequencerSampleForLane(0, buffer)
+        arrangement.setSequencerSampleIfUnlocked(0, buffer)
         reprocessDsp(buffer, preserveLoopPlayback = keepLoop)
     }
 
@@ -342,10 +342,19 @@ class DesktopStudioController {
         buf.extractSelection(_uiState.value.selectionStart, _uiState.value.selectionEnd)
     }
 
+    fun setDeckFades(fadeInMs: Float, fadeOutMs: Float) {
+        _uiState.value = _uiState.value.copy(
+            fadeInMs = fadeInMs.coerceIn(0f, 2000f),
+            fadeOutMs = fadeOutMs.coerceIn(0f, 2000f)
+        )
+    }
+
     fun applyFades(fadeInMs: Float = _uiState.value.fadeInMs, fadeOutMs: Float = _uiState.value.fadeOutMs) {
-        _uiState.value = _uiState.value.copy(fadeInMs = fadeInMs, fadeOutMs = fadeOutMs)
-        mutateDryBuffer("APPLIED FADE IN ${fadeInMs.toInt()}ms / OUT ${fadeOutMs.toInt()}ms") { buf ->
-            buf.applyLinearFades(fadeInMs, fadeOutMs)
+        val fin = fadeInMs.coerceIn(0f, 2000f)
+        val fout = fadeOutMs.coerceIn(0f, 2000f)
+        _uiState.value = _uiState.value.copy(fadeInMs = fin, fadeOutMs = fout)
+        mutateDryBuffer("APPLIED FADE IN ${fin.toInt()}ms / OUT ${fout.toInt()}ms") { buf ->
+            buf.applyLinearFades(fin, fout)
         }
     }
 
@@ -365,7 +374,7 @@ class DesktopStudioController {
             statusLine = if (keepLoop) "RESTORED PREVIOUS EDIT (LOOP PERSISTING)" else "RESTORED PREVIOUS EDIT"
         )
         soundEngine.setSelection(0f, 1f, _uiState.value.playSelectionOnly)
-        arrangement.setSequencerSampleForLane(0, prev)
+        arrangement.setSequencerSampleIfUnlocked(0, prev)
         reprocessDsp(prev, preserveLoopPlayback = keepLoop)
     }
 
@@ -382,7 +391,7 @@ class DesktopStudioController {
             statusLine = if (keepLoop) "RESET TO ORIGINAL (LOOP PERSISTING)" else "RESET TO ORIGINAL SIGNAL"
         )
         soundEngine.setSelection(0f, 1f, _uiState.value.playSelectionOnly)
-        arrangement.setSequencerSampleForLane(0, raw)
+        arrangement.setSequencerSampleIfUnlocked(0, raw)
         reprocessDsp(raw, preserveLoopPlayback = keepLoop)
     }
 
@@ -408,7 +417,7 @@ class DesktopStudioController {
             statusLine = "$banner (${"%.2f".format(next.durationSeconds)}s)${if (keepLoop) " • LOOP ACTIVE" else ""}"
         )
         soundEngine.setSelection(nextSelStart, nextSelEnd, _uiState.value.playSelectionOnly)
-        arrangement.setSequencerSampleForLane(0, next)
+        arrangement.setSequencerSampleIfUnlocked(0, next)
         reprocessDsp(next, preserveLoopPlayback = keepLoop)
     }
 
@@ -480,7 +489,14 @@ class DesktopStudioController {
         val stomp = _uiState.value.stompState
         val ts = _toolsState.value
         val defs = ts.installedPlugins.associateBy { it.id }
-        val proc = DesktopDspProcessor.process(dry, fx, stomp, ts.pluginChain, defs)
+        val proc = DesktopDspProcessor.process(
+            dry = dry,
+            fx = fx,
+            stomp = stomp,
+            pluginChain = ts.pluginChain,
+            pluginDefs = defs,
+            bpm = arrangement.syncedPlayhead.value.bpm
+        )
         val dryEnv = SignalAnalyzer.computeWaveformEnvelope(dry, 180)
         val procEnv = SignalAnalyzer.computeWaveformEnvelope(proc, 180)
         val spec = SignalAnalyzer.computeSpectrumBands(proc, proc.frameCount / 2, 1024, 48)
@@ -502,9 +518,12 @@ class DesktopStudioController {
 
     fun sendEditorToLoopSlot(slotId: Int) {
         val buf = _uiState.value.processedBuffer ?: _uiState.value.dryBuffer ?: return
-        arrangement.assignBufferToLoopSlot(slotId, buf, buf.name)
-        _uiState.value = _uiState.value.copy(statusLine = "ASSIGNED DECK TO LOOP ${'A' + slotId}")
+        val frozen = buf.copy(samples = buf.samples.copyOf())
+        arrangement.assignBufferToLoopSlot(slotId, frozen, frozen.name)
+        _uiState.value = _uiState.value.copy(statusLine = "BOUND & LOCKED DECK -> LOOP ${'A' + slotId}")
     }
+
+    fun toggleLoopSlotLock(slotId: Int) = arrangement.toggleLoopSlotLock(slotId)
 
     fun bounceLooperToEditor() {
         val mix = arrangement.bounceLooperMixdown(_uiState.value.rigConfig.sampleRate)
@@ -529,9 +548,12 @@ class DesktopStudioController {
 
     fun assignEditorToSeqLane(laneId: Int) {
         val buf = _uiState.value.processedBuffer ?: _uiState.value.dryBuffer ?: return
-        arrangement.setSequencerSampleForLane(laneId, buf)
-        _uiState.value = _uiState.value.copy(statusLine = "ASSIGNED DECK SAMPLE TO SEQ LANE ${laneId + 1}")
+        val frozen = buf.copy(samples = buf.samples.copyOf())
+        arrangement.setSequencerSampleForLane(laneId, frozen, lockSample = true)
+        _uiState.value = _uiState.value.copy(statusLine = "BOUND & LOCKED DECK SAMPLE -> SEQ LANE ${laneId + 1}")
     }
+
+    fun toggleSequencerLaneLock(laneId: Int) = arrangement.toggleSequencerLaneLock(laneId)
 
     fun triggerSeqPadOneShot(laneId: Int) {
         val lane = arrangement.sequencerState.value.lanes.getOrNull(laneId) ?: return
