@@ -8,9 +8,12 @@ import com.example.audio.AudioAnalyzer
 import com.example.audio.AudioBuffer
 import com.example.audio.AudioImporter
 import com.example.audio.AudioPlaybackEngine
+import com.example.audio.AudioSampleFormat
 import com.example.audio.MicCaptureEngine
 import com.example.audio.MicCaptureTelemetry
 import com.example.audio.PlaybackState
+import com.example.audio.SpectrogramAnalyzer
+import com.example.audio.SpectrogramPalette
 import com.example.audio.WavCodec
 import com.example.config.RigConfig
 import com.example.config.RigConfigRepository
@@ -52,6 +55,10 @@ import com.example.drums.DrumKitManager
 import com.example.drums.DrumKitPreset
 import com.example.drums.DrumKitStyle
 import com.example.drums.DrumKitSynthesizerLibrary
+import com.example.plugins.AndroidPluginRepository
+import com.example.plugins.PluginCatalogEntry
+import com.example.plugins.PluginCatalogRegistry
+import com.example.plugins.SamplfiePluginDefinition
 import com.example.stems.DisbandApiClient
 import com.example.stems.DisbandHttpTransport
 import com.example.stems.DisbandStem
@@ -63,6 +70,10 @@ import com.example.studio.SequencerState
 import com.example.studio.StudioEngine
 import com.example.studio.SyncedPlayheadState
 import com.example.studio.TimelineState
+import com.example.tools.AudioToolsEngine
+import com.example.tools.ChannelScope
+import com.example.tools.MonoFoldMode
+import com.example.tools.StereoSplitMode
 import com.example.tuner.PitchDetector
 import com.example.tuner.TunerInputSource
 import com.example.tuner.TuningPreset
@@ -156,6 +167,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
     private val midiController = MidiControllerManager(appContext)
     private val studioEngine = StudioEngine()
     val drumKitManager = DrumKitManager()
+    private val pluginRepo = AndroidPluginRepository(File(appContext.filesDir, "plugins"))
 
     private val undoStack = ArrayDeque<AudioBuffer>()
     private var fxRenderJob: Job? = null
@@ -189,6 +201,11 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
 
     private val _loopEditorState = MutableStateFlow(LoopEditorState())
     val loopEditorState: StateFlow<LoopEditorState> = _loopEditorState.asStateFlow()
+
+    private val _toolsState = MutableStateFlow(
+        ToolsAndPluginsState(installedPlugins = pluginRepo.loadAllPlugins())
+    )
+    val toolsState: StateFlow<ToolsAndPluginsState> = _toolsState.asStateFlow()
 
     private val _stemState = MutableStateFlow(StemSeparationUiState())
     val stemState: StateFlow<StemSeparationUiState> = _stemState.asStateFlow()
@@ -613,18 +630,29 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         val rack = _fxRack.value
         val stomp = _stompbox.value
         val bpm = studioEngine.syncedPlayhead.value.bpm
+        val pluginChain = _toolsState.value.pluginChain
+        val pluginDefs = _toolsState.value.installedPlugins.associateBy { it.id }
         _editorState.value = _editorState.value.copy(isProcessingFx = true)
         fxRenderJob = viewModelScope.launch(Dispatchers.Default) {
-            val processed = DspChainEngine.process(dry, rack, stomp, bpm)
+            val processed = DspChainEngine.process(
+                source = dry,
+                rack = rack,
+                stompbox = stomp,
+                bpm = bpm,
+                pluginChain = pluginChain,
+                pluginDefs = pluginDefs
+            )
             val dryPeaks = AudioAnalyzer.computeWaveformPeaks(dry, 140)
             val procPeaks = AudioAnalyzer.computeWaveformPeaks(processed, 140)
             val spectrum = AudioAnalyzer.computeSpectrumBands(processed, processed.frameCount / 2, 512, 32)
+            val spectrogram = SpectrogramAnalyzer.compute(processed, maxFrames = 128, freqBins = 72)
             withContext(Dispatchers.Main) {
                 _editorState.value = _editorState.value.copy(
                     processedBuffer = processed,
                     dryPeaks = dryPeaks,
                     processedPeaks = procPeaks,
                     staticSpectrum = spectrum,
+                    spectrogram = spectrogram,
                     isProcessingFx = false
                 )
                 playbackEngine.updateBufferHot(
@@ -1497,17 +1525,19 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
             _editorState.value = _editorState.value.copy(statusBanner = "NO AUDIO TO EXPORT AS WAV")
             return
         }
+        val targetFmt = _toolsState.value.targetSampleFormat
+        val dither = _toolsState.value.applyDither
         viewModelScope.launch {
             _editorState.value = _editorState.value.copy(
                 isExporting = true,
-                statusBanner = "EXPORTING .WAV TO MUSIC/SAMPLFIE2…"
+                statusBanner = "EXPORTING ${targetFmt.shortLabel} .WAV TO MUSIC/SAMPLFIE2…"
             )
-            val res = WavExporter.saveWavToDevice(appContext, buf, fileNameBase)
+            val res = WavExporter.saveWavToDevice(appContext, buf, fileNameBase, targetFmt, dither)
             res.onSuccess { exported ->
                 _editorState.value = _editorState.value.copy(
                     isExporting = false,
                     lastLocalExport = exported,
-                    statusBanner = "SAVED WAV: ${exported.displayLocation}"
+                    statusBanner = "SAVED ${targetFmt.shortLabel} WAV: ${exported.displayLocation}"
                 )
             }.onFailure { err ->
                 _editorState.value = _editorState.value.copy(
@@ -1790,6 +1820,440 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
                 _toastEvents.tryEmit(msg)
             }
         }
+    }
+
+    // --- AUDIO TOOLS SUITE & SPECTROGRAM ---
+
+    fun setToolsTab(tab: ToolsSectionTab) {
+        _toolsState.value = _toolsState.value.copy(activeTab = tab)
+    }
+
+    fun setSpectrogramPalette(palette: SpectrogramPalette) {
+        _toolsState.value = _toolsState.value.copy(
+            specPalette = palette,
+            lastToolReport = "SPECTROGRAM GRADIENT: ${palette.name} (10 STOPS)"
+        )
+    }
+
+    fun applyCustomTenStopGradient(rawHexStops: String) {
+        SpectrogramPalette.parseTenHexStops(rawHexStops).onSuccess { custom ->
+            _toolsState.value = _toolsState.value.copy(
+                specPalette = custom,
+                lastToolReport = "APPLIED CUSTOM 10-STOP SPECTROGRAM GRADIENT"
+            )
+            _toastEvents.tryEmit("Applied custom 10-stop spectrogram gradient")
+        }.onFailure { err ->
+            val msg = err.message ?: "Invalid 10-stop hex list"
+            _toolsState.value = _toolsState.value.copy(lastToolReport = "GRADIENT ERROR: $msg")
+            _toastEvents.tryEmit(msg)
+        }
+    }
+
+    fun updateSpecFreqRange(lowHz: Float, highHz: Float) {
+        val lo = minOf(lowHz, highHz).coerceIn(20f, 20000f)
+        val hi = maxOf(lowHz, highHz).coerceIn(lo + 40f, 24000f)
+        _toolsState.value = _toolsState.value.copy(specFreqLowHz = lo, specFreqHighHz = hi)
+    }
+
+    fun setSpecDeleteAttenuation(attenDb: Float) {
+        _toolsState.value = _toolsState.value.copy(specDeleteAttenDb = attenDb.coerceIn(6f, 96f))
+    }
+
+    fun setInvertScope(scope: ChannelScope) {
+        _toolsState.value = _toolsState.value.copy(invertScope = scope)
+    }
+
+    fun setInvertSelectionOnly(onlySel: Boolean) {
+        _toolsState.value = _toolsState.value.copy(invertSelectionOnly = onlySel)
+    }
+
+    fun applySpectralDelete() {
+        val dry = _editorState.value.dryBuffer ?: return
+        val ed = _editorState.value
+        val ts = _toolsState.value
+        val updated = AudioToolsEngine.spectralDelete(
+            buffer = dry,
+            startFrac = ed.selectionStart,
+            endFrac = ed.selectionEnd,
+            lowFreqHz = ts.specFreqLowHz,
+            highFreqHz = ts.specFreqHighHz,
+            attenuationDb = ts.specDeleteAttenDb
+        )
+        val loSec = ed.selectionStart * dry.durationSeconds
+        val hiSec = ed.selectionEnd * dry.durationSeconds
+        val report = "SPECTRAL DELETE: ${"%.2f".format(loSec)}s–${"%.2f".format(hiSec)}s × ${ts.specFreqLowHz.toInt()}–${ts.specFreqHighHz.toInt()} Hz (-${ts.specDeleteAttenDb.toInt()} dB)"
+        mutateDryBufferWithUndo(updated, report, report)
+    }
+
+    fun applyInvertPolarity() {
+        val dry = _editorState.value.dryBuffer ?: return
+        val ed = _editorState.value
+        val ts = _toolsState.value
+        val sFrac = if (ts.invertSelectionOnly) ed.selectionStart else 0f
+        val eFrac = if (ts.invertSelectionOnly) ed.selectionEnd else 1f
+        val updated = AudioToolsEngine.invertPolarity(dry, sFrac, eFrac, ts.invertScope)
+        val rangeLabel = if (ts.invertSelectionOnly) "SELECTION" else "FULL"
+        val report = "PHASE INVERTED (${ts.invertScope.label} • $rangeLabel)"
+        mutateDryBufferWithUndo(updated, report, report)
+    }
+
+    fun loadReferenceBufferFromUri(uri: Uri) {
+        viewModelScope.launch {
+            val cacheDir = File(appContext.cacheDir, "tool_refs").apply { mkdirs() }
+            val result = AudioImporter.importUriAsWav(
+                context = appContext,
+                uri = uri,
+                takesDir = cacheDir,
+                targetSampleRate = null
+            )
+            result.onSuccess { (buf, wavFile) ->
+                val label = "${wavFile.nameWithoutExtension} (${"%.2f".format(buf.durationSeconds)}s @ ${buf.sampleRate}Hz)"
+                _toolsState.value = _toolsState.value.copy(
+                    referenceBuffer = buf,
+                    referenceLabel = label,
+                    lastToolReport = "LOADED REF B: $label"
+                )
+            }.onFailure { err ->
+                val msg = "Ref audio load failed: ${err.message}"
+                _toolsState.value = _toolsState.value.copy(lastToolReport = msg)
+                _toastEvents.tryEmit(msg)
+            }
+        }
+    }
+
+    fun selectReferenceFromSessionSource(sourceTag: String) {
+        val candidate: AudioBuffer? = when (sourceTag) {
+            "RAW" -> _editorState.value.rawBuffer
+            "DRY" -> _editorState.value.dryBuffer
+            "LOOP_A" -> studioEngine.looperState.value.slots.getOrNull(0)?.buffer
+            "LOOP_B" -> studioEngine.looperState.value.slots.getOrNull(1)?.buffer
+            "LOOP_C" -> studioEngine.looperState.value.slots.getOrNull(2)?.buffer
+            "LOOP_D" -> studioEngine.looperState.value.slots.getOrNull(3)?.buffer
+            else -> null
+        }
+        if (candidate == null || candidate.frameCount == 0) {
+            _toolsState.value = _toolsState.value.copy(lastToolReport = "REF SOURCE $sourceTag IS EMPTY")
+            return
+        }
+        val label = "$sourceTag (${"%.2f".format(candidate.durationSeconds)}s)"
+        _toolsState.value = _toolsState.value.copy(
+            referenceBuffer = candidate,
+            referenceLabel = label,
+            lastToolReport = "SET REF B: $label"
+        )
+    }
+
+    fun computeAudioDifference() {
+        val primary = activeOutputBuffer() ?: return
+        val ref = _toolsState.value.referenceBuffer ?: _editorState.value.rawBuffer ?: return
+        viewModelScope.launch(Dispatchers.Default) {
+            val diff = AudioToolsEngine.computeAudioDifference(primary, ref)
+            val summary = "DIFF (A-B): Peak=${"%.4f".format(diff.peakDiff)} • RMS=${"%.4f".format(diff.rmsDiff)} • Null=${"%.1f".format(diff.nullDepthDb)} dB • Corr=${"%.3f".format(diff.correlation)}"
+            withContext(Dispatchers.Main) {
+                _toolsState.value = _toolsState.value.copy(
+                    lastDiffResult = diff,
+                    lastToolReport = summary
+                )
+            }
+        }
+    }
+
+    fun loadDiffResultToDeck() {
+        val diff = _toolsState.value.lastDiffResult ?: return
+        mutateDryBufferWithUndo(
+            nextDry = diff.diffBuffer,
+            banner = "LOADED DIFF (A-B) TO DECK (NULL ${"%.1f".format(diff.nullDepthDb)} dB)",
+            report = "LOADED DIFF BUFFER TO DECK"
+        )
+    }
+
+    fun updateMixParams(primaryGain: Float, secondaryGain: Float, offsetSec: Float, softLimit: Boolean) {
+        _toolsState.value = _toolsState.value.copy(
+            mixPrimaryGain = primaryGain.coerceIn(0f, 2f),
+            mixSecondaryGain = secondaryGain.coerceIn(0f, 2f),
+            mixOffsetSec = offsetSec.coerceIn(0f, 30f),
+            mixSoftLimit = softLimit
+        )
+    }
+
+    fun applyMixWithReference() {
+        val dry = _editorState.value.dryBuffer ?: return
+        val ref = _toolsState.value.referenceBuffer ?: run {
+            _toolsState.value = _toolsState.value.copy(lastToolReport = "LOAD OR PICK A REFERENCE B AUDIO FOR MIX")
+            return
+        }
+        val ts = _toolsState.value
+        val mixed = AudioToolsEngine.mixBuffers(
+            primary = dry,
+            secondary = ref,
+            primaryGain = ts.mixPrimaryGain,
+            secondaryGain = ts.mixSecondaryGain,
+            offsetSec = ts.mixOffsetSec,
+            softClipLimiter = ts.mixSoftLimit
+        )
+        val report = "MIXED DECK (${"%.2f".format(ts.mixPrimaryGain)}x) + REF (${"%.2f".format(ts.mixSecondaryGain)}x @ +${"%.2f".format(ts.mixOffsetSec)}s)"
+        mutateDryBufferWithUndo(mixed, report, report)
+    }
+
+    fun setMonoFoldMode(mode: MonoFoldMode) {
+        _toolsState.value = _toolsState.value.copy(monoFoldMode = mode)
+    }
+
+    fun applyMixToMono() {
+        val dry = _editorState.value.dryBuffer ?: return
+        val mode = _toolsState.value.monoFoldMode
+        val monoBuf = AudioToolsEngine.mixToMono(dry, mode)
+        val report = "CONVERTED TO MONO (${mode.label})"
+        mutateDryBufferWithUndo(monoBuf, report, report)
+    }
+
+    fun setStereoSplitParams(mode: StereoSplitMode, param: Float) {
+        _toolsState.value = _toolsState.value.copy(
+            stereoSplitMode = mode,
+            stereoSplitParam = param
+        )
+    }
+
+    fun applySplitToStereo() {
+        val dry = _editorState.value.dryBuffer ?: return
+        val ts = _toolsState.value
+        val stereoBuf = AudioToolsEngine.splitToStereo(dry, ts.stereoSplitMode, ts.stereoSplitParam)
+        val report = "SPLIT TO STEREO (${ts.stereoSplitMode.label})"
+        mutateDryBufferWithUndo(stereoBuf, report, report)
+    }
+
+    fun setRateConversionParams(sampleRate: Int, reinterpretOnly: Boolean) {
+        _toolsState.value = _toolsState.value.copy(
+            targetSampleRate = sampleRate.coerceIn(8000, 192000),
+            reinterpretRateOnly = reinterpretOnly
+        )
+    }
+
+    fun applyConvertSampleRate() {
+        val dry = _editorState.value.dryBuffer ?: return
+        val ts = _toolsState.value
+        val converted = AudioToolsEngine.convertSampleRate(
+            buffer = dry,
+            targetSampleRate = ts.targetSampleRate,
+            reinterpretHeaderOnly = ts.reinterpretRateOnly
+        )
+        val modeStr = if (ts.reinterpretRateOnly) "REINTERPRET VARISPEED" else "PITCH-LOCK RESAMPLE"
+        val report = "SAMPLE RATE -> ${converted.sampleRate} Hz ($modeStr)"
+        mutateDryBufferWithUndo(converted, report, report)
+    }
+
+    fun setFormatConversionParams(format: AudioSampleFormat, dither: Boolean) {
+        _toolsState.value = _toolsState.value.copy(
+            targetSampleFormat = format,
+            applyDither = dither
+        )
+    }
+
+    fun applyConvertSampleFormat() {
+        val dry = _editorState.value.dryBuffer ?: return
+        val ts = _toolsState.value
+        val converted = AudioToolsEngine.convertSampleFormat(dry, ts.targetSampleFormat, ts.applyDither)
+        val report = "FORMAT -> ${ts.targetSampleFormat.label}${if (ts.applyDither) " + TPDF DITHER" else ""}"
+        mutateDryBufferWithUndo(converted, report, report)
+    }
+
+    // --- DSP PLUGIN MANAGER & PLUGIN INSTALLER ---
+
+    fun addPluginToChain(pluginId: String) {
+        val def = _toolsState.value.installedPlugins.firstOrNull { it.id == pluginId } ?: return
+        val keepLoop = playbackEngine.state.value.isPlaying && playbackEngine.state.value.isLooping
+        val nextChain = _toolsState.value.pluginChain + def.createSlotInstance()
+        _toolsState.value = _toolsState.value.copy(
+            pluginChain = nextChain,
+            lastToolReport = "ADDED PLUGIN: ${def.name} (${nextChain.size} in chain)"
+        )
+        _editorState.value.dryBuffer?.let { reprocessFxChain(it, preserveLoopPlayback = keepLoop) }
+    }
+
+    fun removePluginFromChain(instanceId: String) {
+        val keepLoop = playbackEngine.state.value.isPlaying && playbackEngine.state.value.isLooping
+        val nextChain = _toolsState.value.pluginChain.filterNot { it.instanceId == instanceId }
+        _toolsState.value = _toolsState.value.copy(
+            pluginChain = nextChain,
+            lastToolReport = "REMOVED PLUGIN SLOT (${nextChain.size} remaining)"
+        )
+        _editorState.value.dryBuffer?.let { reprocessFxChain(it, preserveLoopPlayback = keepLoop) }
+    }
+
+    fun movePluginInChain(instanceId: String, delta: Int) {
+        val cur = _toolsState.value.pluginChain.toMutableList()
+        val idx = cur.indexOfFirst { it.instanceId == instanceId }
+        val target = (idx + delta).coerceIn(0, (cur.size - 1).coerceAtLeast(0))
+        if (idx < 0 || idx == target) return
+        val keepLoop = playbackEngine.state.value.isPlaying && playbackEngine.state.value.isLooping
+        val item = cur.removeAt(idx)
+        cur.add(target, item)
+        _toolsState.value = _toolsState.value.copy(
+            pluginChain = cur,
+            lastToolReport = "REORDERED ${item.pluginName} -> SLOT ${target + 1}"
+        )
+        _editorState.value.dryBuffer?.let { reprocessFxChain(it, preserveLoopPlayback = keepLoop) }
+    }
+
+    fun togglePluginBypass(instanceId: String) {
+        val keepLoop = playbackEngine.state.value.isPlaying && playbackEngine.state.value.isLooping
+        val nextChain = _toolsState.value.pluginChain.map { slot ->
+            if (slot.instanceId == instanceId) slot.copy(bypassed = !slot.bypassed) else slot
+        }
+        _toolsState.value = _toolsState.value.copy(pluginChain = nextChain)
+        _editorState.value.dryBuffer?.let { reprocessFxChain(it, preserveLoopPlayback = keepLoop) }
+    }
+
+    fun updatePluginWetMix(instanceId: String, wetMix: Float) {
+        val keepLoop = playbackEngine.state.value.isPlaying && playbackEngine.state.value.isLooping
+        val nextChain = _toolsState.value.pluginChain.map { slot ->
+            if (slot.instanceId == instanceId) slot.copy(wetMix = wetMix.coerceIn(0f, 1f)) else slot
+        }
+        _toolsState.value = _toolsState.value.copy(pluginChain = nextChain)
+        _editorState.value.dryBuffer?.let { reprocessFxChain(it, preserveLoopPlayback = keepLoop) }
+    }
+
+    fun updatePluginParam(instanceId: String, paramKey: String, value: Float) {
+        val keepLoop = playbackEngine.state.value.isPlaying && playbackEngine.state.value.isLooping
+        val nextChain = _toolsState.value.pluginChain.map { slot ->
+            if (slot.instanceId == instanceId) {
+                val updated = slot.paramValues.toMutableMap().apply { put(paramKey, value) }
+                slot.copy(paramValues = updated)
+            } else {
+                slot
+            }
+        }
+        _toolsState.value = _toolsState.value.copy(pluginChain = nextChain)
+        _editorState.value.dryBuffer?.let { reprocessFxChain(it, preserveLoopPlayback = keepLoop) }
+    }
+
+    fun bouncePluginChainToDryBuffer() {
+        val dry = _editorState.value.dryBuffer ?: return
+        val ts = _toolsState.value
+        if (ts.pluginChain.none { it.enabled && !it.bypassed }) {
+            _toolsState.value = ts.copy(lastToolReport = "NO ACTIVE PLUGINS TO BOUNCE")
+            return
+        }
+        val defs = ts.installedPlugins.associateBy { it.id }
+        val rendered = com.example.plugins.AudioPluginHostEngine.processChain(dry, ts.pluginChain, defs)
+        val bypassedChain = ts.pluginChain.map { it.copy(bypassed = true) }
+        _toolsState.value = ts.copy(
+            pluginChain = bypassedChain,
+            lastToolReport = "BOUNCED ${ts.pluginChain.size} PLUGIN SLOTS INTO DECK BUFFER"
+        )
+        mutateDryBufferWithUndo(rendered, "BOUNCED PLUGIN CHAIN TO DECK", "BOUNCED PLUGIN CHAIN")
+    }
+
+    fun installCatalogPlugin(entry: PluginCatalogEntry) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val saved = pluginRepo.installPlugin(entry.toDefinition())
+            val all = pluginRepo.loadAllPlugins()
+            withContext(Dispatchers.Main) {
+                _toolsState.value = _toolsState.value.copy(
+                    installedPlugins = all,
+                    lastToolReport = "INSTALLED PLUGIN: ${saved.name} v${saved.version}"
+                )
+                _toastEvents.tryEmit("Installed ${saved.name}")
+            }
+        }
+    }
+
+    fun uninstallCustomPlugin(pluginId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            pluginRepo.uninstallPlugin(pluginId)
+            val all = pluginRepo.loadAllPlugins()
+            withContext(Dispatchers.Main) {
+                val keepLoop = playbackEngine.state.value.isPlaying && playbackEngine.state.value.isLooping
+                val cleanChain = _toolsState.value.pluginChain.filterNot { it.pluginId == pluginId }
+                _toolsState.value = _toolsState.value.copy(
+                    installedPlugins = all,
+                    pluginChain = cleanChain,
+                    lastToolReport = "UNINSTALLED PLUGIN ($pluginId)"
+                )
+                _editorState.value.dryBuffer?.let { reprocessFxChain(it, preserveLoopPlayback = keepLoop) }
+            }
+        }
+    }
+
+    fun importPluginOrIrFromUri(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val textAttempt = runCatching {
+                appContext.contentResolver.openInputStream(uri)?.use { stream ->
+                    val head = ByteArray(4096)
+                    val read = stream.read(head)
+                    if (read > 0) {
+                        val s = String(head, 0, read, Charsets.UTF_8).trimStart()
+                        if (s.startsWith("{")) {
+                            val rest = stream.readBytes()
+                            String(head, 0, read, Charsets.UTF_8) + String(rest, Charsets.UTF_8)
+                        } else null
+                    } else null
+                }
+            }.getOrNull()
+
+            if (textAttempt != null) {
+                PluginCatalogRegistry.fromJson(textAttempt).onSuccess { parsed ->
+                    pluginRepo.installPlugin(parsed)
+                    val all = pluginRepo.loadAllPlugins()
+                    withContext(Dispatchers.Main) {
+                        _toolsState.value = _toolsState.value.copy(
+                            installedPlugins = all,
+                            lastToolReport = "IMPORTED PLUGIN BUNDLE: ${parsed.name}"
+                        )
+                        _toastEvents.tryEmit("Installed plugin bundle: ${parsed.name}")
+                    }
+                    return@launch
+                }.onFailure { err ->
+                    withContext(Dispatchers.Main) {
+                        val msg = "Invalid plugin JSON: ${err.message}"
+                        _toolsState.value = _toolsState.value.copy(lastToolReport = msg)
+                        _toastEvents.tryEmit(msg)
+                    }
+                    return@launch
+                }
+            }
+
+            // Otherwise treat as custom Impulse Response audio (.wav / media)
+            val cacheDir = File(appContext.cacheDir, "plugin_irs").apply { mkdirs() }
+            AudioImporter.importUriAsWav(appContext, uri, cacheDir, targetSampleRate = null).onSuccess { (irBuf, file) ->
+                val pluginDef = PluginCatalogRegistry.createIrPluginFromBuffer(irBuf, file.nameWithoutExtension)
+                val current = (_toolsState.value.installedPlugins + pluginDef).distinctBy { it.id }
+                withContext(Dispatchers.Main) {
+                    _toolsState.value = _toolsState.value.copy(
+                        installedPlugins = current,
+                        lastToolReport = "LOADED WAV IMPULSE PLUGIN: ${pluginDef.name}"
+                    )
+                    _toastEvents.tryEmit("Loaded WAV IR plugin: ${pluginDef.name}")
+                }
+            }.onFailure { err ->
+                withContext(Dispatchers.Main) {
+                    val msg = "Plugin/IR import failed: ${err.message}"
+                    _toolsState.value = _toolsState.value.copy(lastToolReport = msg)
+                    _toastEvents.tryEmit(msg)
+                }
+            }
+        }
+    }
+
+    private fun mutateDryBufferWithUndo(nextDry: AudioBuffer, banner: String, report: String? = null) {
+        val currentDry = _editorState.value.dryBuffer
+        if (currentDry != null && currentDry.frameCount > 0) {
+            undoStack.addLast(currentDry)
+        }
+        val keepLoop = playbackEngine.state.value.isPlaying && playbackEngine.state.value.isLooping
+        if (!keepLoop) {
+            playbackEngine.stop()
+        }
+        _editorState.value = _editorState.value.copy(
+            dryBuffer = nextDry,
+            canUndo = undoStack.isNotEmpty(),
+            statusBanner = banner + if (keepLoop) " • LOOP PERSISTING" else ""
+        )
+        if (report != null) {
+            _toolsState.value = _toolsState.value.copy(lastToolReport = report)
+        }
+        studioEngine.setSequencerSampleForLane(0, nextDry)
+        reprocessFxChain(nextDry, preserveLoopPlayback = keepLoop)
     }
 
     private fun activeOutputBuffer(): AudioBuffer? {

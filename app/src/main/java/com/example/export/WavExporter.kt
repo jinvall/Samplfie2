@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import com.example.audio.AudioBuffer
+import com.example.audio.AudioSampleFormat
 import com.example.audio.WavCodec
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -21,14 +22,16 @@ data class ExportedAudioResult(
 )
 
 /**
- * Local device .WAV exporter writing standard RIFF/WAVE PCM files to Music/Samplfie2/.
+ * Local device .WAV exporter writing standard RIFF/WAVE PCM/Float files to Music/Samplfie2/.
  */
 object WavExporter {
 
     suspend fun saveWavToDevice(
         context: Context,
         buffer: AudioBuffer,
-        fileNameBase: String
+        fileNameBase: String,
+        targetFormat: AudioSampleFormat = buffer.sampleFormat,
+        dither: Boolean = false
     ): Result<ExportedAudioResult> = withContext(Dispatchers.IO) {
         if (buffer.frameCount == 0) {
             return@withContext Result.failure(IllegalStateException("Audio buffer is empty"))
@@ -44,7 +47,7 @@ object WavExporter {
         }
 
         try {
-            val wavBytes = WavCodec.encodeToBytes(buffer)
+            val wavBytes = WavCodec.encodeToBytes(buffer, targetFormat, dither)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val values = ContentValues().apply {
                     put(MediaStore.Audio.Media.DISPLAY_NAME, finalName)
@@ -67,7 +70,7 @@ object WavExporter {
                         runCatching { resolver.update(uri, values, null, null) }
                         return@withContext Result.success(
                             ExportedAudioResult(
-                                formatLabel = "WAV",
+                                formatLabel = "WAV (${targetFormat.shortLabel})",
                                 fileName = finalName,
                                 displayLocation = "Music/Samplfie2/$finalName",
                                 byteSize = wavBytes.size.toLong(),

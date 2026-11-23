@@ -8,43 +8,57 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * Pure Kotlin RIFF/WAVE PCM encoder and decoder supporting 8/16/24-bit PCM and 32-bit float WAVs.
+ * Pure Kotlin RIFF/WAVE encoder and decoder supporting 8/16/24/32-bit PCM and 32/64-bit IEEE float WAVs.
  */
 object WavCodec {
 
-    fun encodeToBytes(buffer: AudioBuffer): ByteArray {
-        val pcm16 = floatToPcm16Bytes(buffer.samples)
-        val out = ByteArrayOutputStream(44 + pcm16.size)
-        val byteRate = buffer.sampleRate * buffer.channels * 2
-        val blockAlign = buffer.channels * 2
-        val dataSize = pcm16.size
+    fun encodeToBytes(
+        buffer: AudioBuffer,
+        targetFormat: AudioSampleFormat = buffer.sampleFormat,
+        dither: Boolean = false
+    ): ByteArray {
+        val shapedSamples = if (dither) {
+            AudioSampleFormat.quantizeSamples(buffer.samples, targetFormat, dither = true)
+        } else {
+            buffer.samples
+        }
+        val payload = encodeSamples(shapedSamples, targetFormat)
+        val bytesPerSample = targetFormat.bitsPerSample / 8
+        val byteRate = buffer.sampleRate * buffer.channels * bytesPerSample
+        val blockAlign = buffer.channels * bytesPerSample
+        val dataSize = payload.size
         val riffChunkSize = 36 + dataSize
 
-        // RIFF header
+        val out = ByteArrayOutputStream(44 + dataSize)
         out.write("RIFF".toByteArray(Charsets.US_ASCII))
         out.write(intToLittleEndian(riffChunkSize))
         out.write("WAVE".toByteArray(Charsets.US_ASCII))
 
         // fmt subchunk
         out.write("fmt ".toByteArray(Charsets.US_ASCII))
-        out.write(intToLittleEndian(16)) // Subchunk1Size for PCM
-        out.write(shortToLittleEndian(1)) // AudioFormat 1 = PCM
+        out.write(intToLittleEndian(16))
+        out.write(shortToLittleEndian(targetFormat.wavFormatCode))
         out.write(shortToLittleEndian(buffer.channels))
         out.write(intToLittleEndian(buffer.sampleRate))
         out.write(intToLittleEndian(byteRate))
         out.write(shortToLittleEndian(blockAlign))
-        out.write(shortToLittleEndian(16)) // BitsPerSample
+        out.write(shortToLittleEndian(targetFormat.bitsPerSample))
 
         // data subchunk
         out.write("data".toByteArray(Charsets.US_ASCII))
         out.write(intToLittleEndian(dataSize))
-        out.write(pcm16)
+        out.write(payload)
         return out.toByteArray()
     }
 
-    fun writeWav(buffer: AudioBuffer, file: File): File {
+    fun writeWav(
+        buffer: AudioBuffer,
+        file: File,
+        targetFormat: AudioSampleFormat = buffer.sampleFormat,
+        dither: Boolean = false
+    ): File {
         file.parentFile?.mkdirs()
-        file.writeBytes(encodeToBytes(buffer))
+        file.writeBytes(encodeToBytes(buffer, targetFormat, dither))
         return file
     }
 
@@ -102,11 +116,13 @@ object WavCodec {
 
         require(dataOffset >= 0 && dataSize >= 0) { "Invalid WAV: missing data chunk" }
         val samples = decodeSamples(allBytes, dataOffset, dataSize, audioFormat, bitsPerSample)
+        val format = AudioSampleFormat.fromWavHeader(audioFormat, bitsPerSample)
         return AudioBuffer(
             samples = samples,
             sampleRate = sampleRate,
             channels = channels,
-            name = name
+            name = name,
+            sampleFormat = format
         )
     }
 
@@ -119,6 +135,38 @@ object WavCodec {
             bytes[i * 2 + 1] = ((s shr 8) and 0xFF).toByte()
         }
         return bytes
+    }
+
+    private fun encodeSamples(samples: FloatArray, format: AudioSampleFormat): ByteArray = when (format) {
+        AudioSampleFormat.PCM_8 -> ByteArray(samples.size) { i ->
+            val v = ((samples[i].coerceIn(-1f, 1f) * 127f) + 128f).toInt().coerceIn(0, 255)
+            v.toByte()
+        }
+        AudioSampleFormat.PCM_16 -> floatToPcm16Bytes(samples)
+        AudioSampleFormat.PCM_24 -> ByteArray(samples.size * 3).also { out ->
+            for (i in samples.indices) {
+                val s = (samples[i].coerceIn(-1f, 1f) * 8388607.0).toInt().coerceIn(-8388608, 8388607)
+                val base = i * 3
+                out[base] = (s and 0xFF).toByte()
+                out[base + 1] = ((s shr 8) and 0xFF).toByte()
+                out[base + 2] = ((s shr 16) and 0xFF).toByte()
+            }
+        }
+        AudioSampleFormat.PCM_32 -> ByteArray(samples.size * 4).also { out ->
+            val bb = ByteBuffer.wrap(out).order(ByteOrder.LITTLE_ENDIAN)
+            for (s in samples) {
+                val v = (s.toDouble().coerceIn(-1.0, 1.0) * 2147483647.0).toInt()
+                bb.putInt(v)
+            }
+        }
+        AudioSampleFormat.FLOAT_32 -> ByteArray(samples.size * 4).also { out ->
+            val bb = ByteBuffer.wrap(out).order(ByteOrder.LITTLE_ENDIAN)
+            for (s in samples) bb.putFloat(s.coerceIn(-1f, 1f))
+        }
+        AudioSampleFormat.FLOAT_64 -> ByteArray(samples.size * 8).also { out ->
+            val bb = ByteBuffer.wrap(out).order(ByteOrder.LITTLE_ENDIAN)
+            for (s in samples) bb.putDouble(s.toDouble().coerceIn(-1.0, 1.0))
+        }
     }
 
     fun pcm16ShortsToFloats(shorts: ShortArray, count: Int = shorts.size): FloatArray {
@@ -150,9 +198,17 @@ object WavCodec {
     ): FloatArray {
         val bb = ByteBuffer.wrap(bytes, offset, size).order(ByteOrder.LITTLE_ENDIAN)
         return when {
+            audioFormat == 3 && bitsPerSample == 64 -> {
+                val count = size / 8
+                FloatArray(count) { bb.double.toFloat().coerceIn(-1f, 1f) }
+            }
             audioFormat == 3 && bitsPerSample == 32 -> {
                 val count = size / 4
                 FloatArray(count) { bb.float.coerceIn(-1f, 1f) }
+            }
+            audioFormat == 1 && bitsPerSample == 32 -> {
+                val count = size / 4
+                FloatArray(count) { (bb.int.toDouble() / 2147483648.0).toFloat().coerceIn(-1f, 1f) }
             }
             bitsPerSample == 8 -> {
                 FloatArray(size) {

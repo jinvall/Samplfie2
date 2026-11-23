@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ElectricBolt
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Loop
@@ -109,6 +110,7 @@ internal fun spokeAccent(spoke: StudioSpoke): Color = when (spoke) {
     StudioSpoke.LIVE -> TacCoral
     StudioSpoke.TRACKS -> MagentaFx
     StudioSpoke.FX_RACK -> VioletMod
+    StudioSpoke.TOOLS -> NeonCyan
     StudioSpoke.TUNER -> AmberHot
     StudioSpoke.VMC -> VioletMod
 }
@@ -195,6 +197,14 @@ internal fun buildStudioSpokes(
                 angleDeg = angle,
                 accent = VioletMod,
                 icon = Icons.Filled.Tune
+            )
+            StudioSpoke.TOOLS -> SpokeDescriptor(
+                spoke = StudioSpoke.TOOLS,
+                title = "TOOLS",
+                subtitle = "SPEC+PLUG",
+                angleDeg = angle,
+                accent = NeonCyan,
+                icon = Icons.Filled.Build
             )
             StudioSpoke.BOOTH -> SpokeDescriptor(
                 spoke = StudioSpoke.BOOTH,

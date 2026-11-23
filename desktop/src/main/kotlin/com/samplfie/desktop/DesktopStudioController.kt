@@ -3,6 +3,9 @@ package com.samplfie.desktop
 import com.samplfie.desktop.audio.DesktopMicState
 import com.samplfie.desktop.audio.DesktopMp3Exporter
 import com.samplfie.desktop.audio.DesktopPlaybackState
+import com.samplfie.desktop.audio.DesktopSpectrogramAnalyzer
+import com.samplfie.desktop.audio.DesktopSpectrogramData
+import com.samplfie.desktop.audio.DesktopSpectrogramPalette
 import com.samplfie.desktop.audio.DesktopWavCodec
 import com.samplfie.desktop.audio.LinuxSoundEngine
 import com.samplfie.desktop.audio.SignalAnalyzer
@@ -22,6 +25,7 @@ import com.samplfie.desktop.model.DesktopLiveMode
 import com.samplfie.desktop.model.DesktopPreset
 import com.samplfie.desktop.model.DesktopPresetFactory
 import com.samplfie.desktop.model.DesktopRigConfig
+import com.samplfie.desktop.model.DesktopSampleFormat
 import com.samplfie.desktop.model.DesktopStation
 import com.samplfie.desktop.model.DesktopStompState
 import com.samplfie.desktop.model.DesktopWorkspaceConfig
@@ -38,6 +42,10 @@ import com.samplfie.desktop.network.MAX_COLLAB_PEERS
 import com.samplfie.desktop.network.NetBridgeState
 import com.samplfie.desktop.network.SessionHandoffSnapshot
 import com.samplfie.desktop.network.Smp2NetworkNode
+import com.samplfie.desktop.plugins.DesktopPluginCatalogEntry
+import com.samplfie.desktop.plugins.DesktopPluginCatalogRegistry
+import com.samplfie.desktop.plugins.DesktopPluginHostEngine
+import com.samplfie.desktop.plugins.DesktopPluginRepository
 import com.samplfie.desktop.stems.DesktopDisbandClient
 import com.samplfie.desktop.stems.DesktopDisbandHttpTransport
 import com.samplfie.desktop.stems.DesktopDisbandStem
@@ -57,6 +65,12 @@ import com.samplfie.desktop.studio.DesktopLooperState
 import com.samplfie.desktop.studio.DesktopSequencerState
 import com.samplfie.desktop.studio.DesktopSyncedPlayheadState
 import com.samplfie.desktop.studio.DesktopTimelineState
+import com.samplfie.desktop.tools.ChannelScope
+import com.samplfie.desktop.tools.DesktopAudioToolsEngine
+import com.samplfie.desktop.tools.DesktopToolsState
+import com.samplfie.desktop.tools.DesktopToolsTab
+import com.samplfie.desktop.tools.MonoFoldMode
+import com.samplfie.desktop.tools.StereoSplitMode
 import com.samplfie.desktop.tuner.PitchDetector
 import java.io.File
 import java.text.SimpleDateFormat
@@ -70,7 +84,7 @@ import kotlinx.coroutines.flow.asStateFlow
 
 data class DesktopStudioUiState(
     val station: DesktopStation = DesktopStation.EDITOR,
-    val visualizerMode: VisualizerMode = VisualizerMode.DUAL,
+    val visualizerMode: VisualizerMode = VisualizerMode.W_SPEC,
     val workspaceConfig: DesktopWorkspaceConfig = DesktopWorkspaceConfig(),
     val masterVolume: Float = 0.85f,
     val isMasterMuted: Boolean = false,
@@ -81,6 +95,7 @@ data class DesktopStudioUiState(
     val dryEnvelope: WaveformEnvelope = WaveformEnvelope(FloatArray(0), FloatArray(0), FloatArray(0)),
     val processedEnvelope: WaveformEnvelope = WaveformEnvelope(FloatArray(0), FloatArray(0), FloatArray(0)),
     val staticSpectrum: FloatArray = FloatArray(48),
+    val spectrogram: DesktopSpectrogramData = DesktopSpectrogramData.EMPTY,
     val selectionStart: Float = 0f,
     val selectionEnd: Float = 1f,
     val playSelectionOnly: Boolean = false,
@@ -113,6 +128,7 @@ class DesktopStudioController {
 
     val defaultExportDir: File = File(System.getProperty("user.home"), "Music/Samplfie2").apply { mkdirs() }
     val secretsVault = DesktopSecretsVault()
+    val pluginRepo = DesktopPluginRepository()
     @Volatile
     private var disbandClient = DesktopDisbandClient()
 
@@ -121,6 +137,14 @@ class DesktopStudioController {
 
     private val _stemState = MutableStateFlow(DesktopStemState())
     val stemState: StateFlow<DesktopStemState> = _stemState.asStateFlow()
+
+    private val _toolsState = MutableStateFlow(
+        DesktopToolsState(
+            installedPlugins = pluginRepo.loadAllPlugins(),
+            nativeLinuxPlugins = pluginRepo.scanLinuxNativePlugins()
+        )
+    )
+    val toolsState: StateFlow<DesktopToolsState> = _toolsState.asStateFlow()
 
     val secretsState: StateFlow<DesktopSecretsState> = secretsVault.state
 
@@ -362,7 +386,11 @@ class DesktopStudioController {
         reprocessDsp(raw, preserveLoopPlayback = keepLoop)
     }
 
-    private fun mutateDryBuffer(banner: String, transform: (DesktopAudioBuffer) -> DesktopAudioBuffer) {
+    private fun mutateDryBuffer(
+        banner: String,
+        resetSelection: Boolean = true,
+        transform: (DesktopAudioBuffer) -> DesktopAudioBuffer
+    ) {
         val cur = _uiState.value.dryBuffer ?: return
         undoStack.addLast(cur)
         val next = transform(cur)
@@ -370,14 +398,16 @@ class DesktopStudioController {
         if (!keepLoop) {
             soundEngine.stopPlayback()
         }
+        val nextSelStart = if (resetSelection) 0f else _uiState.value.selectionStart
+        val nextSelEnd = if (resetSelection) 1f else _uiState.value.selectionEnd
         _uiState.value = _uiState.value.copy(
             dryBuffer = next,
-            selectionStart = 0f,
-            selectionEnd = 1f,
+            selectionStart = nextSelStart,
+            selectionEnd = nextSelEnd,
             canUndo = undoStack.isNotEmpty(),
             statusLine = "$banner (${"%.2f".format(next.durationSeconds)}s)${if (keepLoop) " • LOOP ACTIVE" else ""}"
         )
-        soundEngine.setSelection(0f, 1f, _uiState.value.playSelectionOnly)
+        soundEngine.setSelection(nextSelStart, nextSelEnd, _uiState.value.playSelectionOnly)
         arrangement.setSequencerSampleForLane(0, next)
         reprocessDsp(next, preserveLoopPlayback = keepLoop)
     }
@@ -448,15 +478,19 @@ class DesktopStudioController {
     private fun reprocessDsp(dry: DesktopAudioBuffer, preserveLoopPlayback: Boolean) {
         val fx = _uiState.value.fxState
         val stomp = _uiState.value.stompState
-        val proc = DesktopDspProcessor.process(dry, fx, stomp)
+        val ts = _toolsState.value
+        val defs = ts.installedPlugins.associateBy { it.id }
+        val proc = DesktopDspProcessor.process(dry, fx, stomp, ts.pluginChain, defs)
         val dryEnv = SignalAnalyzer.computeWaveformEnvelope(dry, 180)
         val procEnv = SignalAnalyzer.computeWaveformEnvelope(proc, 180)
         val spec = SignalAnalyzer.computeSpectrumBands(proc, proc.frameCount / 2, 1024, 48)
+        val spectrogram = DesktopSpectrogramAnalyzer.compute(proc, 144, 80)
         _uiState.value = _uiState.value.copy(
             processedBuffer = proc,
             dryEnvelope = dryEnv,
             processedEnvelope = procEnv,
-            staticSpectrum = spec
+            staticSpectrum = spec,
+            spectrogram = spectrogram
         )
         soundEngine.updateBufferHot(proc, preserveLoopPlayback = preserveLoopPlayback)
         if (_uiState.value.tunerSource == TunerInputSource.DECK_BUFFER) {
@@ -851,9 +885,14 @@ class DesktopStudioController {
     fun exportWav(targetFile: File): Result<File> {
         val buf = _uiState.value.processedBuffer ?: _uiState.value.dryBuffer
             ?: return Result.failure(IllegalStateException("No audio loaded"))
+        val ts = _toolsState.value
+        val targetFmt = ts.targetSampleFormat
+        val dither = ts.applyDither
         return runCatching {
-            DesktopWavCodec.writeWav(buf, targetFile)
-            _uiState.value = _uiState.value.copy(statusLine = "SAVED WAV -> ${targetFile.absolutePath}")
+            DesktopWavCodec.writeWav(buf, targetFile, targetFmt, dither)
+            _uiState.value = _uiState.value.copy(
+                statusLine = "SAVED WAV (${targetFmt.shortLabel}) -> ${targetFile.absolutePath}"
+            )
             targetFile
         }.onFailure {
             _uiState.value = _uiState.value.copy(statusLine = "WAV SAVE ERROR: ${it.message}")
@@ -1327,6 +1366,387 @@ class DesktopStudioController {
             _uiState.value = _uiState.value.copy(statusLine = "SAVED STEM WAV -> ${targetFile.absolutePath}")
             targetFile
         }
+    }
+
+    // --- AUDIO TOOLS SUITE & 10-STOP SPECTROGRAM ---
+
+    fun setToolsTab(tab: DesktopToolsTab) {
+        _toolsState.value = _toolsState.value.copy(activeTab = tab)
+    }
+
+    fun setSpectrogramPalette(palette: DesktopSpectrogramPalette) {
+        _toolsState.value = _toolsState.value.copy(
+            specPalette = palette,
+            lastToolReport = "SPECTROGRAM GRADIENT: ${palette.name} (10 STOPS)"
+        )
+    }
+
+    fun applyCustomTenStopGradient(rawHexStops: String): Result<DesktopSpectrogramPalette> {
+        val res = DesktopSpectrogramPalette.parseTenHexStops(rawHexStops)
+        res.onSuccess { custom ->
+            _toolsState.value = _toolsState.value.copy(
+                specPalette = custom,
+                lastToolReport = "APPLIED CUSTOM 10-STOP SPECTROGRAM GRADIENT"
+            )
+            _uiState.value = _uiState.value.copy(statusLine = "APPLIED CUSTOM 10-STOP SPECTROGRAM GRADIENT")
+        }.onFailure { err ->
+            val msg = err.message ?: "Invalid 10-stop hex list"
+            _toolsState.value = _toolsState.value.copy(lastToolReport = "GRADIENT ERROR: $msg")
+            _uiState.value = _uiState.value.copy(statusLine = "GRADIENT ERROR: $msg")
+        }
+        return res
+    }
+
+    fun updateSpecFreqRange(lowHz: Float, highHz: Float) {
+        val lo = minOf(lowHz, highHz).coerceIn(20f, 20000f)
+        val hi = maxOf(lowHz, highHz).coerceIn(lo + 40f, 24000f)
+        _toolsState.value = _toolsState.value.copy(specFreqLowHz = lo, specFreqHighHz = hi)
+    }
+
+    fun setSpecDeleteAttenuation(attenDb: Float) {
+        _toolsState.value = _toolsState.value.copy(specDeleteAttenDb = attenDb.coerceIn(6f, 96f))
+    }
+
+    fun setInvertScope(scope: ChannelScope) {
+        _toolsState.value = _toolsState.value.copy(invertScope = scope)
+    }
+
+    fun setInvertSelectionOnly(onlySel: Boolean) {
+        _toolsState.value = _toolsState.value.copy(invertSelectionOnly = onlySel)
+    }
+
+    fun applySpectralDelete() {
+        val dry = _uiState.value.dryBuffer ?: return
+        val ui = _uiState.value
+        val ts = _toolsState.value
+        val updated = DesktopAudioToolsEngine.spectralDelete(
+            buffer = dry,
+            startFrac = ui.selectionStart,
+            endFrac = ui.selectionEnd,
+            lowFreqHz = ts.specFreqLowHz,
+            highFreqHz = ts.specFreqHighHz,
+            attenuationDb = ts.specDeleteAttenDb
+        )
+        val loSec = ui.selectionStart * dry.durationSeconds
+        val hiSec = ui.selectionEnd * dry.durationSeconds
+        val report = "SPECTRAL DELETE: ${"%.2f".format(loSec)}s–${"%.2f".format(hiSec)}s × ${ts.specFreqLowHz.toInt()}–${ts.specFreqHighHz.toInt()} Hz (-${ts.specDeleteAttenDb.toInt()} dB)"
+        _toolsState.value = _toolsState.value.copy(lastToolReport = report)
+        mutateDryBuffer(report, resetSelection = false) { updated }
+    }
+
+    fun applyInvertPolarity() {
+        val dry = _uiState.value.dryBuffer ?: return
+        val ui = _uiState.value
+        val ts = _toolsState.value
+        val sFrac = if (ts.invertSelectionOnly) ui.selectionStart else 0f
+        val eFrac = if (ts.invertSelectionOnly) ui.selectionEnd else 1f
+        val updated = DesktopAudioToolsEngine.invertPolarity(dry, sFrac, eFrac, ts.invertScope)
+        val rangeLabel = if (ts.invertSelectionOnly) "SELECTION" else "FULL"
+        val report = "PHASE INVERTED (${ts.invertScope.label} • $rangeLabel)"
+        _toolsState.value = _toolsState.value.copy(lastToolReport = report)
+        mutateDryBuffer(report) { updated }
+    }
+
+    fun loadReferenceFile(file: File): Result<DesktopAudioBuffer> {
+        return runCatching {
+            val buf = DesktopWavCodec.readWav(file)
+            val label = "${file.nameWithoutExtension} (${"%.2f".format(buf.durationSeconds)}s @ ${buf.sampleRate}Hz)"
+            _toolsState.value = _toolsState.value.copy(
+                referenceBuffer = buf,
+                referenceLabel = label,
+                lastToolReport = "LOADED REF B: $label"
+            )
+            buf
+        }.onFailure { err ->
+            val msg = "REF LOAD FAILED: ${err.message}"
+            _toolsState.value = _toolsState.value.copy(lastToolReport = msg)
+            _uiState.value = _uiState.value.copy(statusLine = msg)
+        }
+    }
+
+    fun selectReferenceFromSessionSource(sourceTag: String) {
+        val candidate: DesktopAudioBuffer? = when (sourceTag) {
+            "RAW" -> _uiState.value.rawBuffer
+            "DRY" -> _uiState.value.dryBuffer
+            "LOOP_A" -> arrangement.looperState.value.slots.getOrNull(0)?.buffer
+            "LOOP_B" -> arrangement.looperState.value.slots.getOrNull(1)?.buffer
+            "LOOP_C" -> arrangement.looperState.value.slots.getOrNull(2)?.buffer
+            "LOOP_D" -> arrangement.looperState.value.slots.getOrNull(3)?.buffer
+            else -> null
+        }
+        if (candidate == null || candidate.frameCount == 0) {
+            _toolsState.value = _toolsState.value.copy(lastToolReport = "REF SOURCE $sourceTag IS EMPTY")
+            return
+        }
+        val label = "$sourceTag (${"%.2f".format(candidate.durationSeconds)}s)"
+        _toolsState.value = _toolsState.value.copy(
+            referenceBuffer = candidate,
+            referenceLabel = label,
+            lastToolReport = "SET REF B: $label"
+        )
+    }
+
+    fun computeAudioDifference() {
+        val primary = _uiState.value.processedBuffer ?: _uiState.value.dryBuffer ?: return
+        val ref = _toolsState.value.referenceBuffer ?: _uiState.value.rawBuffer ?: return
+        val diff = DesktopAudioToolsEngine.computeAudioDifference(primary, ref)
+        val summary = "DIFF (A-B): Peak=${"%.4f".format(diff.peakDiff)} • RMS=${"%.4f".format(diff.rmsDiff)} • Null=${"%.1f".format(diff.nullDepthDb)} dB • Corr=${"%.3f".format(diff.correlation)}"
+        _toolsState.value = _toolsState.value.copy(
+            lastDiffResult = diff,
+            lastToolReport = summary
+        )
+        _uiState.value = _uiState.value.copy(statusLine = summary)
+    }
+
+    fun loadDiffResultToDeck() {
+        val diff = _toolsState.value.lastDiffResult ?: return
+        val banner = "LOADED DIFF (A-B) TO DECK (NULL ${"%.1f".format(diff.nullDepthDb)} dB)"
+        _toolsState.value = _toolsState.value.copy(lastToolReport = banner)
+        mutateDryBuffer(banner) { diff.diffBuffer }
+    }
+
+    fun updateMixParams(primaryGain: Float, secondaryGain: Float, offsetSec: Float, softLimit: Boolean) {
+        _toolsState.value = _toolsState.value.copy(
+            mixPrimaryGain = primaryGain.coerceIn(0f, 2f),
+            mixSecondaryGain = secondaryGain.coerceIn(0f, 2f),
+            mixOffsetSec = offsetSec.coerceIn(0f, 30f),
+            mixSoftLimit = softLimit
+        )
+    }
+
+    fun applyMixWithReference() {
+        val dry = _uiState.value.dryBuffer ?: return
+        val ref = _toolsState.value.referenceBuffer ?: run {
+            _toolsState.value = _toolsState.value.copy(lastToolReport = "LOAD OR PICK A REFERENCE B AUDIO FOR MIX")
+            return
+        }
+        val ts = _toolsState.value
+        val mixed = DesktopAudioToolsEngine.mixBuffers(
+            primary = dry,
+            secondary = ref,
+            primaryGain = ts.mixPrimaryGain,
+            secondaryGain = ts.mixSecondaryGain,
+            offsetSec = ts.mixOffsetSec,
+            softClipLimiter = ts.mixSoftLimit
+        )
+        val report = "MIXED DECK (${"%.2f".format(ts.mixPrimaryGain)}x) + REF (${"%.2f".format(ts.mixSecondaryGain)}x @ +${"%.2f".format(ts.mixOffsetSec)}s)"
+        _toolsState.value = _toolsState.value.copy(lastToolReport = report)
+        mutateDryBuffer(report) { mixed }
+    }
+
+    fun setMonoFoldMode(mode: MonoFoldMode) {
+        _toolsState.value = _toolsState.value.copy(monoFoldMode = mode)
+    }
+
+    fun applyMixToMono() {
+        val dry = _uiState.value.dryBuffer ?: return
+        val mode = _toolsState.value.monoFoldMode
+        val monoBuf = DesktopAudioToolsEngine.mixToMono(dry, mode)
+        val report = "CONVERTED TO MONO (${mode.label})"
+        _toolsState.value = _toolsState.value.copy(lastToolReport = report)
+        mutateDryBuffer(report) { monoBuf }
+    }
+
+    fun setStereoSplitParams(mode: StereoSplitMode, param: Float) {
+        _toolsState.value = _toolsState.value.copy(
+            stereoSplitMode = mode,
+            stereoSplitParam = param
+        )
+    }
+
+    fun applySplitToStereo() {
+        val dry = _uiState.value.dryBuffer ?: return
+        val ts = _toolsState.value
+        val stereoBuf = DesktopAudioToolsEngine.splitToStereo(dry, ts.stereoSplitMode, ts.stereoSplitParam)
+        val report = "SPLIT TO STEREO (${ts.stereoSplitMode.label})"
+        _toolsState.value = _toolsState.value.copy(lastToolReport = report)
+        mutateDryBuffer(report) { stereoBuf }
+    }
+
+    fun setRateConversionParams(sampleRate: Int, reinterpretOnly: Boolean) {
+        _toolsState.value = _toolsState.value.copy(
+            targetSampleRate = sampleRate.coerceIn(8000, 192000),
+            reinterpretRateOnly = reinterpretOnly
+        )
+    }
+
+    fun applyConvertSampleRate() {
+        val dry = _uiState.value.dryBuffer ?: return
+        val ts = _toolsState.value
+        val converted = DesktopAudioToolsEngine.convertSampleRate(
+            buffer = dry,
+            targetSampleRate = ts.targetSampleRate,
+            reinterpretHeaderOnly = ts.reinterpretRateOnly
+        )
+        val modeStr = if (ts.reinterpretRateOnly) "REINTERPRET VARISPEED" else "PITCH-LOCK RESAMPLE"
+        val report = "SAMPLE RATE -> ${converted.sampleRate} Hz ($modeStr)"
+        _toolsState.value = _toolsState.value.copy(lastToolReport = report)
+        mutateDryBuffer(report) { converted }
+    }
+
+    fun setFormatConversionParams(format: DesktopSampleFormat, dither: Boolean) {
+        _toolsState.value = _toolsState.value.copy(
+            targetSampleFormat = format,
+            applyDither = dither
+        )
+    }
+
+    fun applyConvertSampleFormat() {
+        val dry = _uiState.value.dryBuffer ?: return
+        val ts = _toolsState.value
+        val converted = DesktopAudioToolsEngine.convertSampleFormat(dry, ts.targetSampleFormat, ts.applyDither)
+        val report = "FORMAT -> ${ts.targetSampleFormat.label}${if (ts.applyDither) " + TPDF DITHER" else ""}"
+        _toolsState.value = _toolsState.value.copy(lastToolReport = report)
+        mutateDryBuffer(report) { converted }
+    }
+
+    // --- DESKTOP DSP PLUGIN MANAGER & PLUGIN INSTALLER ---
+
+    fun addPluginToChain(pluginId: String) {
+        val def = _toolsState.value.installedPlugins.firstOrNull { it.id == pluginId } ?: return
+        val keepLoop = playbackState.value.isPlaying && playbackState.value.isLooping
+        val nextChain = _toolsState.value.pluginChain + def.createSlotInstance()
+        _toolsState.value = _toolsState.value.copy(
+            pluginChain = nextChain,
+            lastToolReport = "ADDED PLUGIN: ${def.name} (${nextChain.size} in chain)"
+        )
+        _uiState.value.dryBuffer?.let { reprocessDsp(it, preserveLoopPlayback = keepLoop) }
+    }
+
+    fun removePluginFromChain(instanceId: String) {
+        val keepLoop = playbackState.value.isPlaying && playbackState.value.isLooping
+        val nextChain = _toolsState.value.pluginChain.filterNot { it.instanceId == instanceId }
+        _toolsState.value = _toolsState.value.copy(
+            pluginChain = nextChain,
+            lastToolReport = "REMOVED PLUGIN SLOT (${nextChain.size} remaining)"
+        )
+        _uiState.value.dryBuffer?.let { reprocessDsp(it, preserveLoopPlayback = keepLoop) }
+    }
+
+    fun movePluginInChain(instanceId: String, delta: Int) {
+        val cur = _toolsState.value.pluginChain.toMutableList()
+        val idx = cur.indexOfFirst { it.instanceId == instanceId }
+        val target = (idx + delta).coerceIn(0, (cur.size - 1).coerceAtLeast(0))
+        if (idx < 0 || idx == target) return
+        val keepLoop = playbackState.value.isPlaying && playbackState.value.isLooping
+        val item = cur.removeAt(idx)
+        cur.add(target, item)
+        _toolsState.value = _toolsState.value.copy(
+            pluginChain = cur,
+            lastToolReport = "REORDERED ${item.pluginName} -> SLOT ${target + 1}"
+        )
+        _uiState.value.dryBuffer?.let { reprocessDsp(it, preserveLoopPlayback = keepLoop) }
+    }
+
+    fun togglePluginBypass(instanceId: String) {
+        val keepLoop = playbackState.value.isPlaying && playbackState.value.isLooping
+        val nextChain = _toolsState.value.pluginChain.map { slot ->
+            if (slot.instanceId == instanceId) slot.copy(bypassed = !slot.bypassed) else slot
+        }
+        _toolsState.value = _toolsState.value.copy(pluginChain = nextChain)
+        _uiState.value.dryBuffer?.let { reprocessDsp(it, preserveLoopPlayback = keepLoop) }
+    }
+
+    fun updatePluginWetMix(instanceId: String, wetMix: Float) {
+        val keepLoop = playbackState.value.isPlaying && playbackState.value.isLooping
+        val nextChain = _toolsState.value.pluginChain.map { slot ->
+            if (slot.instanceId == instanceId) slot.copy(wetMix = wetMix.coerceIn(0f, 1f)) else slot
+        }
+        _toolsState.value = _toolsState.value.copy(pluginChain = nextChain)
+        _uiState.value.dryBuffer?.let { reprocessDsp(it, preserveLoopPlayback = keepLoop) }
+    }
+
+    fun updatePluginParam(instanceId: String, paramKey: String, value: Float) {
+        val keepLoop = playbackState.value.isPlaying && playbackState.value.isLooping
+        val nextChain = _toolsState.value.pluginChain.map { slot ->
+            if (slot.instanceId == instanceId) {
+                val updated = slot.paramValues.toMutableMap().apply { put(paramKey, value) }
+                slot.copy(paramValues = updated)
+            } else {
+                slot
+            }
+        }
+        _toolsState.value = _toolsState.value.copy(pluginChain = nextChain)
+        _uiState.value.dryBuffer?.let { reprocessDsp(it, preserveLoopPlayback = keepLoop) }
+    }
+
+    fun bouncePluginChainToDryBuffer() {
+        val dry = _uiState.value.dryBuffer ?: return
+        val ts = _toolsState.value
+        if (ts.pluginChain.none { it.enabled && !it.bypassed }) {
+            _toolsState.value = ts.copy(lastToolReport = "NO ACTIVE PLUGINS TO BOUNCE")
+            return
+        }
+        val defs = ts.installedPlugins.associateBy { it.id }
+        val rendered = DesktopPluginHostEngine.processChain(dry, ts.pluginChain, defs)
+        val bypassedChain = ts.pluginChain.map { it.copy(bypassed = true) }
+        val report = "BOUNCED ${ts.pluginChain.size} PLUGIN SLOTS INTO DECK BUFFER"
+        _toolsState.value = ts.copy(
+            pluginChain = bypassedChain,
+            lastToolReport = report
+        )
+        mutateDryBuffer(report) { rendered }
+    }
+
+    fun installCatalogPlugin(entry: DesktopPluginCatalogEntry) {
+        val saved = pluginRepo.installPlugin(entry.toDefinition())
+        val all = pluginRepo.loadAllPlugins()
+        val msg = "INSTALLED PLUGIN: ${saved.name} v${saved.version}"
+        _toolsState.value = _toolsState.value.copy(
+            installedPlugins = all,
+            lastToolReport = msg
+        )
+        _uiState.value = _uiState.value.copy(statusLine = msg)
+    }
+
+    fun uninstallCustomPlugin(pluginId: String) {
+        pluginRepo.uninstallPlugin(pluginId)
+        val all = pluginRepo.loadAllPlugins()
+        val keepLoop = playbackState.value.isPlaying && playbackState.value.isLooping
+        val cleanChain = _toolsState.value.pluginChain.filterNot { it.pluginId == pluginId }
+        _toolsState.value = _toolsState.value.copy(
+            installedPlugins = all,
+            pluginChain = cleanChain,
+            lastToolReport = "UNINSTALLED PLUGIN ($pluginId)"
+        )
+        _uiState.value.dryBuffer?.let { reprocessDsp(it, preserveLoopPlayback = keepLoop) }
+    }
+
+    fun importPluginOrIrFile(file: File): Result<String> {
+        return runCatching {
+            val ext = file.extension.lowercase()
+            if (ext == "json" || file.name.endsWith(".smpplugin.json", true)) {
+                val parsed = DesktopPluginCatalogRegistry.fromJson(file.readText()).getOrThrow()
+                pluginRepo.installPlugin(parsed)
+                val all = pluginRepo.loadAllPlugins()
+                val msg = "IMPORTED PLUGIN BUNDLE: ${parsed.name}"
+                _toolsState.value = _toolsState.value.copy(installedPlugins = all, lastToolReport = msg)
+                _uiState.value = _uiState.value.copy(statusLine = msg)
+                msg
+            } else {
+                val irBuf = DesktopWavCodec.readWav(file)
+                val pluginDef = DesktopPluginCatalogRegistry.createIrPluginFromBuffer(irBuf, file.nameWithoutExtension)
+                val current = (_toolsState.value.installedPlugins + pluginDef).distinctBy { it.id }
+                val msg = "LOADED WAV IMPULSE PLUGIN: ${pluginDef.name}"
+                _toolsState.value = _toolsState.value.copy(installedPlugins = current, lastToolReport = msg)
+                _uiState.value = _uiState.value.copy(statusLine = msg)
+                msg
+            }
+        }.onFailure { err ->
+            val msg = "PLUGIN/IR IMPORT FAILED: ${err.message}"
+            _toolsState.value = _toolsState.value.copy(lastToolReport = msg)
+            _uiState.value = _uiState.value.copy(statusLine = msg)
+        }
+    }
+
+    fun rescanNativeLinuxPlugins(extraDirs: List<File> = emptyList()) {
+        val found = pluginRepo.scanLinuxNativePlugins(extraDirs)
+        val msg = "SCANNED LINUX PLUGINS: ${found.size} LV2/LADSPA/VST BUNDLES DETECTED"
+        _toolsState.value = _toolsState.value.copy(
+            nativeLinuxPlugins = found,
+            lastToolReport = msg
+        )
+        _uiState.value = _uiState.value.copy(statusLine = msg)
     }
 
     fun shutdown() {

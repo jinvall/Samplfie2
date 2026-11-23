@@ -1,10 +1,21 @@
 package com.example.ui
 
 import com.example.audio.AudioBuffer
+import com.example.audio.AudioSampleFormat
+import com.example.audio.SpectrogramData
+import com.example.audio.SpectrogramPalette
 import com.example.audio.WaveformPeaks
 import com.example.export.ExportedAudioResult
 import com.example.export.ExportedMp3Result
 import com.example.network.SessionHandoffSnapshot
+import com.example.plugins.PluginCatalogEntry
+import com.example.plugins.PluginCatalogRegistry
+import com.example.plugins.PluginSlotInstance
+import com.example.plugins.SamplfiePluginDefinition
+import com.example.tools.AudioDifferenceResult
+import com.example.tools.ChannelScope
+import com.example.tools.MonoFoldMode
+import com.example.tools.StereoSplitMode
 import com.example.tuner.TunerInputSource
 import com.example.tuner.TunerReading
 import com.example.tuner.TuningPreset
@@ -12,7 +23,7 @@ import java.io.File
 
 /**
  * Circular studio hub-and-spoke device topology:
- * BOOTH is the central hub; 9 equal studio spokes (including TUNER and 64-Ch VMC) radiate around it.
+ * BOOTH is the central hub; studio spokes (incl. TOOLS, TUNER, and 64-Ch VMC) radiate around it.
  * Dock visibility and radial wheel spoke placement are customizable in Production Booth.
  */
 enum class StudioSpoke(
@@ -27,6 +38,7 @@ enum class StudioSpoke(
     TRACKS("TRACKS", "SYNCED TRACK TIMELINE", "SYNC"),
     FX_RACK("FX", "12-MODULE PRO DSP RACK", "DSP"),
     LIVE("LIVE", "LIVE STOMPBOX & RELEASE", "STAGE"),
+    TOOLS("TOOLS", "PRO TOOLS & PLUGINS", "PRO"),
     TUNER("TUNER", "CHROMATIC & STROBE TUNER", "PITCH"),
     VMC("VMC", "VMC 64-CH MIDI MAPPER", "MIDI")
 }
@@ -34,8 +46,46 @@ enum class StudioSpoke(
 enum class VisualizerMode(val label: String) {
     WAVEFORM("WAVE"),
     SPECTRUM("FFT"),
+    SPECTROGRAM("SPEC"),
+    WAVE_SPEC("W+SPEC"),
     DUAL("DUAL")
 }
+
+enum class ToolsSectionTab(val label: String) {
+    SPECTRAL_PHASE("SPECTRAL / DIFF"),
+    MIX_CHANNELS("MIX / MONO / STEREO"),
+    RATE_FORMAT("RATE / FORMAT"),
+    PLUGIN_MANAGER("PLUGINS"),
+    PLUGIN_INSTALLER("INSTALLER")
+}
+
+data class ToolsAndPluginsState(
+    val activeTab: ToolsSectionTab = ToolsSectionTab.SPECTRAL_PHASE,
+    val specPalette: SpectrogramPalette = SpectrogramPalette.SAMPLFIE_NEON,
+    val specFreqLowHz: Float = 220f,
+    val specFreqHighHz: Float = 3800f,
+    val specDeleteAttenDb: Float = 96f,
+    val invertScope: ChannelScope = ChannelScope.ALL,
+    val invertSelectionOnly: Boolean = false,
+    val referenceBuffer: AudioBuffer? = null,
+    val referenceLabel: String = "NO REF LOADED",
+    val lastDiffResult: AudioDifferenceResult? = null,
+    val mixPrimaryGain: Float = 1.0f,
+    val mixSecondaryGain: Float = 0.7f,
+    val mixOffsetSec: Float = 0f,
+    val mixSoftLimit: Boolean = true,
+    val monoFoldMode: MonoFoldMode = MonoFoldMode.AVERAGE,
+    val stereoSplitMode: StereoSplitMode = StereoSplitMode.HAAS_DELAY,
+    val stereoSplitParam: Float = 12f,
+    val targetSampleRate: Int = 44100,
+    val reinterpretRateOnly: Boolean = false,
+    val targetSampleFormat: AudioSampleFormat = AudioSampleFormat.PCM_16,
+    val applyDither: Boolean = false,
+    val installedPlugins: List<SamplfiePluginDefinition> = PluginCatalogRegistry.BUILT_IN_PLUGINS,
+    val pluginChain: List<PluginSlotInstance> = emptyList(),
+    val catalogEntries: List<PluginCatalogEntry> = PluginCatalogRegistry.INSTALLABLE_CATALOG,
+    val lastToolReport: String = "READY — SELECT SPECTRAL REGION OR AUDIO TOOL"
+)
 
 data class WorkspaceConfig(
     val pinnedDockSpokes: List<StudioSpoke> = listOf(
@@ -45,6 +95,7 @@ data class WorkspaceConfig(
         StudioSpoke.INSTRUMENTS,
         StudioSpoke.TRACKS,
         StudioSpoke.FX_RACK,
+        StudioSpoke.TOOLS,
         StudioSpoke.LIVE
     ),
     val radialWheelSpokes: List<StudioSpoke> = listOf(
@@ -53,7 +104,7 @@ data class WorkspaceConfig(
         StudioSpoke.INSTRUMENTS,
         StudioSpoke.TUNER,
         StudioSpoke.LIVE,
-        StudioSpoke.VMC,
+        StudioSpoke.TOOLS,
         StudioSpoke.TRACKS,
         StudioSpoke.FX_RACK
     )
@@ -78,13 +129,14 @@ data class EditorState(
     val dryPeaks: WaveformPeaks = WaveformPeaks(FloatArray(0), FloatArray(0), FloatArray(0)),
     val processedPeaks: WaveformPeaks = WaveformPeaks(FloatArray(0), FloatArray(0), FloatArray(0)),
     val staticSpectrum: FloatArray = FloatArray(32),
+    val spectrogram: SpectrogramData = SpectrogramData.EMPTY,
     val selectionStart: Float = 0f,
     val selectionEnd: Float = 1f,
     val playSelectionOnly: Boolean = false,
     val canUndo: Boolean = false,
     val isProcessingFx: Boolean = false,
     val isImportingAudio: Boolean = false,
-    val visualizerMode: VisualizerMode = VisualizerMode.DUAL,
+    val visualizerMode: VisualizerMode = VisualizerMode.WAVE_SPEC,
     val statusBanner: String = "HOLD TAC PAD TO RECORD .WAV OR IMPORT ANY AUDIO",
     val savedTakes: List<SavedTakeItem> = emptyList(),
     val lastExport: ExportedMp3Result? = null,
@@ -101,6 +153,7 @@ data class EditorState(
             dryPeaks == other.dryPeaks &&
             processedPeaks == other.processedPeaks &&
             staticSpectrum.contentEquals(other.staticSpectrum) &&
+            spectrogram == other.spectrogram &&
             selectionStart == other.selectionStart &&
             selectionEnd == other.selectionEnd &&
             playSelectionOnly == other.playSelectionOnly &&
@@ -123,6 +176,7 @@ data class EditorState(
         result = 31 * result + dryPeaks.hashCode()
         result = 31 * result + processedPeaks.hashCode()
         result = 31 * result + staticSpectrum.contentHashCode()
+        result = 31 * result + spectrogram.hashCode()
         result = 31 * result + selectionStart.hashCode()
         result = 31 * result + selectionEnd.hashCode()
         result = 31 * result + playSelectionOnly.hashCode()

@@ -72,13 +72,12 @@ class LiveStagePanel(
         val root = JPanel().apply {
             background = StudioTheme.ObsidianChassis
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            border = javax.swing.BorderFactory.createEmptyBorder(10, 12, 10, 12)
+            StudioTheme.setScaledPadding(this, 10, 12, 10, 12)
         }
 
         // Mode Switcher Bar
         val modeBar = StudioTheme.hardwarePanel(StudioTheme.TacCoral).apply {
-            layout = FlowLayout(FlowLayout.LEFT, 10, 4)
-            maximumSize = Dimension(Int.MAX_VALUE, 64)
+            layout = StudioWrapLayout(FlowLayout.LEFT, 10, 4)
             add(StudioTheme.hardwareLabel("LIVE STATION MODE:", StudioTheme.TacCoral, StudioTheme.TitleFont))
             add(modeLabel)
             DesktopLiveMode.entries.forEach { mode ->
@@ -89,31 +88,30 @@ class LiveStagePanel(
             add(StudioTheme.hardwareButton("SYNC ALL", StudioTheme.EmeraldSignal, filled = true) { onToggleSyncedPlay() })
         }
         root.add(modeBar)
-        root.add(Box.createVerticalStrut(10))
+        root.add(Box.createVerticalStrut(StudioTheme.s(10)))
         root.add(collabStrip)
-        root.add(Box.createVerticalStrut(10))
+        root.add(Box.createVerticalStrut(StudioTheme.s(10)))
 
         // Main Split: Left Stompbox Rack Controls + Right Interactive X/Y Pad
-        val mainRow = JPanel(GridLayout(1, 2, 12, 0)).apply {
+        val mainRow = object : JPanel(GridLayout(1, 2, StudioTheme.s(12), 0)) {
+            override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
+        }.apply {
             isOpaque = false
-            maximumSize = Dimension(Int.MAX_VALUE, 360)
 
-            val stompCard = StudioTheme.hardwarePanel(StudioTheme.TacCoral).apply {
+            val stompCard = StudioTheme.hardwarePanel(StudioTheme.TacCoral, autoFitBoxHeight = false).apply {
                 layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                val hdr = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2)).apply {
-                    isOpaque = false
+                val hdr = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 8, 2).apply {
                     add(StudioTheme.hardwareLabel("STOMPBOX MINI-PROCESSOR", StudioTheme.TacCoral, StudioTheme.TitleFont))
                     add(StudioTheme.hardwareButton("ENGAGE / BYPASS", StudioTheme.TacCoral, filled = true) { onToggleStompBypass() })
                 }
-                val kills = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2)).apply {
-                    isOpaque = false
+                val kills = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 8, 2).apply {
                     add(killDriveCb)
                     add(killModCb)
                     add(killTimeCb)
                 }
                 add(hdr)
                 add(kills)
-                add(Box.createVerticalStrut(6))
+                add(Box.createVerticalStrut(StudioTheme.s(6)))
 
                 tiltSlider.addChangeListener {
                     if (!updating && !tiltSlider.valueIsAdjusting) onUpdateStomp { copy(engaged = true, toneTilt = tiltSlider.value / 100f) }
@@ -134,10 +132,11 @@ class LiveStagePanel(
                 add(sliderPanel("SPACE / REVERB / DELAY SCALE (%)", spaceScaleSlider))
             }
 
-            val xyCard = StudioTheme.hardwarePanel(StudioTheme.NeonCyan).apply {
-                layout = BorderLayout(0, 6)
+            val xyCard = StudioTheme.hardwarePanel(StudioTheme.NeonCyan, autoFitBoxHeight = false).apply {
+                layout = BorderLayout(0, StudioTheme.s(6))
                 add(StudioTheme.hardwareLabel("LIVE X/Y EXPRESSION PAD (X: TONE TILT / MOD • Y: SPACE / AMBIENCE)", StudioTheme.NeonCyan, StudioTheme.LabelFont), BorderLayout.NORTH)
-                xyCanvas.preferredSize = Dimension(320, 260)
+                StudioTheme.setScaledPrefSize(xyCanvas, 320, 260)
+                StudioTheme.setScaledMinSize(xyCanvas, 200, 180)
                 add(xyCanvas, BorderLayout.CENTER)
             }
 
@@ -145,12 +144,11 @@ class LiveStagePanel(
             add(xyCard)
         }
         root.add(mainRow)
-        root.add(Box.createVerticalStrut(10))
+        root.add(Box.createVerticalStrut(StudioTheme.s(10)))
 
         // Master Release & Collaboration Console
         val releaseCard = StudioTheme.hardwarePanel(StudioTheme.EmeraldSignal).apply {
-            layout = FlowLayout(FlowLayout.LEFT, 10, 6)
-            maximumSize = Dimension(Int.MAX_VALUE, 70)
+            layout = StudioWrapLayout(FlowLayout.LEFT, 10, 6)
             add(StudioTheme.hardwareLabel("RELEASE & LIVE OUTPUT:", StudioTheme.EmeraldSignal, StudioTheme.TitleFont))
             add(StudioTheme.hardwareButton("EXPORT MASTER .WAV", StudioTheme.NeonCyan, filled = true) { onExportWav() })
             add(StudioTheme.hardwareButton("EXPORT RELEASE .MP3", StudioTheme.EmeraldSignal, filled = true) { onExportMp3() })
@@ -159,11 +157,7 @@ class LiveStagePanel(
         root.add(releaseCard)
         root.add(Box.createVerticalGlue())
 
-        add(JScrollPane(root).apply {
-            border = null
-            background = StudioTheme.ObsidianChassis
-            viewport.background = StudioTheme.ObsidianChassis
-        }, BorderLayout.CENTER)
+        add(StudioTheme.styleScrollPane(JScrollPane(root)), BorderLayout.CENTER)
     }
 
     fun updateState(
@@ -191,10 +185,7 @@ class LiveStagePanel(
     }
 
     private fun darkCheck(title: String, color: java.awt.Color, onToggle: (Boolean) -> Unit): JCheckBox =
-        JCheckBox(title).apply {
-            isOpaque = false
-            foreground = color
-            font = StudioTheme.LabelFont
+        StudioTheme.darkCheckBox(title, color).apply {
             addActionListener { if (!updating) onToggle(isSelected) }
         }
 
@@ -209,7 +200,7 @@ class LiveStagePanel(
     private inner class StompXyCanvas : JPanel() {
         init {
             background = StudioTheme.ObsidianChassis
-            border = StudioTheme.panelBorder(StudioTheme.HairlineDivider, 1)
+            StudioTheme.setScaledPanelBorder(this, StudioTheme.HairlineDivider, 1, 2, 2)
             cursor = Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR)
             addMouseListener(object : MouseAdapter() {
                 override fun mousePressed(e: MouseEvent) = sendXy(e.x, e.y)
@@ -231,6 +222,7 @@ class LiveStagePanel(
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
 
             g2.color = StudioTheme.withAlpha(StudioTheme.HairlineDivider, 120)
+            g2.stroke = StudioTheme.stroke(1f)
             for (i in 1..3) {
                 val gx = width * i / 4
                 val gy = height * i / 4
@@ -241,14 +233,16 @@ class LiveStagePanel(
             val px = (stompState.xyPadX * width).toInt()
             val py = ((1f - stompState.xyPadY) * height).toInt()
             g2.color = StudioTheme.withAlpha(StudioTheme.NeonCyan, 90)
-            g2.stroke = BasicStroke(1.5f)
+            g2.stroke = StudioTheme.stroke(1.5f)
             g2.drawLine(px, 0, px, height)
             g2.drawLine(0, py, width, py)
 
+            val innerR = StudioTheme.s(10)
+            val outerR = StudioTheme.s(14)
             g2.color = StudioTheme.TacCoral
-            g2.fillOval(px - 10, py - 10, 20, 20)
+            g2.fillOval(px - innerR, py - innerR, innerR * 2, innerR * 2)
             g2.color = StudioTheme.NeonCyan
-            g2.drawOval(px - 14, py - 14, 28, 28)
+            g2.drawOval(px - outerR, py - outerR, outerR * 2, outerR * 2)
 
             g2.dispose()
         }

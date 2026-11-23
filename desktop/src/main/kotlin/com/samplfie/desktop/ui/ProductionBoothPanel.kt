@@ -54,14 +54,7 @@ class ProductionBoothPanel(
 
     private var updating = false
 
-    private val nodeNameField = JTextField("LINUX DESKTOP RIG").apply {
-        preferredSize = Dimension(200, 30)
-        background = StudioTheme.ObsidianChassis
-        foreground = StudioTheme.TextPrimary
-        caretColor = StudioTheme.NeonCyan
-        font = StudioTheme.MonoFont
-        border = StudioTheme.panelBorder(StudioTheme.HairlineDivider, 1)
-    }
+    private val nodeNameField = StudioTheme.styleTextField(JTextField("LINUX DESKTOP RIG"), baseWidth = 210, baseHeight = 32)
 
     private val autoResumeCb = darkCheck("AUTO-RESUME LOOP/PLAY ON HANDOFF", StudioTheme.EmeraldSignal) { c ->
         onUpdateWorkspace { copy(autoResumeOnHandoff = c) }
@@ -107,7 +100,7 @@ class ProductionBoothPanel(
         val root = JPanel().apply {
             background = StudioTheme.ObsidianChassis
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            border = javax.swing.BorderFactory.createEmptyBorder(10, 12, 10, 12)
+            StudioTheme.setScaledPadding(this, 10, 12, 10, 12)
         }
 
         root.add(collabStrip)
@@ -116,12 +109,10 @@ class ProductionBoothPanel(
         // Equal Peer Handoff Card
         val handoffCard = StudioTheme.hardwarePanel(StudioTheme.NeonCyan).apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            maximumSize = Dimension(Int.MAX_VALUE, 165)
             add(StudioTheme.hardwareLabel("EQUAL PEER SESSION HANDOFF (DESKTOP <-> ANDROID)", StudioTheme.NeonCyan, StudioTheme.TitleFont))
             add(Box.createVerticalStrut(6))
 
-            val row1 = JPanel(FlowLayout(FlowLayout.LEFT, 10, 4)).apply {
-                isOpaque = false
+            val row1 = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 10, 4).apply {
                 add(StudioTheme.hardwareLabel("RIG NAME:", StudioTheme.TextSecondary))
                 add(nodeNameField)
                 add(StudioTheme.hardwareButton("SAVE NAME", StudioTheme.NeonCyan) {
@@ -131,8 +122,7 @@ class ProductionBoothPanel(
                 add(autoResumeCb)
                 add(autoAcceptCb)
             }
-            val row2 = JPanel(FlowLayout(FlowLayout.LEFT, 10, 4)).apply {
-                isOpaque = false
+            val row2 = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 10, 4).apply {
                 add(StudioTheme.hardwareButton("PUSH SESSION -> PEER", StudioTheme.EmeraldSignal, filled = true) { onPushHandoff() })
                 add(StudioTheme.hardwareButton("GRAB SESSION FROM PEER", StudioTheme.AmberHot, filled = true) { onGrabHandoff() })
                 add(applyPendingBtn)
@@ -150,7 +140,6 @@ class ProductionBoothPanel(
         // Live Master Telemetry Strip
         val telemetryCard = StudioTheme.hardwarePanel(StudioTheme.EmeraldSignal).apply {
             layout = BorderLayout(8, 4)
-            maximumSize = Dimension(Int.MAX_VALUE, 64)
             add(StudioTheme.hardwareLabel("LIVE PRODUCTION BOOTH TELEMETRY", StudioTheme.EmeraldSignal, StudioTheme.TitleFont), BorderLayout.NORTH)
             add(telemetryLabel, BorderLayout.CENTER)
         }
@@ -160,9 +149,8 @@ class ProductionBoothPanel(
         // Quick Station Launcher Grid
         val launcherCard = StudioTheme.hardwarePanel(StudioTheme.VioletMod).apply {
             layout = BorderLayout(0, 8)
-            maximumSize = Dimension(Int.MAX_VALUE, 130)
             add(StudioTheme.hardwareLabel("ALL STUDIO SPOKES (EQUAL WORKSTATION LAUNCHER)", StudioTheme.VioletMod, StudioTheme.TitleFont), BorderLayout.NORTH)
-            val grid = JPanel(GridLayout(2, 5, 8, 8)).apply {
+            val grid = JPanel(GridLayout(0, 4, 8, 8)).apply {
                 isOpaque = false
                 DesktopStation.entries.forEach { st ->
                     val accent = stationAccent(st)
@@ -183,7 +171,6 @@ class ProductionBoothPanel(
         // Workspace Customizer
         val customizerCard = StudioTheme.hardwarePanel(StudioTheme.AmberHot).apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            maximumSize = Dimension(Int.MAX_VALUE, 280)
             add(StudioTheme.hardwareLabel("WORKSPACE CUSTOMIZER (TOP DOCK & 8-SPOKE RADIAL WHEEL)", StudioTheme.AmberHot, StudioTheme.TitleFont))
             add(Box.createVerticalStrut(6))
 
@@ -191,7 +178,7 @@ class ProductionBoothPanel(
                 isOpaque = false
                 val dockPanel = JPanel(GridLayout(0, 2, 6, 4)).apply {
                     isOpaque = false
-                    border = StudioTheme.panelBorder(StudioTheme.HairlineDivider, 1)
+                    StudioTheme.setScaledPanelBorder(this, StudioTheme.HairlineDivider, 1, 8, 10)
                     DesktopStation.entries.forEach { st ->
                         val cb = darkCheck("DOCK: ${st.shortLabel}", stationAccent(st)) {
                             onTogglePinStation(st)
@@ -204,7 +191,7 @@ class ProductionBoothPanel(
                 }
                 val wheelPanel = JPanel(GridLayout(0, 2, 6, 4)).apply {
                     isOpaque = false
-                    border = StudioTheme.panelBorder(StudioTheme.HairlineDivider, 1)
+                    StudioTheme.setScaledPanelBorder(this, StudioTheme.HairlineDivider, 1, 8, 10)
                     DesktopStation.entries.filter { it != DesktopStation.BOOTH }.forEach { st ->
                         val cb = darkCheck("WHEEL: ${st.shortLabel}", stationAccent(st)) {
                             onToggleRadialSpoke(st)
@@ -221,11 +208,7 @@ class ProductionBoothPanel(
         root.add(customizerCard)
         root.add(Box.createVerticalGlue())
 
-        add(JScrollPane(root).apply {
-            border = null
-            background = StudioTheme.ObsidianChassis
-            viewport.background = StudioTheme.ObsidianChassis
-        }, BorderLayout.CENTER)
+        add(StudioTheme.styleScrollPane(JScrollPane(root)), BorderLayout.CENTER)
     }
 
     fun updateState(
@@ -269,11 +252,8 @@ class ProductionBoothPanel(
     }
 
     private fun darkCheck(title: String, color: java.awt.Color, onToggle: (Boolean) -> Unit): JCheckBox =
-        JCheckBox(title).apply {
-            isOpaque = false
-            foreground = color
-            font = StudioTheme.LabelFont
-            addActionListener { if (!updating) onToggle(isSelected) }
+        StudioTheme.darkCheckBox(title, color) { selected ->
+            if (!updating) onToggle(selected)
         }
 
     companion object {
@@ -285,6 +265,7 @@ class ProductionBoothPanel(
             DesktopStation.TRACKS -> StudioTheme.VioletMod
             DesktopStation.FX_STOMP -> StudioTheme.MagentaFx
             DesktopStation.LIVE -> StudioTheme.TacCoral
+            DesktopStation.TOOLS -> StudioTheme.MagentaFx
             DesktopStation.TUNER -> StudioTheme.EmeraldSignal
             DesktopStation.VMC -> StudioTheme.NeonCyan
             DesktopStation.NET_LINK -> StudioTheme.AmberHot

@@ -9,7 +9,6 @@ import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.Dimension
 import java.awt.FlowLayout
-import java.awt.GridLayout
 import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
@@ -33,60 +32,39 @@ class DesktopSecretsVaultDialog(
     private val currentStateProvider: () -> DesktopSecretsState
 ) : JDialog(owner, "Secrets & Keys Vault — Samplfie2", true) {
 
-    private val disbandField = JPasswordField(24).apply {
-        background = StudioTheme.ObsidianChassis
-        foreground = StudioTheme.TextPrimary
-        caretColor = StudioTheme.NeonCyan
-        font = StudioTheme.MonoFont
-        border = StudioTheme.panelBorder(StudioTheme.HairlineDivider, 1)
-    }
-    private val urlField = JTextField(initialState.disbandBaseUrl, 24).apply {
-        background = StudioTheme.ObsidianChassis
-        foreground = StudioTheme.TextPrimary
-        caretColor = StudioTheme.NeonCyan
-        font = StudioTheme.MonoFont
-        border = StudioTheme.panelBorder(StudioTheme.HairlineDivider, 1)
-    }
-    private val customNameField = JTextField(14).apply {
-        background = StudioTheme.ObsidianChassis
-        foreground = StudioTheme.TextPrimary
-        caretColor = StudioTheme.NeonCyan
-        font = StudioTheme.MonoFont
-        border = StudioTheme.panelBorder(StudioTheme.HairlineDivider, 1)
-    }
-    private val customValueField = JPasswordField(18).apply {
-        background = StudioTheme.ObsidianChassis
-        foreground = StudioTheme.TextPrimary
-        caretColor = StudioTheme.NeonCyan
-        font = StudioTheme.MonoFont
-        border = StudioTheme.panelBorder(StudioTheme.HairlineDivider, 1)
-    }
+    private val disbandField = StudioTheme.styleTextField(JPasswordField(24), 12f, 260, 32) as JPasswordField
+    private val urlField = StudioTheme.styleTextField(JTextField(initialState.disbandBaseUrl, 24), 12f, 280, 32)
+    private val customNameField = StudioTheme.styleTextField(JTextField(14), 12f, 160, 32)
+    private val customValueField = StudioTheme.styleTextField(JPasswordField(18), 12f, 200, 32) as JPasswordField
     private val disbandStatusLabel = StudioTheme.hardwareLabel("", StudioTheme.EmeraldSignal, StudioTheme.MonoFont)
     private val entriesListPanel = JPanel().apply {
         isOpaque = false
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
     }
+    private val scaleListener: (Float) -> Unit = {
+        size = StudioTheme.scaledDialogSize(700, 560)
+        StudioTheme.rescaleComponentTree(this)
+    }
 
     init {
-        size = Dimension(620, 520)
+        size = StudioTheme.scaledDialogSize(700, 560)
         background = StudioTheme.GunmetalDeck
-        layout = BorderLayout(8, 8)
+        layout = BorderLayout(StudioTheme.s(8), StudioTheme.s(8))
 
         val root = JPanel().apply {
             background = StudioTheme.GunmetalDeck
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            border = BorderFactory.createEmptyBorder(12, 14, 12, 14)
+            StudioTheme.setScaledPadding(this, 12, 14, 12, 14)
         }
 
         // Disband Key Box
         val disbandBox = StudioTheme.hardwarePanel(StudioTheme.NeonCyan).apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             add(StudioTheme.hardwareLabel("DISBAND STEM API KEY (~/.config/samplfie2/secrets.properties • 0600)", StudioTheme.NeonCyan, StudioTheme.TitleFont))
-            add(Box.createVerticalStrut(6))
+            add(Box.createVerticalStrut(StudioTheme.s(6)))
             add(disbandStatusLabel)
-            add(Box.createVerticalStrut(6))
-            val r1 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4)).apply {
-                isOpaque = false
+            add(Box.createVerticalStrut(StudioTheme.s(6)))
+            val r1 = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 6, 4).apply {
                 add(StudioTheme.hardwareLabel("DISBAND_API_KEY:", StudioTheme.TextSecondary))
                 add(disbandField)
                 add(StudioTheme.hardwareButton("SHOW/HIDE", StudioTheme.TextSecondary) {
@@ -105,8 +83,7 @@ class DesktopSecretsVaultDialog(
                     refreshEntries()
                 })
             }
-            val r2 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4)).apply {
-                isOpaque = false
+            val r2 = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 6, 4).apply {
                 add(StudioTheme.hardwareLabel("ENDPOINT URL:", StudioTheme.TextSecondary))
                 add(urlField)
                 add(StudioTheme.hardwareButton("SAVE URL", StudioTheme.NeonCyan) {
@@ -118,15 +95,14 @@ class DesktopSecretsVaultDialog(
             add(r2)
         }
         root.add(disbandBox)
-        root.add(Box.createVerticalStrut(10))
+        root.add(Box.createVerticalStrut(StudioTheme.s(10)))
 
         // Custom Secret Box
         val customBox = StudioTheme.hardwarePanel(StudioTheme.VioletMod).apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             add(StudioTheme.hardwareLabel("ADD CUSTOM KEY OR SECRET", StudioTheme.VioletMod, StudioTheme.TitleFont))
-            add(Box.createVerticalStrut(4))
-            val r = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4)).apply {
-                isOpaque = false
+            add(Box.createVerticalStrut(StudioTheme.s(4)))
+            val r = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 6, 4).apply {
                 add(StudioTheme.hardwareLabel("KEY:", StudioTheme.TextSecondary))
                 add(customNameField)
                 add(StudioTheme.hardwareLabel("SECRET:", StudioTheme.TextSecondary))
@@ -145,30 +121,35 @@ class DesktopSecretsVaultDialog(
             add(r)
         }
         root.add(customBox)
-        root.add(Box.createVerticalStrut(10))
+        root.add(Box.createVerticalStrut(StudioTheme.s(10)))
 
         // Entries List
         val listBox = StudioTheme.hardwarePanel(StudioTheme.HairlineDivider).apply {
-            layout = BorderLayout(4, 6)
+            layout = BorderLayout(StudioTheme.s(4), StudioTheme.s(6))
             add(StudioTheme.hardwareLabel("STORED CREDENTIALS", StudioTheme.TextSecondary, StudioTheme.TitleFont), BorderLayout.NORTH)
-            add(JScrollPane(entriesListPanel).apply {
-                border = null
+            add(StudioTheme.styleScrollPane(JScrollPane(entriesListPanel).apply {
                 isOpaque = false
                 viewport.isOpaque = false
-                preferredSize = Dimension(560, 140)
-            }, BorderLayout.CENTER)
+                StudioTheme.setScaledPrefSize(this, 560, 150)
+            }), BorderLayout.CENTER)
         }
         root.add(listBox)
 
-        add(root, BorderLayout.CENTER)
-        val footer = JPanel(FlowLayout(FlowLayout.RIGHT)).apply {
+        add(StudioTheme.styleScrollPane(JScrollPane(root)), BorderLayout.CENTER)
+        val footer = StudioTheme.wrapRowPanel(FlowLayout.RIGHT, 8, 6, opaque = true).apply {
             background = StudioTheme.GunmetalDeck
             add(StudioTheme.hardwareButton("CLOSE", StudioTheme.NeonCyan) { dispose() })
         }
         add(footer, BorderLayout.SOUTH)
 
+        StudioTheme.addScaleListener(scaleListener)
         refreshEntries()
         setLocationRelativeTo(owner)
+    }
+
+    override fun dispose() {
+        StudioTheme.removeScaleListener(scaleListener)
+        super.dispose()
     }
 
     private fun refreshEntries() {
@@ -180,8 +161,7 @@ class DesktopSecretsVaultDialog(
             entriesListPanel.add(StudioTheme.hardwareLabel("No secrets stored yet.", StudioTheme.TextMuted))
         } else {
             st.entries.forEach { e ->
-                val row = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2)).apply {
-                    isOpaque = false
+                val row = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 8, 2).apply {
                     add(StudioTheme.hardwareLabel("${e.keyName}: ${e.maskedValue} (${e.sourceLabel})", StudioTheme.TextPrimary, StudioTheme.MonoFont))
                     if (!e.isReadOnlyEnv) {
                         add(StudioTheme.hardwareButton("DEL", StudioTheme.TacCoral) {
@@ -218,10 +198,7 @@ class DesktopStemSeparationPanel(
 
     private var updating = false
     private val stemCheckboxes = mutableMapOf<DesktopDisbandStem, JCheckBox>()
-    private val scopeSelCb = JCheckBox("SELECTION ONLY").apply {
-        isOpaque = false
-        foreground = StudioTheme.NeonCyan
-        font = StudioTheme.LabelFont
+    private val scopeSelCb = StudioTheme.styleCheckBox(JCheckBox("SELECTION ONLY"), StudioTheme.NeonCyan, 12f).apply {
         addActionListener { if (!updating) onSetScopeSelectionOnly(isSelected) }
     }
     private val keyBadge = StudioTheme.hardwareLabel("KEY: MISSING", StudioTheme.AmberHot, StudioTheme.MonoFont)
@@ -238,25 +215,23 @@ class DesktopStemSeparationPanel(
 
     init {
         background = StudioTheme.BrushedPanel
-        border = StudioTheme.panelBorder(StudioTheme.MagentaFx, 1)
+        StudioTheme.setScaledPanelBorder(this, StudioTheme.MagentaFx, 1)
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
 
-        val header = JPanel(BorderLayout(8, 0)).apply {
+        val header = JPanel(BorderLayout(StudioTheme.s(8), 0)).apply {
             isOpaque = false
             add(StudioTheme.hardwareLabel("DISBAND AI STEM SEPARATION (VOCALS / DRUMS / BASS / GUITAR / ALL)", StudioTheme.MagentaFx, StudioTheme.TitleFont), BorderLayout.WEST)
-            val right = JPanel(FlowLayout(FlowLayout.RIGHT, 8, 0)).apply {
-                isOpaque = false
+            val right = StudioTheme.wrapRowPanel(FlowLayout.RIGHT, 8, 2).apply {
                 add(keyBadge)
                 add(StudioTheme.hardwareButton("KEYS & SECRETS", StudioTheme.NeonCyan) { onOpenVault() })
             }
             add(right, BorderLayout.EAST)
         }
         add(header)
-        add(Box.createVerticalStrut(6))
+        add(Box.createVerticalStrut(StudioTheme.s(6)))
 
         // Quick Presets Row
-        val presetRow = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2)).apply {
-            isOpaque = false
+        val presetRow = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 6, 3).apply {
             add(StudioTheme.hardwareLabel("PRESETS:", StudioTheme.TextSecondary))
             DesktopStemPreset.entries.forEach { preset ->
                 val accent = if (preset == DesktopStemPreset.UNSPECIFIED_ALL) StudioTheme.AmberHot else StudioTheme.NeonCyan
@@ -265,14 +240,14 @@ class DesktopStemSeparationPanel(
         }
         add(presetRow)
 
-        // Primary + Pro Sub-stem checkboxes
-        val stemsGrid = JPanel(GridLayout(0, 7, 4, 2)).apply {
-            isOpaque = false
+        // Primary + Pro Sub-stem checkboxes (wrapping dynamically so labels never clip at 200%-300%)
+        val stemsGrid = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 12, 4).apply {
             DesktopDisbandStem.entries.forEach { stem ->
-                val cb = JCheckBox(stem.label).apply {
-                    isOpaque = false
-                    foreground = if (stem.isPrimary) StudioTheme.MagentaFx else StudioTheme.VioletMod
-                    font = StudioTheme.LabelFont
+                val cb = StudioTheme.styleCheckBox(
+                    JCheckBox(stem.label),
+                    if (stem.isPrimary) StudioTheme.MagentaFx else StudioTheme.VioletMod,
+                    12f
+                ).apply {
                     addActionListener { if (!updating) onToggleStem(stem) }
                 }
                 stemCheckboxes[stem] = cb
@@ -280,11 +255,10 @@ class DesktopStemSeparationPanel(
             }
         }
         add(stemsGrid)
-        add(Box.createVerticalStrut(4))
+        add(Box.createVerticalStrut(StudioTheme.s(4)))
 
         // Action bar
-        val actionRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2)).apply {
-            isOpaque = false
+        val actionRow = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 8, 3).apply {
             add(scopeSelCb)
             add(separateBtn)
             add(cancelBtn)
@@ -293,9 +267,11 @@ class DesktopStemSeparationPanel(
         }
         add(actionRow)
         add(statusLabel)
-        add(Box.createVerticalStrut(4))
+        add(Box.createVerticalStrut(StudioTheme.s(4)))
         add(resultsPanel)
     }
+
+    override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height.coerceAtLeast(StudioTheme.s(120)))
 
     fun updateState(st: DesktopStemState, secrets: DesktopSecretsState) {
         updating = true
@@ -322,8 +298,7 @@ class DesktopStemSeparationPanel(
                 lastStemsSignature = sig
                 resultsPanel.removeAll()
                 st.separatedStems.forEachIndexed { idx, stem ->
-                    val row = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2)).apply {
-                        isOpaque = false
+                    val row = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 6, 2).apply {
                         val slot = idx % 4
                         add(StudioTheme.hardwareLabel("${stem.label.uppercase()} (${"%.2f".format(stem.buffer.durationSeconds)}s, ${stem.sizeBytes / 1024}KB)", StudioTheme.NeonCyan, StudioTheme.MonoFont))
                         add(StudioTheme.hardwareButton("-> DECK", StudioTheme.NeonCyan) { onLoadStemToDeck(stem.stemId) })

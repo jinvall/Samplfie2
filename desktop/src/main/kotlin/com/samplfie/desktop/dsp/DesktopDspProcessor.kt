@@ -3,6 +3,9 @@ package com.samplfie.desktop.dsp
 import com.samplfie.desktop.model.DesktopAudioBuffer
 import com.samplfie.desktop.model.DesktopFxState
 import com.samplfie.desktop.model.DesktopStompState
+import com.samplfie.desktop.plugins.DesktopPluginDefinition
+import com.samplfie.desktop.plugins.DesktopPluginHostEngine
+import com.samplfie.desktop.plugins.DesktopPluginSlotInstance
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -13,15 +16,17 @@ import kotlin.math.sin
 import kotlin.math.tanh
 
 /**
- * Pure-Kotlin 12-module DSP chain + Stompbox Master Tilt/Kill/Wet processor matching
- * Samplfie2 Android's audio effects engine.
+ * Pure-Kotlin 12-module DSP chain + Stompbox Master Tilt/Kill/Wet processor + Plugin Chain
+ * matching Samplfie2 Android's audio effects & plugin engine.
  */
 object DesktopDspProcessor {
 
     fun process(
         dry: DesktopAudioBuffer,
         fx: DesktopFxState,
-        stomp: DesktopStompState
+        stomp: DesktopStompState,
+        pluginChain: List<DesktopPluginSlotInstance> = emptyList(),
+        pluginDefs: Map<String, DesktopPluginDefinition> = emptyMap()
     ): DesktopAudioBuffer {
         if (dry.frameCount == 0 || fx.masterBypass) return dry
 
@@ -60,6 +65,9 @@ object DesktopDspProcessor {
         }
         if (stomp.engaged) {
             buf = applyStompMaster(dry, buf, stomp, sr)
+        }
+        if (pluginChain.any { it.enabled && !it.bypassed }) {
+            buf = DesktopPluginHostEngine.processChain(buf, pluginChain, pluginDefs)
         }
         return buf
     }

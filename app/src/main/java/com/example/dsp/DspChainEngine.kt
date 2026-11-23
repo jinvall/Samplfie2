@@ -1,10 +1,13 @@
 package com.example.dsp
 
 import com.example.audio.AudioBuffer
+import com.example.plugins.AudioPluginHostEngine
+import com.example.plugins.PluginSlotInstance
+import com.example.plugins.SamplfiePluginDefinition
 
 /**
- * Applies the active FX Rack signal chain and optional Live Stompbox Master Multi-FX macro processor
- * non-destructively to an AudioBuffer.
+ * Applies the active FX Rack signal chain, Live Stompbox Master Multi-FX macro processor,
+ * and active DSP Plugin Chain non-destructively to an AudioBuffer.
  */
 object DspChainEngine {
 
@@ -12,18 +15,21 @@ object DspChainEngine {
         source: AudioBuffer,
         rack: FxRackState,
         stompbox: StompboxMasterState = StompboxMasterState(engaged = false),
-        bpm: Float = 124f
+        bpm: Float = 124f,
+        pluginChain: List<PluginSlotInstance> = emptyList(),
+        pluginDefs: Map<String, SamplfiePluginDefinition> = emptyMap()
     ): AudioBuffer {
         if (rack.masterBypass || source.frameCount == 0) {
             return source
         }
 
+        val activePlugins = pluginChain.any { it.enabled && !it.bypassed }
         val stompActive = stompbox.engaged
         val hasStompEqOrTrim = stompActive && (
             kotlin.math.abs(stompbox.toneTilt) >= 0.02f ||
                 kotlin.math.abs(stompbox.dynamicsTrimDb) >= 0.05f
             )
-        if (rack.activeCount == 0 && !hasStompEqOrTrim) {
+        if (rack.activeCount == 0 && !hasStompEqOrTrim && !activePlugins) {
             return source
         }
 
@@ -119,6 +125,10 @@ object DspChainEngine {
             }
         }
 
-        return source.copy(samples = working)
+        var resultBuf = source.copy(samples = working)
+        if (activePlugins) {
+            resultBuf = AudioPluginHostEngine.processChain(resultBuf, pluginChain, pluginDefs)
+        }
+        return resultBuf
     }
 }

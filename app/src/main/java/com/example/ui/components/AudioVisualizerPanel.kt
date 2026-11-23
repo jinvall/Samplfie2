@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import android.graphics.Bitmap
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -7,6 +8,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -32,17 +35,22 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.example.audio.SpectrogramData
+import com.example.audio.SpectrogramPalette
 import com.example.audio.WaveformPeaks
 import com.example.ui.VisualizerMode
 import com.example.ui.theme.AmberHot
 import com.example.ui.theme.ElevatedBezel
 import com.example.ui.theme.EmeraldSignal
-import com.example.ui.theme.GunmetalDeck
 import com.example.ui.theme.HairlineDivider
 import com.example.ui.theme.MagentaFx
 import com.example.ui.theme.NeonCyan
@@ -53,13 +61,16 @@ import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.VioletMod
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 
 /**
  * Real-time responsive Audio Visualizer for Samplfie2 Editor:
  * - WAVEFORM: Dual-layer dry ghost + glowing FX-processed waveform, draggable IN/OUT selection markers,
  *   glowing playhead scrub, and live mic capture pulse.
  * - FFT SPECTRUM: 32-band logarithmic real-time spectrum analyzer with gradient bars & peak caps.
- * - DUAL: Simultaneous Waveform + FFT Spectrum stacked view.
+ * - SPECTROGRAM: Time-frequency STFT heatmap rendered with the 10-stop gradient & 2D box select.
+ * - WAVE + SPEC / DUAL: Simultaneous Waveform + Spectrogram or Waveform + FFT stacked view.
  */
 @Composable
 fun AudioVisualizerPanel(
@@ -79,6 +90,11 @@ fun AudioVisualizerPanel(
     onModeChange: (VisualizerMode) -> Unit,
     onSelectionChange: (Float, Float) -> Unit,
     onSeekPlayhead: (Float) -> Unit,
+    spectrogram: SpectrogramData = SpectrogramData.EMPTY,
+    specPalette: SpectrogramPalette = SpectrogramPalette.SAMPLFIE_NEON,
+    specFreqLowHz: Float = 220f,
+    specFreqHighHz: Float = 3800f,
+    onSpecFreqRangeChange: (Float, Float) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     HardwarePanel(
@@ -95,7 +111,12 @@ fun AudioVisualizerPanel(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
                 VisualizerMode.entries.forEach { mode ->
                     val selected = mode == visualizerMode
                     Surface(
@@ -111,7 +132,7 @@ fun AudioVisualizerPanel(
                             text = mode.label,
                             style = MaterialTheme.typography.labelSmall,
                             color = if (selected) NeonCyan else TextSecondary,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
                         )
                     }
                 }
@@ -119,11 +140,12 @@ fun AudioVisualizerPanel(
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.padding(start = 6.dp)
             ) {
                 val selDur = ((selectionEnd - selectionStart) * durationSec).coerceAtLeast(0f)
                 Text(
-                    text = if (isRecording) "REC IN" else "SEL ${"%.2f".format(selDur)}s / ${"%.2f".format(durationSec)}s",
+                    text = if (isRecording) "REC IN" else "${"%.2f".format(selDur)}s/${"%.2f".format(durationSec)}s",
                     style = MaterialTheme.typography.labelSmall,
                     color = if (isRecording) TacCoral else TextSecondary
                 )
@@ -178,6 +200,60 @@ fun AudioVisualizerPanel(
                         .height(176.dp)
                 )
             }
+            VisualizerMode.SPECTROGRAM -> {
+                SpectrogramCanvas(
+                    spectrogram = spectrogram,
+                    palette = specPalette,
+                    playheadFraction = playheadFraction,
+                    isPlaying = isPlaying,
+                    selectionStart = selectionStart,
+                    selectionEnd = selectionEnd,
+                    freqLowHz = specFreqLowHz,
+                    freqHighHz = specFreqHighHz,
+                    onSelectionChange = onSelectionChange,
+                    onFreqRangeChange = onSpecFreqRangeChange,
+                    onSeekPlayhead = onSeekPlayhead,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(190.dp)
+                )
+            }
+            VisualizerMode.WAVE_SPEC -> {
+                WaveformCanvas(
+                    dryPeaks = dryPeaks,
+                    processedPeaks = processedPeaks,
+                    liveMicWaveform = liveMicWaveform,
+                    isRecording = isRecording,
+                    isPlaying = isPlaying,
+                    playheadFraction = playheadFraction,
+                    selectionStart = selectionStart,
+                    selectionEnd = selectionEnd,
+                    activeFxCount = activeFxCount,
+                    isMasterBypass = isMasterBypass,
+                    onSelectionChange = onSelectionChange,
+                    onSeekPlayhead = onSeekPlayhead,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(104.dp)
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                SpectrogramCanvas(
+                    spectrogram = spectrogram,
+                    palette = specPalette,
+                    playheadFraction = playheadFraction,
+                    isPlaying = isPlaying,
+                    selectionStart = selectionStart,
+                    selectionEnd = selectionEnd,
+                    freqLowHz = specFreqLowHz,
+                    freqHighHz = specFreqHighHz,
+                    onSelectionChange = onSelectionChange,
+                    onFreqRangeChange = onSpecFreqRangeChange,
+                    onSeekPlayhead = onSeekPlayhead,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(114.dp)
+                )
+            }
             VisualizerMode.DUAL -> {
                 WaveformCanvas(
                     dryPeaks = dryPeaks,
@@ -206,6 +282,170 @@ fun AudioVisualizerPanel(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(74.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SpectrogramCanvas(
+    spectrogram: SpectrogramData,
+    palette: SpectrogramPalette,
+    playheadFraction: Float,
+    isPlaying: Boolean,
+    selectionStart: Float,
+    selectionEnd: Float,
+    freqLowHz: Float,
+    freqHighHz: Float,
+    onSelectionChange: (Float, Float) -> Unit,
+    onFreqRangeChange: (Float, Float) -> Unit,
+    onSeekPlayhead: (Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val imageBitmap = remember(spectrogram, palette) {
+        if (spectrogram.isEmpty) {
+            null
+        } else {
+            val lut = SpectrogramPalette.buildLut256(palette.stopsArgb)
+            val cols = spectrogram.frames
+            val rows = spectrogram.bins
+            val pixels = IntArray(cols * rows)
+            for (b in 0 until rows) {
+                val y = rows - 1 - b
+                val rowOff = y * cols
+                for (f in 0 until cols) {
+                    val v = spectrogram.valueAt(f, b)
+                    val lutIdx = (v * 255f).toInt().coerceIn(0, 255)
+                    pixels[rowOff + f] = lut[lutIdx]
+                }
+            }
+            Bitmap.createBitmap(pixels, cols, rows, Bitmap.Config.ARGB_8888).asImageBitmap()
+        }
+    }
+
+    var dragAnchorX by remember { mutableStateOf(0f) }
+    var dragAnchorY by remember { mutableStateOf(0f) }
+
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(ObsidianChassis)
+            .border(1.dp, ElevatedBezel, RoundedCornerShape(8.dp))
+            .pointerInput(spectrogram) {
+                detectTapGestures { offset ->
+                    val frac = (offset.x / max(1f, size.width.toFloat())).coerceIn(0f, 1f)
+                    onSeekPlayhead(frac)
+                }
+            }
+            .pointerInput(spectrogram) {
+                detectDragGestures(
+                    onDragStart = { offset ->
+                        dragAnchorX = (offset.x / max(1f, size.width.toFloat())).coerceIn(0f, 1f)
+                        dragAnchorY = (1f - offset.y / max(1f, size.height.toFloat())).coerceIn(0f, 1f)
+                    },
+                    onDrag = { change, _ ->
+                        change.consume()
+                        val curX = (change.position.x / max(1f, size.width.toFloat())).coerceIn(0f, 1f)
+                        val curY = (1f - change.position.y / max(1f, size.height.toFloat())).coerceIn(0f, 1f)
+                        if (abs(curX - dragAnchorX) > 0.02f) {
+                            onSelectionChange(min(dragAnchorX, curX), max(dragAnchorX, curX))
+                        }
+                        if (abs(curY - dragAnchorY) > 0.03f && !spectrogram.isEmpty) {
+                            val f0 = spectrogram.normYToFreqHz(min(dragAnchorY, curY))
+                            val f1 = spectrogram.normYToFreqHz(max(dragAnchorY, curY))
+                            onFreqRangeChange(f0, f1)
+                        }
+                    }
+                )
+            }
+            .testTag("spectrogram_canvas")
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val w = size.width
+            val h = size.height
+            if (imageBitmap != null) {
+                drawImage(
+                    image = imageBitmap,
+                    dstOffset = IntOffset.Zero,
+                    dstSize = IntSize(w.toInt().coerceAtLeast(1), h.toInt().coerceAtLeast(1)),
+                    filterQuality = FilterQuality.Medium
+                )
+            }
+
+            // 10-Stop Gradient Legend strip along bottom 5dp
+            val stops = palette.stopsArgb
+            val segW = w / stops.size.coerceAtLeast(1)
+            stops.forEachIndexed { idx, argb ->
+                drawRect(
+                    color = Color(argb),
+                    topLeft = Offset(idx * segW, h - 5.dp.toPx()),
+                    size = Size(segW + 1f, 5.dp.toPx())
+                )
+            }
+
+            // 2D Time + Frequency Spectral Target Box
+            if (!spectrogram.isEmpty) {
+                val x0 = selectionStart.coerceIn(0f, 1f) * w
+                val x1 = selectionEnd.coerceIn(0f, 1f) * w
+                val yNormLo = spectrogram.freqHzToNormY(min(freqLowHz, freqHighHz))
+                val yNormHi = spectrogram.freqHzToNormY(max(freqLowHz, freqHighHz))
+                val topY = (1f - yNormHi) * (h - 6.dp.toPx())
+                val botY = (1f - yNormLo) * (h - 6.dp.toPx())
+                val boxW = (x1 - x0).coerceAtLeast(4f)
+                val boxH = (botY - topY).coerceAtLeast(4f)
+                drawRect(
+                    color = TacCoral.copy(alpha = 0.16f),
+                    topLeft = Offset(x0, topY),
+                    size = Size(boxW, boxH)
+                )
+                drawRect(
+                    color = AmberHot,
+                    topLeft = Offset(x0, topY),
+                    size = Size(boxW, boxH),
+                    style = Stroke(width = 1.6.dp.toPx())
+                )
+            }
+
+            // Playhead line
+            val px = (playheadFraction.coerceIn(0f, 1f) * w)
+            drawLine(
+                color = if (isPlaying) Color.White else EmeraldSignal.copy(alpha = 0.8f),
+                start = Offset(px, 0f),
+                end = Offset(px, h),
+                strokeWidth = if (isPlaying) 2.5f else 1.5f
+            )
+        }
+
+        if (spectrogram.isEmpty) {
+            Text(
+                text = "NO SPECTROGRAM DATA • RECORD OR LOAD AUDIO",
+                style = MaterialTheme.typography.labelSmall,
+                color = TextMuted,
+                modifier = Modifier.align(Alignment.Center)
+            )
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "${spectrogram.maxFreqHz.toInt()}Hz",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextPrimary.copy(alpha = 0.85f)
+                )
+                Text(
+                    text = "BOX ${min(freqLowHz, freqHighHz).toInt()}–${max(freqLowHz, freqHighHz).toInt()}Hz (${palette.name.take(14)})",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AmberHot
+                )
+                Text(
+                    text = "${spectrogram.minFreqHz.toInt()}Hz↓",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextSecondary
                 )
             }
         }

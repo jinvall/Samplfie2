@@ -42,28 +42,15 @@ class VmcMidiPanel(
     private var updating = false
     private var lastState = VmcEngineState()
 
-    private val chSpinner = JSpinner(SpinnerNumberModel(1, 1, 64, 1)).apply {
-        preferredSize = Dimension(68, 30)
-        font = StudioTheme.MonoFont
-    }
-    private val routeBox = JComboBox(VmcRouteMode.entries.toTypedArray()).apply {
-        background = StudioTheme.ObsidianChassis
-        foreground = StudioTheme.TextPrimary
-        font = StudioTheme.MonoFont
-    }
+    private val chSpinner = StudioTheme.styleSpinner(JSpinner(SpinnerNumberModel(1, 1, 64, 1)), 12f, 76, 32)
+    private val routeBox = StudioTheme.styleComboBox(JComboBox(VmcRouteMode.entries.toTypedArray()), 12f)
     private val statusLabel = StudioTheme.hardwareLabel("VMC 64-CH READY", StudioTheme.NeonCyan, StudioTheme.MonoFont)
     private val hwPortsLabel = StudioTheme.hardwareLabel("HW MIDI: 0 IN / 0 OUT", StudioTheme.EmeraldSignal, StudioTheme.MonoFont)
 
-    private val newChSpinner = JSpinner(SpinnerNumberModel(1, 0, 64, 1)).apply { preferredSize = Dimension(62, 28) }
-    private val newTypeBox = JComboBox(VmcMsgType.entries.toTypedArray()).apply {
-        background = StudioTheme.ObsidianChassis
-        foreground = StudioTheme.TextPrimary
-    }
-    private val newNumSpinner = JSpinner(SpinnerNumberModel(1, 0, 127, 1)).apply { preferredSize = Dimension(62, 28) }
-    private val newTargetBox = JComboBox(VmcTarget.entries.toTypedArray()).apply {
-        background = StudioTheme.ObsidianChassis
-        foreground = StudioTheme.TextPrimary
-    }
+    private val newChSpinner = StudioTheme.styleSpinner(JSpinner(SpinnerNumberModel(1, 0, 64, 1)), 12f, 70, 30)
+    private val newTypeBox = StudioTheme.styleComboBox(JComboBox(VmcMsgType.entries.toTypedArray()), 12f)
+    private val newNumSpinner = StudioTheme.styleSpinner(JSpinner(SpinnerNumberModel(1, 0, 127, 1)), 12f, 70, 30)
+    private val newTargetBox = StudioTheme.styleComboBox(JComboBox(VmcTarget.entries.toTypedArray()), 12f)
 
     private val mappingsHost = JPanel().apply {
         background = StudioTheme.ObsidianChassis
@@ -78,15 +65,13 @@ class VmcMidiPanel(
         val root = JPanel().apply {
             background = StudioTheme.ObsidianChassis
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            border = javax.swing.BorderFactory.createEmptyBorder(10, 12, 10, 12)
+            StudioTheme.setScaledPadding(this, 10, 12, 10, 12)
         }
 
         // Top 64-Channel Bank & Routing Bar
         val headerBar = StudioTheme.hardwarePanel(StudioTheme.NeonCyan).apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            maximumSize = Dimension(Int.MAX_VALUE, 108)
-            val row1 = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2)).apply {
-                isOpaque = false
+            val row1 = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 8, 4).apply {
                 add(StudioTheme.hardwareLabel("VMC 64-CH MIDI CONTROLLER", StudioTheme.NeonCyan, StudioTheme.TitleFont))
                 val banks = listOf("B1: CH 1-16", "B2: CH 17-32", "B3: CH 33-48", "B4: CH 49-64")
                 banks.forEachIndexed { idx, label ->
@@ -103,8 +88,7 @@ class VmcMidiPanel(
                 }
                 add(routeBox)
             }
-            val row2 = JPanel(FlowLayout(FlowLayout.LEFT, 10, 2)).apply {
-                isOpaque = false
+            val row2 = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 10, 4).apply {
                 add(statusLabel)
                 add(hwPortsLabel)
                 add(StudioTheme.hardwareButton("RESCAN ALSA MIDI", StudioTheme.EmeraldSignal) { onRefreshHardwareMidi() })
@@ -113,16 +97,15 @@ class VmcMidiPanel(
             add(row2)
         }
         root.add(headerBar)
-        root.add(Box.createVerticalStrut(8))
+        root.add(Box.createVerticalStrut(StudioTheme.s(8)))
 
         // Interactive Surface: 8 Virtual Pads + 8 Virtual Sliders
         val surfacePanel = StudioTheme.hardwarePanel(StudioTheme.AmberHot).apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            maximumSize = Dimension(Int.MAX_VALUE, 240)
             add(StudioTheme.hardwareLabel("VIRTUAL PERFORMANCE SURFACE (USES ACTIVE CH OR MAPPED DEFAULTS & TRANSMITS VMC2)", StudioTheme.AmberHot, StudioTheme.TitleFont))
-            add(Box.createVerticalStrut(6))
+            add(Box.createVerticalStrut(StudioTheme.s(6)))
 
-            val padsRow = JPanel(GridLayout(1, 8, 6, 0)).apply {
+            val padsRow = JPanel(GridLayout(1, 8, StudioTheme.s(6), 0)).apply {
                 isOpaque = false
                 val pads = listOf(
                     Triple("PLAY", 60, 1),
@@ -142,9 +125,9 @@ class VmcMidiPanel(
                 }
             }
             add(padsRow)
-            add(Box.createVerticalStrut(8))
+            add(Box.createVerticalStrut(StudioTheme.s(8)))
 
-            val fadersRow = JPanel(GridLayout(1, 8, 6, 0)).apply {
+            val fadersRow = JPanel(GridLayout(1, 8, StudioTheme.s(6), 0)).apply {
                 isOpaque = false
                 val faders = listOf(
                     "WAH CC1" to 1,
@@ -174,12 +157,11 @@ class VmcMidiPanel(
             add(fadersRow)
         }
         root.add(surfacePanel)
-        root.add(Box.createVerticalStrut(8))
+        root.add(Box.createVerticalStrut(StudioTheme.s(8)))
 
         // Add / Learn New 64-Ch Rule Bar
         val builderBar = StudioTheme.hardwarePanel(StudioTheme.EmeraldSignal).apply {
-            layout = FlowLayout(FlowLayout.LEFT, 8, 4)
-            maximumSize = Dimension(Int.MAX_VALUE, 58)
+            layout = StudioWrapLayout(FlowLayout.LEFT, 8, 4)
             add(StudioTheme.hardwareLabel("ADD 64-CH MAP:", StudioTheme.EmeraldSignal, StudioTheme.LabelFont))
             add(StudioTheme.hardwareLabel("CH (0=ANY..64):", StudioTheme.TextSecondary))
             add(newChSpinner)
@@ -200,27 +182,20 @@ class VmcMidiPanel(
             })
         }
         root.add(builderBar)
-        root.add(Box.createVerticalStrut(8))
+        root.add(Box.createVerticalStrut(StudioTheme.s(8)))
 
         // Scrollable Mappings List
         val listCard = StudioTheme.hardwarePanel(StudioTheme.VioletMod).apply {
-            layout = BorderLayout(0, 4)
+            layout = BorderLayout(0, StudioTheme.s(4))
             add(StudioTheme.hardwareLabel("ACTIVE 64-CHANNEL MIDI ROUTING TABLE", StudioTheme.VioletMod, StudioTheme.TitleFont), BorderLayout.NORTH)
-            add(JScrollPane(mappingsHost).apply {
-                border = null
-                preferredSize = Dimension(820, 210)
-                background = StudioTheme.ObsidianChassis
-                viewport.background = StudioTheme.ObsidianChassis
-            }, BorderLayout.CENTER)
+            add(StudioTheme.styleScrollPane(JScrollPane(mappingsHost).apply {
+                StudioTheme.setScaledPrefSize(this, 820, 220)
+            }), BorderLayout.CENTER)
             add(logLabel, BorderLayout.SOUTH)
         }
         root.add(listCard)
 
-        add(JScrollPane(root).apply {
-            border = null
-            background = StudioTheme.ObsidianChassis
-            viewport.background = StudioTheme.ObsidianChassis
-        }, BorderLayout.CENTER)
+        add(StudioTheme.styleScrollPane(JScrollPane(root)), BorderLayout.CENTER)
     }
 
     fun updateState(vmc: VmcEngineState) {
@@ -247,20 +222,18 @@ class VmcMidiPanel(
         mappingsHost.removeAll()
         vmc.mappings.forEach { rule ->
             val learning = vmc.learnTargetRuleId == rule.id
-            val row = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2)).apply {
+            val row = StudioTheme.hardwarePanel(if (learning) StudioTheme.AmberHot else StudioTheme.HairlineDivider).apply {
+                layout = StudioWrapLayout(FlowLayout.LEFT, 8, 3)
                 background = StudioTheme.GunmetalDeck
-                border = StudioTheme.panelBorder(if (learning) StudioTheme.AmberHot else StudioTheme.HairlineDivider, 1)
-                maximumSize = Dimension(Int.MAX_VALUE, 42)
+                StudioTheme.setScaledPanelBorder(this, if (learning) StudioTheme.AmberHot else StudioTheme.HairlineDivider, 1, 4, 8)
                 add(StudioTheme.hardwareLabel(rule.channelLabel(), StudioTheme.NeonCyan, StudioTheme.MonoFont).apply {
-                    preferredSize = Dimension(130, 24)
+                    StudioTheme.setScaledPrefSize(this, 136, 24)
                 })
                 add(StudioTheme.hardwareLabel("${rule.msgType.label} #${rule.number}", StudioTheme.AmberHot, StudioTheme.MonoFont).apply {
-                    preferredSize = Dimension(115, 24)
+                    StudioTheme.setScaledPrefSize(this, 120, 24)
                 })
-                add(JLabel("-> ${rule.target.label}").apply {
-                    foreground = StudioTheme.TextPrimary
-                    font = StudioTheme.BodyFont
-                    preferredSize = Dimension(220, 24)
+                add(StudioTheme.hardwareLabel("-> ${rule.target.label}", StudioTheme.TextPrimary, StudioTheme.BodyFont).apply {
+                    StudioTheme.setScaledPrefSize(this, 240, 24)
                 })
                 add(StudioTheme.hardwareButton(if (learning) "WAITING MIDI…" else "LEARN", StudioTheme.AmberHot, filled = learning) {
                     onArmLearnRule(if (learning) null else rule.id)
@@ -274,7 +247,7 @@ class VmcMidiPanel(
                 })
             }
             mappingsHost.add(row)
-            mappingsHost.add(Box.createVerticalStrut(4))
+            mappingsHost.add(Box.createVerticalStrut(StudioTheme.s(4)))
         }
         mappingsHost.revalidate()
         mappingsHost.repaint()

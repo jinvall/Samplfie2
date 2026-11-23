@@ -60,7 +60,8 @@ class SamplesLooperPanel(
     private val barProgress = JProgressBar(0, 100).apply {
         foreground = StudioTheme.EmeraldSignal
         background = StudioTheme.ObsidianChassis
-        preferredSize = Dimension(160, 12)
+        StudioTheme.setScaledPrefSize(this, 160, 14)
+        StudioTheme.trackFont(this, StudioTheme.MonoSmallFont)
     }
 
     private data class SlotWidgets(
@@ -89,13 +90,12 @@ class SamplesLooperPanel(
         val root = JPanel().apply {
             background = StudioTheme.ObsidianChassis
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            border = javax.swing.BorderFactory.createEmptyBorder(10, 12, 10, 12)
+            StudioTheme.setScaledPadding(this, 10, 12, 10, 12)
         }
 
         // Looper Header Bar
         val looperHeader = StudioTheme.hardwarePanel(StudioTheme.EmeraldSignal).apply {
-            layout = FlowLayout(FlowLayout.LEFT, 10, 4)
-            maximumSize = Dimension(Int.MAX_VALUE, 58)
+            layout = StudioWrapLayout(FlowLayout.LEFT, 10, 4)
             add(StudioTheme.hardwareLabel("4-SLOT LIVE LOOPER", StudioTheme.EmeraldSignal, StudioTheme.TitleFont))
             add(looperPlayBtn)
             add(bpmLabel)
@@ -108,12 +108,13 @@ class SamplesLooperPanel(
             add(StudioTheme.hardwareButton("MIX LOOPS -> DECK", StudioTheme.NeonCyan) { onBounceLooperToDeck() })
         }
         root.add(looperHeader)
-        root.add(Box.createVerticalStrut(8))
+        root.add(Box.createVerticalStrut(StudioTheme.s(8)))
 
         // 4 Loop Slots (2x2 Grid)
-        val slotsGrid = JPanel(GridLayout(2, 2, 10, 10)).apply {
+        val slotsGrid = object : JPanel(GridLayout(2, 2, StudioTheme.s(10), StudioTheme.s(10))) {
+            override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
+        }.apply {
             background = StudioTheme.ObsidianChassis
-            maximumSize = Dimension(Int.MAX_VALUE, 220)
             for (slotId in 0 until 4) {
                 val title = StudioTheme.hardwareLabel("LOOP ${'A' + slotId}", StudioTheme.NeonCyan, StudioTheme.TitleFont)
                 val info = StudioTheme.hardwareLabel("EMPTY", StudioTheme.TextSecondary, StudioTheme.MonoFont)
@@ -131,19 +132,16 @@ class SamplesLooperPanel(
 
                 val card = StudioTheme.hardwarePanel(StudioTheme.EmeraldSignal).apply {
                     layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                    val topRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2)).apply {
-                        isOpaque = false
+                    val topRow = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 8, 2).apply {
                         add(title)
                         add(info)
                     }
-                    val btnRow1 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2)).apply {
-                        isOpaque = false
+                    val btnRow1 = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 6, 2).apply {
                         add(loadBtn)
                         add(refineBtn)
                         add(activeBtn)
                     }
-                    val btnRow2 = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2)).apply {
-                        isOpaque = false
+                    val btnRow2 = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 6, 2).apply {
                         add(muteBtn)
                         add(barsBtn)
                         add(clearBtn)
@@ -156,28 +154,28 @@ class SamplesLooperPanel(
             }
         }
         root.add(slotsGrid)
-        root.add(Box.createVerticalStrut(10))
+        root.add(Box.createVerticalStrut(StudioTheme.s(10)))
 
         // Loop Sample Refinement Editor
         val refinerPanel = StudioTheme.hardwarePanel(StudioTheme.NeonCyan).apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            val titleRow = JPanel(FlowLayout(FlowLayout.LEFT, 10, 2)).apply {
-                isOpaque = false
+            val titleRow = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 10, 2).apply {
                 add(StudioTheme.hardwareLabel("LOOP SAMPLE REFINEMENT EDITOR", StudioTheme.NeonCyan, StudioTheme.TitleFont))
                 add(refinerStatus)
             }
             add(titleRow)
-            add(Box.createVerticalStrut(6))
+            add(Box.createVerticalStrut(StudioTheme.s(6)))
 
-            refinerCanvas.preferredSize = Dimension(820, 170)
-            refinerCanvas.minimumSize = Dimension(400, 140)
-            refinerCanvas.maximumSize = Dimension(Int.MAX_VALUE, 195)
+            StudioTheme.setScaledPrefSize(refinerCanvas, 820, 180)
+            StudioTheme.setScaledMinSize(refinerCanvas, 400, 140)
+            StudioTheme.setScaledMaxSize(refinerCanvas, Int.MAX_VALUE, 260)
             add(refinerCanvas)
-            add(Box.createVerticalStrut(6))
+            add(Box.createVerticalStrut(StudioTheme.s(6)))
 
-            val rangeRow = JPanel(GridLayout(1, 4, 10, 0)).apply {
+            val rangeRow = object : JPanel(GridLayout(1, 4, StudioTheme.s(10), 0)) {
+                override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
+            }.apply {
                 isOpaque = false
-                maximumSize = Dimension(Int.MAX_VALUE, 52)
                 startSlider.addChangeListener {
                     if (!updating && !startSlider.valueIsAdjusting) {
                         val s = startSlider.value / 1000f
@@ -198,10 +196,9 @@ class SamplesLooperPanel(
                 add(sliderBox("FADE OUT (ms)", fadeOutSlider))
             }
             add(rangeRow)
-            add(Box.createVerticalStrut(6))
+            add(Box.createVerticalStrut(StudioTheme.s(6)))
 
-            val toolsRow = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4)).apply {
-                isOpaque = false
+            val toolsRow = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 6, 4).apply {
                 add(StudioTheme.hardwareButton("ZERO-X SNAP", StudioTheme.NeonCyan) { onSnapZeroCross() })
                 add(StudioTheme.hardwareButton("TRIM LOOP", StudioTheme.AmberHot) { onTrimLoop() })
                 add(StudioTheme.hardwareButton("APPLY FADES", StudioTheme.VioletMod) {
@@ -220,11 +217,7 @@ class SamplesLooperPanel(
         root.add(refinerPanel)
         root.add(Box.createVerticalGlue())
 
-        add(JScrollPane(root).apply {
-            border = null
-            background = StudioTheme.ObsidianChassis
-            viewport.background = StudioTheme.ObsidianChassis
-        }, BorderLayout.CENTER)
+        add(StudioTheme.styleScrollPane(JScrollPane(root)), BorderLayout.CENTER)
     }
 
     fun updateState(looper: DesktopLooperState, refiner: DesktopLoopRefinerState) {
@@ -272,7 +265,7 @@ class SamplesLooperPanel(
 
         init {
             background = StudioTheme.ObsidianChassis
-            border = StudioTheme.panelBorder(StudioTheme.HairlineDivider, 1)
+            StudioTheme.setScaledPanelBorder(this, StudioTheme.HairlineDivider, 1, 2, 2)
             cursor = Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR)
             addMouseListener(object : MouseAdapter() {
                 override fun mousePressed(e: MouseEvent) {
@@ -326,7 +319,7 @@ class SamplesLooperPanel(
             }
 
             g2.color = StudioTheme.AmberHot
-            g2.stroke = BasicStroke(2f)
+            g2.stroke = StudioTheme.stroke(2f)
             g2.drawLine(sx, 0, sx, height)
             g2.drawLine(ex, 0, ex, height)
 

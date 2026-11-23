@@ -31,24 +31,22 @@ class DesktopBandCollabStrip(
     private val detailLabel = StudioTheme.hardwareLabel("MY STYLE: GUITAR -> TRACK 2 • 0 NEARBY", StudioTheme.TextSecondary, StudioTheme.MonoFont)
     private val openBtn = StudioTheme.hardwareButton("CONNECT DEVICES (0/4)", StudioTheme.NeonCyan) { onOpenCollabDialog() }
     private val recBtn = StudioTheme.hardwareButton("START BAND REC", StudioTheme.EmeraldSignal, filled = true) { onToggleBandRec() }
-    private val peersPillPanel = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2)).apply { isOpaque = false }
+    private val peersPillPanel = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 6, 3)
     private var lastSignature = ""
 
     init {
         background = StudioTheme.BrushedPanel
-        border = StudioTheme.panelBorder(StudioTheme.EmeraldSignal, 1)
+        StudioTheme.setScaledPanelBorder(this, StudioTheme.EmeraldSignal, 1)
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
-        maximumSize = Dimension(Int.MAX_VALUE, 130)
 
-        val top = JPanel(BorderLayout(8, 2)).apply {
+        val top = JPanel(BorderLayout(StudioTheme.s(8), StudioTheme.s(4))).apply {
             isOpaque = false
-            val left = JPanel(GridLayout(2, 1, 0, 2)).apply {
+            val left = JPanel(GridLayout(2, 1, 0, StudioTheme.s(2))).apply {
                 isOpaque = false
                 add(titleLabel)
                 add(detailLabel)
             }
-            val right = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 2)).apply {
-                isOpaque = false
+            val right = StudioTheme.wrapRowPanel(FlowLayout.RIGHT, 6, 3).apply {
                 add(openBtn)
                 add(recBtn)
             }
@@ -58,6 +56,8 @@ class DesktopBandCollabStrip(
         add(top)
         add(peersPillPanel)
     }
+
+    override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height.coerceAtLeast(StudioTheme.s(64)))
 
     fun updateState(peers: List<CollabPeerDevice>, bandRec: LiveBandRecordingState) {
         val connected = peers.filter { it.isConnected }
@@ -120,38 +120,12 @@ class DesktopCollabDialog(
 ) : JDialog(owner, "4-Device Live Band Link — Samplfie2", true) {
 
     private var updating = false
-    private val myStyleBox = JComboBox(CollabInstrumentStyle.entries.toTypedArray()).apply {
-        background = StudioTheme.ObsidianChassis
-        foreground = StudioTheme.TextPrimary
-        font = StudioTheme.MonoFont
-    }
-    private val myTrackBox = JComboBox(arrayOf("Track 1", "Track 2", "Track 3", "Track 4")).apply {
-        background = StudioTheme.ObsidianChassis
-        foreground = StudioTheme.TextPrimary
-        font = StudioTheme.MonoFont
-    }
+    private val myStyleBox = StudioTheme.styleComboBox(JComboBox(CollabInstrumentStyle.entries.toTypedArray()), 12f)
+    private val myTrackBox = StudioTheme.styleComboBox(JComboBox(arrayOf("Track 1", "Track 2", "Track 3", "Track 4")), 12f)
 
-    private val hostField = JTextField(defaultHost, 14).apply {
-        background = StudioTheme.ObsidianChassis
-        foreground = StudioTheme.TextPrimary
-        caretColor = StudioTheme.NeonCyan
-        font = StudioTheme.MonoFont
-        border = StudioTheme.panelBorder(StudioTheme.HairlineDivider, 1)
-    }
-    private val portField = JTextField(defaultPort.toString(), 6).apply {
-        background = StudioTheme.ObsidianChassis
-        foreground = StudioTheme.TextPrimary
-        caretColor = StudioTheme.NeonCyan
-        font = StudioTheme.MonoFont
-        border = StudioTheme.panelBorder(StudioTheme.HairlineDivider, 1)
-    }
-    private val nameField = JTextField("Android Bandmate", 14).apply {
-        background = StudioTheme.ObsidianChassis
-        foreground = StudioTheme.TextPrimary
-        caretColor = StudioTheme.NeonCyan
-        font = StudioTheme.MonoFont
-        border = StudioTheme.panelBorder(StudioTheme.HairlineDivider, 1)
-    }
+    private val hostField = StudioTheme.styleTextField(JTextField(defaultHost, 14), 12f, 155, 30)
+    private val portField = StudioTheme.styleTextField(JTextField(defaultPort.toString(), 6), 12f, 80, 30)
+    private val nameField = StudioTheme.styleTextField(JTextField("Android Bandmate", 14), 12f, 165, 30)
 
     private val headerStatusLabel = StudioTheme.hardwareLabel("", StudioTheme.NeonCyan, StudioTheme.MonoFont)
     private val summaryLabel = StudioTheme.hardwareLabel("", StudioTheme.EmeraldSignal, StudioTheme.MonoFont)
@@ -165,22 +139,26 @@ class DesktopCollabDialog(
     }
     private var lastListSig = ""
     private val liveTimer = Timer(400) { refreshList(forceRebuild = false) }
+    private val scaleListener: (Float) -> Unit = {
+        size = StudioTheme.scaledDialogSize(780, 640)
+        StudioTheme.rescaleComponentTree(this)
+    }
 
     init {
-        size = Dimension(720, 600)
+        size = StudioTheme.scaledDialogSize(780, 640)
         background = StudioTheme.GunmetalDeck
-        layout = BorderLayout(8, 8)
+        layout = BorderLayout(StudioTheme.s(8), StudioTheme.s(8))
 
         val root = JPanel().apply {
             background = StudioTheme.GunmetalDeck
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            border = BorderFactory.createEmptyBorder(12, 14, 12, 14)
+            StudioTheme.setScaledPadding(this, 12, 14, 12, 14)
         }
 
         // 1. Local Station Style & Track Card
         val localCard = StudioTheme.hardwarePanel(StudioTheme.NeonCyan).apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            val hdr = JPanel(BorderLayout()).apply {
+            val hdr = JPanel(BorderLayout(StudioTheme.s(8), 0)).apply {
                 isOpaque = false
                 add(StudioTheme.hardwareLabel("LOCAL STATION ($nodeName) — INSTRUMENT STYLE & TRACK", StudioTheme.NeonCyan, StudioTheme.TitleFont), BorderLayout.WEST)
                 add(StudioTheme.hardwareButton("SCAN LAN", StudioTheme.NeonCyan) {
@@ -188,8 +166,7 @@ class DesktopCollabDialog(
                     refreshList(forceRebuild = true)
                 }, BorderLayout.EAST)
             }
-            val row = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4)).apply {
-                isOpaque = false
+            val row = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 8, 4).apply {
                 add(StudioTheme.hardwareLabel("MY STYLE:", StudioTheme.TextSecondary))
                 add(myStyleBox)
                 add(StudioTheme.hardwareLabel("TARGET TRACK:", StudioTheme.TextSecondary))
@@ -214,28 +191,26 @@ class DesktopCollabDialog(
             add(headerStatusLabel)
         }
         root.add(localCard)
-        root.add(Box.createVerticalStrut(8))
+        root.add(Box.createVerticalStrut(StudioTheme.s(8)))
 
         // 2. Discovered & Known Peers List
         val peersCard = StudioTheme.hardwarePanel(StudioTheme.EmeraldSignal).apply {
-            layout = BorderLayout(4, 6)
+            layout = BorderLayout(StudioTheme.s(4), StudioTheme.s(6))
             add(StudioTheme.hardwareLabel("NEARBY DISCOVERED & KNOWN COLLABORATORS (UP TO $MAX_COLLAB_PEERS SIMULTANEOUS)", StudioTheme.EmeraldSignal, StudioTheme.TitleFont), BorderLayout.NORTH)
-            add(JScrollPane(listPanel).apply {
-                border = null
+            add(StudioTheme.styleScrollPane(JScrollPane(listPanel).apply {
                 isOpaque = false
                 viewport.isOpaque = false
-                preferredSize = Dimension(660, 210)
-            }, BorderLayout.CENTER)
+                StudioTheme.setScaledPrefSize(this, 680, 210)
+            }), BorderLayout.CENTER)
         }
         root.add(peersCard)
-        root.add(Box.createVerticalStrut(8))
+        root.add(Box.createVerticalStrut(StudioTheme.s(8)))
 
         // 3. Quick Add Peer Endpoint + Preset
         val addCard = StudioTheme.hardwarePanel(StudioTheme.VioletMod).apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             add(StudioTheme.hardwareLabel("ADD / QUICK CONNECT COLLABORATOR DEVICE", StudioTheme.VioletMod, StudioTheme.TitleFont))
-            val r = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4)).apply {
-                isOpaque = false
+            val r = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 6, 4).apply {
                 add(StudioTheme.hardwareLabel("HOST:", StudioTheme.TextSecondary))
                 add(hostField)
                 add(StudioTheme.hardwareLabel("PORT:", StudioTheme.TextSecondary))
@@ -258,23 +233,24 @@ class DesktopCollabDialog(
             add(r)
         }
         root.add(addCard)
-        root.add(Box.createVerticalStrut(8))
+        root.add(Box.createVerticalStrut(StudioTheme.s(8)))
 
         // 4. Band Recording Bar
         val recCard = StudioTheme.hardwarePanel(StudioTheme.TacCoral).apply {
-            layout = BorderLayout(8, 4)
+            layout = BorderLayout(StudioTheme.s(8), StudioTheme.s(4))
             add(recBtn, BorderLayout.WEST)
             add(summaryLabel, BorderLayout.CENTER)
         }
         root.add(recCard)
 
-        add(root, BorderLayout.CENTER)
-        val footer = JPanel(FlowLayout(FlowLayout.RIGHT)).apply {
+        add(StudioTheme.styleScrollPane(JScrollPane(root)), BorderLayout.CENTER)
+        val footer = StudioTheme.wrapRowPanel(FlowLayout.RIGHT, 8, 6, opaque = true).apply {
             background = StudioTheme.GunmetalDeck
             add(StudioTheme.hardwareButton("CLOSE", StudioTheme.NeonCyan) { dispose() })
         }
         add(footer, BorderLayout.SOUTH)
 
+        StudioTheme.addScaleListener(scaleListener)
         onRefreshDiscovery()
         refreshList(forceRebuild = true)
         liveTimer.start()
@@ -283,6 +259,7 @@ class DesktopCollabDialog(
 
     override fun dispose() {
         liveTimer.stop()
+        StudioTheme.removeScaleListener(scaleListener)
         super.dispose()
     }
 
@@ -321,8 +298,7 @@ class DesktopCollabDialog(
                             else -> StudioTheme.HairlineDivider
                         }
                     ).apply {
-                        layout = FlowLayout(FlowLayout.LEFT, 6, 3)
-                        maximumSize = Dimension(Int.MAX_VALUE, 46)
+                        layout = StudioWrapLayout(FlowLayout.LEFT, 6, 4)
                         val stateTag = when {
                             p.isConnected -> "LINKED"
                             p.isNearby -> "NEARBY"
@@ -335,21 +311,17 @@ class DesktopCollabDialog(
                                 StudioTheme.MonoFont
                             )
                         )
-                        val stBox = JComboBox(CollabInstrumentStyle.entries.toTypedArray()).apply {
+                        val stBox = StudioTheme.styleComboBox(JComboBox(CollabInstrumentStyle.entries.toTypedArray()), 11.5f).apply {
                             selectedItem = p.style
-                            background = StudioTheme.ObsidianChassis
                             foreground = StudioTheme.AmberHot
-                            font = StudioTheme.LabelFont
                             addActionListener {
                                 val nextSt = selectedItem as? CollabInstrumentStyle ?: return@addActionListener
                                 onUpdatePeerStyleAndTrack(p.peerId, nextSt, p.trackSlot)
                             }
                         }
-                        val trkBox = JComboBox(arrayOf("T1", "T2", "T3", "T4")).apply {
+                        val trkBox = StudioTheme.styleComboBox(JComboBox(arrayOf("T1", "T2", "T3", "T4")), 11.5f).apply {
                             selectedIndex = p.trackSlot.coerceIn(0, 3)
-                            background = StudioTheme.ObsidianChassis
                             foreground = StudioTheme.MagentaFx
-                            font = StudioTheme.LabelFont
                             addActionListener {
                                 onUpdatePeerStyleAndTrack(p.peerId, p.style, selectedIndex.coerceIn(0, 3))
                             }
@@ -372,7 +344,7 @@ class DesktopCollabDialog(
                         )
                     }
                     listPanel.add(row)
-                    listPanel.add(Box.createVerticalStrut(4))
+                    listPanel.add(Box.createVerticalStrut(StudioTheme.s(4)))
                 }
             }
             listPanel.revalidate()

@@ -14,16 +14,28 @@ import com.samplfie.desktop.ui.ProductionBoothPanel
 import com.samplfie.desktop.ui.SamplesLooperPanel
 import com.samplfie.desktop.ui.SignalEditorPanel
 import com.samplfie.desktop.ui.StudioTheme
+import com.samplfie.desktop.ui.StudioWrapLayout
+import com.samplfie.desktop.ui.ToolsAndPluginsPanel
 import com.samplfie.desktop.ui.TracksTimelinePanel
 import com.samplfie.desktop.ui.VmcMidiPanel
+import java.awt.AWTEvent
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.GraphicsEnvironment
+import java.awt.Toolkit
+import java.awt.event.AWTEventListener
+import java.awt.event.InputEvent
+import java.awt.event.KeyEvent
+import java.awt.event.MouseWheelEvent
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import java.io.File
+import javax.swing.AbstractAction
 import javax.swing.BorderFactory
+import javax.swing.JComboBox
+import javax.swing.JComponent
 import javax.swing.JFileChooser
 import javax.swing.JFrame
 import javax.swing.JMenu
@@ -32,10 +44,12 @@ import javax.swing.JMenuItem
 import javax.swing.JOptionPane
 import javax.swing.JPanel
 import javax.swing.JScrollPane
+import javax.swing.KeyStroke
 import javax.swing.SwingUtilities
 import javax.swing.Timer
 import javax.swing.UIManager
 import javax.swing.filechooser.FileNameExtensionFilter
+import kotlin.math.roundToInt
 
 /**
  * Samplfie2 Linux Studio — Equal Peer Workstation with all Studio Spokes,
@@ -55,9 +69,39 @@ class SamplfieDesktopFrame(
     private val stationTitleLabel = StudioTheme.hardwareLabel("SIGNAL & WAV DECK EDITOR", StudioTheme.TextPrimary, StudioTheme.TitleFont)
     private val topBandBtn = StudioTheme.hardwareButton("BAND (0/4)", StudioTheme.EmeraldSignal) { openCollabDialog() }
     private val topSecretsBtn = StudioTheme.hardwareButton("KEYS VAULT", StudioTheme.AmberHot) { openSecretsVaultDialog() }
-    private val navPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 2)).apply { isOpaque = false }
+    private val scaleOutBtn = StudioTheme.hardwareButton("A-", StudioTheme.TextSecondary) { StudioTheme.stepScale(-0.25f) }
+    private val scaleInBtn = StudioTheme.hardwareButton("A+", StudioTheme.NeonCyan) { StudioTheme.stepScale(0.25f) }
+    private val scaleOptions = arrayOf("AUTO", "75%", "100%", "125%", "150%", "175%", "200%", "225%", "250%", "300%")
+    private var updatingScaleCombo = false
+    private val scalePresetBox = StudioTheme.styleComboBox(JComboBox(scaleOptions), basePt = 11.5f).apply {
+        addActionListener {
+            if (updatingScaleCombo) return@addActionListener
+            val sel = selectedItem as? String ?: return@addActionListener
+            if (sel == "AUTO") {
+                StudioTheme.resetAutoScale()
+            } else {
+                val pct = sel.removeSuffix("%").toFloatOrNull() ?: return@addActionListener
+                StudioTheme.setUiScale(pct / 100f, persist = true)
+            }
+        }
+    }
+    private val navPanel = JPanel(StudioWrapLayout(FlowLayout.RIGHT, 4, 2)).apply { isOpaque = false }
     private var lastVisibleNav: List<DesktopStation> = emptyList()
     private var showingAllStemsConfirmModal = false
+    private val scaleChangeListener: (Float) -> Unit = { newScale ->
+        SwingUtilities.invokeLater {
+            syncScaleControls(newScale)
+            resizeFrameForScaleIfNeeded()
+        }
+    }
+    private val mouseWheelZoomListener = AWTEventListener { ev ->
+        val mwe = ev as? MouseWheelEvent ?: return@AWTEventListener
+        if (mwe.isControlDown && SwingUtilities.isDescendingFrom(mwe.component, this)) {
+            val delta = if (mwe.wheelRotation < 0) 0.15f else -0.15f
+            StudioTheme.stepScale(delta)
+            mwe.consume()
+        }
+    }
 
     private val hubSidebar = CircularHubSidebar(
         onSelectStation = { controller.selectStation(it) },
@@ -115,7 +159,9 @@ class SamplfieDesktopFrame(
         onNormalize = { controller.normalizeSignal() },
         onUndo = { controller.undoEdit() },
         onReset = { controller.resetToOriginal() },
-        onGenerateSignal = { type, hz -> controller.generateTestSignal(type, hz) }
+        onGenerateSignal = { type, hz -> controller.generateTestSignal(type, hz) },
+        onSpecFreqRange = { lo, hi -> controller.updateSpecFreqRange(lo, hi) },
+        onOpenTools = { controller.selectStation(DesktopStation.TOOLS) }
     )
 
     private val samplesPanel = SamplesLooperPanel(
@@ -221,6 +267,50 @@ class SamplfieDesktopFrame(
         onToggleBandRec = { controller.toggleLiveBandRecording() }
     )
 
+    private val toolsPanel = ToolsAndPluginsPanel(
+        onSelectTab = { controller.setToolsTab(it) },
+        onVisualizerMode = { controller.setVisualizerMode(it) },
+        onSelectionChange = { s, e -> controller.updateSelection(s, e) },
+        onSeekPlayhead = { controller.soundEngine.seekTo(it) },
+        onTogglePlay = { controller.soundEngine.togglePlay() },
+        onStop = { controller.soundEngine.stopPlayback() },
+        onToggleLoop = { controller.soundEngine.setLooping(!controller.playbackState.value.isLooping) },
+        onUndo = { controller.undoEdit() },
+        onSelectPalette = { controller.setSpectrogramPalette(it) },
+        onApplyCustomHexStops = { controller.applyCustomTenStopGradient(it) },
+        onSpecFreqRange = { lo, hi -> controller.updateSpecFreqRange(lo, hi) },
+        onSetSpecAttenDb = { controller.setSpecDeleteAttenuation(it) },
+        onApplySpectralDelete = { controller.applySpectralDelete() },
+        onSetInvertScope = { controller.setInvertScope(it) },
+        onSetInvertSelectionOnly = { controller.setInvertSelectionOnly(it) },
+        onApplyInvert = { controller.applyInvertPolarity() },
+        onBrowseRefFile = { chooseAndLoadReferenceWav() },
+        onSelectSessionRef = { controller.selectReferenceFromSessionSource(it) },
+        onComputeDiff = { controller.computeAudioDifference() },
+        onLoadDiffToDeck = { controller.loadDiffResultToDeck() },
+        onUpdateMixParams = { g1, g2, off, lim -> controller.updateMixParams(g1, g2, off, lim) },
+        onApplyMix = { controller.applyMixWithReference() },
+        onSetMonoMode = { controller.setMonoFoldMode(it) },
+        onApplyMixToMono = { controller.applyMixToMono() },
+        onSetStereoParams = { m, p -> controller.setStereoSplitParams(m, p) },
+        onApplySplitToStereo = { controller.applySplitToStereo() },
+        onSetRateParams = { sr, re -> controller.setRateConversionParams(sr, re) },
+        onApplyConvertRate = { controller.applyConvertSampleRate() },
+        onSetFormatParams = { fmt, dit -> controller.setFormatConversionParams(fmt, dit) },
+        onApplyConvertFormat = { controller.applyConvertSampleFormat() },
+        onAddPluginToChain = { controller.addPluginToChain(it) },
+        onRemovePluginFromChain = { controller.removePluginFromChain(it) },
+        onMovePluginInChain = { id, d -> controller.movePluginInChain(id, d) },
+        onTogglePluginBypass = { controller.togglePluginBypass(it) },
+        onUpdatePluginWetMix = { id, w -> controller.updatePluginWetMix(id, w) },
+        onUpdatePluginParam = { id, k, v -> controller.updatePluginParam(id, k, v) },
+        onBouncePluginChain = { controller.bouncePluginChainToDryBuffer() },
+        onInstallCatalogPlugin = { controller.installCatalogPlugin(it) },
+        onUninstallCustomPlugin = { controller.uninstallCustomPlugin(it) },
+        onImportPluginOrIrFile = { chooseAndImportPluginOrIr() },
+        onRescanLinuxPlugins = { controller.rescanNativeLinuxPlugins() }
+    )
+
     private val tunerPanel = ChromaticTunerPanel(
         onSelectSource = { controller.setTunerSource(it) },
         onSelectPreset = { controller.setTuningPreset(it) },
@@ -258,8 +348,7 @@ class SamplfieDesktopFrame(
 
     init {
         defaultCloseOperation = EXIT_ON_CLOSE
-        minimumSize = Dimension(1140, 760)
-        size = Dimension(1360, 860)
+        applyScaledWindowBounds(growOnly = false)
         background = StudioTheme.ObsidianChassis
         layout = BorderLayout()
 
@@ -274,14 +363,26 @@ class SamplfieDesktopFrame(
         cardHost.add(tracksPanel, DesktopStation.TRACKS.name)
         cardHost.add(fxPanel, DesktopStation.FX_STOMP.name)
         cardHost.add(livePanel, DesktopStation.LIVE.name)
+        cardHost.add(toolsPanel, DesktopStation.TOOLS.name)
         cardHost.add(tunerPanel, DesktopStation.TUNER.name)
         cardHost.add(vmcPanel, DesktopStation.VMC.name)
         cardHost.add(netPanel, DesktopStation.NET_LINK.name)
         add(cardHost, BorderLayout.CENTER)
 
+        registerZoomShortcuts()
+        StudioTheme.addScaleListener(scaleChangeListener)
+        runCatching {
+            Toolkit.getDefaultToolkit().addAWTEventListener(mouseWheelZoomListener, AWTEvent.MOUSE_WHEEL_EVENT_MASK)
+        }
+        syncScaleControls(StudioTheme.uiScale)
+
         addWindowListener(object : WindowAdapter() {
             override fun windowClosing(e: WindowEvent?) {
                 refreshTimer.stop()
+                StudioTheme.removeScaleListener(scaleChangeListener)
+                runCatching {
+                    Toolkit.getDefaultToolkit().removeAWTEventListener(mouseWheelZoomListener)
+                }
                 controller.shutdown()
             }
         })
@@ -291,21 +392,96 @@ class SamplfieDesktopFrame(
         setLocationRelativeTo(null)
     }
 
+    private fun applyScaledWindowBounds(growOnly: Boolean) {
+        if (GraphicsEnvironment.isHeadless()) return
+        val bounds = GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds
+        val maxW = (bounds.width * 0.96).toInt().coerceAtLeast(640)
+        val maxH = (bounds.height * 0.94).toInt().coerceAtLeast(480)
+        val minW = StudioTheme.s(980).coerceAtMost((maxW * 0.85).toInt())
+        val minH = StudioTheme.s(640).coerceAtMost((maxH * 0.85).toInt())
+        minimumSize = Dimension(minW, minH)
+
+        val targetW = StudioTheme.s(1420).coerceIn(minW, maxW)
+        val targetH = StudioTheme.s(900).coerceIn(minH, maxH)
+        if (!growOnly || width < targetW || height < targetH) {
+            size = Dimension(
+                if (growOnly) maxOf(width, targetW).coerceAtMost(maxW) else targetW,
+                if (growOnly) maxOf(height, targetH).coerceAtMost(maxH) else targetH
+            )
+        }
+    }
+
+    private fun resizeFrameForScaleIfNeeded() {
+        applyScaledWindowBounds(growOnly = true)
+        jMenuBar?.let { StudioTheme.applyMenuTypography(it) }
+        revalidate()
+        repaint()
+    }
+
+    private fun syncScaleControls(scale: Float) {
+        updatingScaleCombo = true
+        try {
+            val label = "${(scale * 100f).roundToInt()}%"
+            if (!StudioTheme.hasExplicitSavedScale) {
+                scalePresetBox.selectedItem = "AUTO"
+            } else if (scaleOptions.contains(label)) {
+                scalePresetBox.selectedItem = label
+            } else {
+                scalePresetBox.selectedItem = scaleOptions.drop(1).minByOrNull {
+                    kotlin.math.abs((it.removeSuffix("%").toFloatOrNull() ?: 100f) - scale * 100f)
+                } ?: "AUTO"
+            }
+            scaleOutBtn.toolTipText = "Zoom Out (Ctrl+-) • Current $label"
+            scaleInBtn.toolTipText = "Zoom In (Ctrl+=) • Current $label"
+            scalePresetBox.toolTipText = "UI Scale ($label) • Ctrl+Wheel or Ctrl+/Ctrl-"
+        } finally {
+            updatingScaleCombo = false
+        }
+    }
+
+    private fun registerZoomShortcuts() {
+        val im = rootPane.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW)
+        val am = rootPane.actionMap
+        val mask = InputEvent.CTRL_DOWN_MASK
+        listOf(
+            KeyStroke.getKeyStroke(KeyEvent.VK_EQUALS, mask),
+            KeyStroke.getKeyStroke(KeyEvent.VK_PLUS, mask),
+            KeyStroke.getKeyStroke(KeyEvent.VK_ADD, mask)
+        ).forEach { ks -> im.put(ks, "zoomIn") }
+        listOf(
+            KeyStroke.getKeyStroke(KeyEvent.VK_MINUS, mask),
+            KeyStroke.getKeyStroke(KeyEvent.VK_SUBTRACT, mask)
+        ).forEach { ks -> im.put(ks, "zoomOut") }
+        listOf(
+            KeyStroke.getKeyStroke(KeyEvent.VK_0, mask),
+            KeyStroke.getKeyStroke(KeyEvent.VK_NUMPAD0, mask)
+        ).forEach { ks -> im.put(ks, "zoomAuto") }
+
+        am.put("zoomIn", object : AbstractAction() {
+            override fun actionPerformed(e: java.awt.event.ActionEvent?) { StudioTheme.stepScale(0.25f) }
+        })
+        am.put("zoomOut", object : AbstractAction() {
+            override fun actionPerformed(e: java.awt.event.ActionEvent?) { StudioTheme.stepScale(-0.25f) }
+        })
+        am.put("zoomAuto", object : AbstractAction() {
+            override fun actionPerformed(e: java.awt.event.ActionEvent?) { StudioTheme.resetAutoScale() }
+        })
+    }
+
     private fun buildTopHardwareRack(): JPanel = JPanel(BorderLayout(8, 4)).apply {
         background = StudioTheme.GunmetalDeck
-        border = BorderFactory.createCompoundBorder(
-            BorderFactory.createMatteBorder(0, 0, 1, 0, StudioTheme.HairlineDivider),
-            BorderFactory.createEmptyBorder(6, 12, 6, 12)
-        )
-        val topRow = JPanel(BorderLayout(12, 0)).apply {
+        StudioTheme.setScaledPanelBorder(this, StudioTheme.HairlineDivider, 1, 6, 10)
+        val topRow = JPanel(BorderLayout(12, 4)).apply {
             isOpaque = false
-            val left = JPanel(FlowLayout(FlowLayout.LEFT, 10, 0)).apply {
-                isOpaque = false
+            val left = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 8, 2).apply {
                 add(StudioTheme.hardwareLabel("SAMPLFIE2 LINUX STUDIO", StudioTheme.NeonCyan, StudioTheme.TitleFont))
                 add(stationTitleLabel)
             }
-            val right = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
-                isOpaque = false
+            val right = StudioTheme.wrapRowPanel(FlowLayout.RIGHT, 6, 2).apply {
+                add(StudioTheme.hardwareLabel("SCALE:", StudioTheme.TextSecondary, StudioTheme.MonoSmallFont))
+                add(scaleOutBtn)
+                add(scalePresetBox)
+                add(scaleInBtn)
                 add(topBandBtn)
                 add(StudioTheme.hardwareButton("STEMS (DISBAND)", StudioTheme.MagentaFx) {
                     controller.selectStation(DesktopStation.BOOTH)
@@ -316,11 +492,11 @@ class SamplfieDesktopFrame(
             add(topStatusLabel, BorderLayout.CENTER)
             add(right, BorderLayout.EAST)
         }
-        val navScroll = JScrollPane(navPanel, JScrollPane.VERTICAL_SCROLLBAR_NEVER, JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED).apply {
-            border = null
+        val navScroll = StudioTheme.styleScrollPane(
+            JScrollPane(navPanel, JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED)
+        ).apply {
             isOpaque = false
             viewport.isOpaque = false
-            preferredSize = Dimension(1200, 38)
         }
         add(topRow, BorderLayout.NORTH)
         add(navScroll, BorderLayout.CENTER)
@@ -363,6 +539,9 @@ class SamplfieDesktopFrame(
             add(JMenuItem("Snap Zero-Crossings").apply { addActionListener { controller.snapSelectionZeroCrossing() } })
             add(JMenuItem("Peak Normalize (-0.35 dBFS)").apply { addActionListener { controller.normalizeSignal() } })
             add(JMenuItem("Remove DC Offset").apply { addActionListener { controller.removeDcOffset() } })
+            addSeparator()
+            add(JMenuItem("Open Pro Audio Tools & Plugins…").apply { addActionListener { controller.selectStation(DesktopStation.TOOLS) } })
+            add(JMenuItem("Rescan Linux LV2 / LADSPA / VST Plugins").apply { addActionListener { controller.rescanNativeLinuxPlugins() } })
         }
         val peerMenu = JMenu("Peer & VMC").apply {
             foreground = StudioTheme.TextPrimary
@@ -377,11 +556,24 @@ class SamplfieDesktopFrame(
             add(JMenuItem("Secrets & Keys Vault…").apply { addActionListener { openSecretsVaultDialog() } })
             add(JMenuItem("Separate Stems (Disband API)…").apply { addActionListener { triggerStemSeparationWithPrompt() } })
         }
+        val viewMenu = JMenu("View / Scale").apply {
+            foreground = StudioTheme.TextPrimary
+            add(JMenuItem("Zoom In (+25%)   Ctrl+=").apply { addActionListener { StudioTheme.stepScale(0.25f) } })
+            add(JMenuItem("Zoom Out (-25%)   Ctrl+-").apply { addActionListener { StudioTheme.stepScale(-0.25f) } })
+            add(JMenuItem("Auto-Detect Monitor Scale   Ctrl+0").apply { addActionListener { StudioTheme.resetAutoScale() } })
+            addSeparator()
+            StudioTheme.UI_SCALE_PRESETS.forEach { preset ->
+                val pct = (preset * 100f).roundToInt()
+                add(JMenuItem("Scale $pct%").apply { addActionListener { StudioTheme.setUiScale(preset) } })
+            }
+        }
         add(fileMenu)
         add(stationMenu)
         add(signalMenu)
         add(peerMenu)
         add(vaultMenu)
+        add(viewMenu)
+        StudioTheme.applyMenuTypography(this)
     }
 
     private fun syncUi() {
@@ -397,6 +589,7 @@ class SamplfieDesktopFrame(
         val vmc = controller.vmcState.value
         val stems = controller.stemState.value
         val secrets = controller.secretsState.value
+        val tools = controller.toolsState.value
         val collabPeers = controller.collabPeers.value
         val linkedCount = collabPeers.count { it.isConnected }
 
@@ -414,12 +607,13 @@ class SamplfieDesktopFrame(
 
         hubSidebar.updateState(ui, play, mic, net, collabPeers)
         boothPanel.updateState(ui, play, net, sync, stems, secrets, collabPeers)
-        editorPanel.updateState(ui, play)
+        editorPanel.updateState(ui, play, tools)
         samplesPanel.updateState(looper, refiner)
         instrumentsPanel.updateState(seq, vmc, controller.customDrumKitState.value)
         tracksPanel.updateState(tl, sync)
         fxPanel.updateState(ui)
         livePanel.updateState(ui, sync, collabPeers)
+        toolsPanel.updateState(ui, play, tools)
         tunerPanel.updateState(ui)
         vmcPanel.updateState(vmc)
         netPanel.updateState(ui, net, collabPeers)
@@ -488,6 +682,28 @@ class SamplfieDesktopFrame(
         }
     }
 
+    private fun chooseAndLoadReferenceWav() {
+        val chooser = JFileChooser(controller.defaultExportDir).apply {
+            dialogTitle = "Select Reference B WAV Audio (for Diff / Mix)"
+            fileFilter = FileNameExtensionFilter("WAV Audio (*.wav)", "wav")
+        }
+        if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+            controller.loadReferenceFile(chooser.selectedFile)
+        }
+    }
+
+    private fun chooseAndImportPluginOrIr() {
+        val chooser = JFileChooser(controller.defaultExportDir).apply {
+            dialogTitle = "Import .smpplugin.json Bundle or .WAV Impulse Response"
+            fileFilter = FileNameExtensionFilter("Plugin JSON or WAV Impulse (*.json, *.wav)", "json", "wav")
+        }
+        if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+            controller.importPluginOrIrFile(chooser.selectedFile).onFailure {
+                JOptionPane.showMessageDialog(this, it.message ?: "Import failed", "Plugin / IR Error", JOptionPane.ERROR_MESSAGE)
+            }
+        }
+    }
+
     private fun chooseAndSaveWav() {
         val chooser = JFileChooser(controller.defaultExportDir).apply {
             selectedFile = File(controller.defaultExportDir, "samplfie2_signal.wav")
@@ -531,6 +747,7 @@ fun main() {
         runCatching {
             UIManager.setLookAndFeel(UIManager.getCrossPlatformLookAndFeelClassName())
         }
+        StudioTheme.initForDesktop()
         SamplfieDesktopFrame().isVisible = true
     }
 }

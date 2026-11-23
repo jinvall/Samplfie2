@@ -1,28 +1,10 @@
 <resources>
     <string name="app_name">Samplfie2</string>
-    <string name="deck_subtitle">LIVE DSP SAMPLER</string>
-    <string name="tab_deck">DECK</string>
-    <string name="tab_fx_rack">FX RACK</string>
-    <string name="tab_rig_link">RIG &amp; LINK</string>
     <string name="tac_hold_label">TAC HOLD</string>
     <string name="tac_recording_label">REC LIVE</string>
     <string name="tac_hint_idle">PRESS &amp; HOLD TO CAPTURE MIC WAV</string>
     <string name="tac_hint_recording">RECORDING… RELEASE TO LOAD IN EDITOR</string>
-    <string name="btn_play">PLAY</string>
-    <string name="btn_pause">PAUSE</string>
-    <string name="btn_stop">STOP</string>
-    <string name="btn_loop">LOOP</string>
-    <string name="btn_ab_bypass">BYPASS</string>
     <string name="btn_extract">EXTRACT</string>
-    <string name="btn_undo">UNDO</string>
-    <string name="btn_reset">RESET</string>
-    <string name="btn_export_mp3">EXPORT MP3</string>
-    <string name="btn_stream_tx">STREAM TX</string>
-    <string name="btn_import_audio">IMPORT AUDIO</string>
-    <string name="import_picker_title">Open audio file</string>
     <string name="mic_permission_required">Microphone permission required for live TAC capture</string>
     <string name="grant_mic_permission">GRANT MIC</string>
-    <string name="master_volume_label">MASTER VOL</string>
-    <string name="audio_permission_required">Audio file read permission needed to import tracks directly</string>
-    <string name="band_link_title">4-DEVICE BAND LINK</string>
 </resources>

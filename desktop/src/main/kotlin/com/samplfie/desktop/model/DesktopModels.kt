@@ -13,6 +13,7 @@ enum class DesktopStation(val shortLabel: String, val fullTitle: String, val bad
     TRACKS("TRACKS", "SYNCED TRACK TIMELINE", "SYNC"),
     FX_STOMP("FX RACK", "12-MODULE PRO DSP RACK", "DSP"),
     LIVE("LIVE", "LIVE STOMPBOX & RELEASE", "STAGE"),
+    TOOLS("TOOLS", "PRO TOOLS & PLUGINS", "PRO"),
     TUNER("TUNER", "CHROMATIC & STROBE TUNER", "PITCH"),
     VMC("VMC 64", "VIRTUAL MIDI CONTROLLER (64CH)", "MIDI"),
     NET_LINK("NET SYNC", "SMP2 / HANDOFF PEER BRIDGE", "LINK")
@@ -21,6 +22,8 @@ enum class DesktopStation(val shortLabel: String, val fullTitle: String, val bad
 enum class VisualizerMode(val label: String) {
     WAVE("WAVE"),
     FFT("FFT"),
+    SPEC("SPEC"),
+    W_SPEC("W+SPEC"),
     DUAL("DUAL")
 }
 
@@ -107,7 +110,7 @@ data class DesktopWorkspaceConfig(
         DesktopStation.INSTRUMENTS,
         DesktopStation.TUNER,
         DesktopStation.LIVE,
-        DesktopStation.VMC,
+        DesktopStation.TOOLS,
         DesktopStation.TRACKS,
         DesktopStation.FX_STOMP
     ),
@@ -120,7 +123,8 @@ data class DesktopAudioBuffer(
     val samples: FloatArray,
     val sampleRate: Int,
     val channels: Int,
-    val name: String = "Signal"
+    val name: String = "Signal",
+    val sampleFormat: DesktopSampleFormat = DesktopSampleFormat.PCM_16
 ) {
     val frameCount: Int get() = if (channels <= 0) 0 else samples.size / channels
     val durationSeconds: Float get() = if (sampleRate <= 0) 0f else frameCount.toFloat() / sampleRate
@@ -275,6 +279,7 @@ data class DesktopAudioBuffer(
         return sampleRate == other.sampleRate &&
             channels == other.channels &&
             name == other.name &&
+            sampleFormat == other.sampleFormat &&
             samples.contentEquals(other.samples)
     }
 
@@ -283,6 +288,7 @@ data class DesktopAudioBuffer(
         res = 31 * res + sampleRate
         res = 31 * res + channels
         res = 31 * res + name.hashCode()
+        res = 31 * res + sampleFormat.hashCode()
         return res
     }
 }

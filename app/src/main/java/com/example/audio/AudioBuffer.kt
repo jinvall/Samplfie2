@@ -12,7 +12,8 @@ data class AudioBuffer(
     val samples: FloatArray,
     val sampleRate: Int,
     val channels: Int,
-    val name: String = "Take"
+    val name: String = "Take",
+    val sampleFormat: AudioSampleFormat = AudioSampleFormat.PCM_16
 ) {
     val frameCount: Int
         get() = if (channels > 0) samples.size / channels else 0
@@ -39,7 +40,8 @@ data class AudioBuffer(
             samples = samples.copyOfRange(startIdx, endIdx),
             sampleRate = sampleRate,
             channels = channels,
-            name = newName
+            name = newName,
+            sampleFormat = sampleFormat
         )
     }
 
@@ -200,6 +202,7 @@ data class AudioBuffer(
         return sampleRate == other.sampleRate &&
             channels == other.channels &&
             name == other.name &&
+            sampleFormat == other.sampleFormat &&
             samples.contentEquals(other.samples)
     }
 
@@ -208,6 +211,7 @@ data class AudioBuffer(
         result = 31 * result + sampleRate
         result = 31 * result + channels
         result = 31 * result + name.hashCode()
+        result = 31 * result + sampleFormat.hashCode()
         return result
     }
 

@@ -107,16 +107,15 @@ class InstrumentsSeqPanel(
         val root = JPanel().apply {
             background = StudioTheme.ObsidianChassis
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            border = javax.swing.BorderFactory.createEmptyBorder(10, 12, 10, 12)
+            StudioTheme.setScaledPadding(this, 10, 12, 10, 12)
         }
 
         root.add(drumKitPanel)
-        root.add(Box.createVerticalStrut(10))
+        root.add(Box.createVerticalStrut(StudioTheme.s(10)))
 
         // Top Sequencer Controls
         val ctrlBar = StudioTheme.hardwarePanel(StudioTheme.AmberHot).apply {
-            layout = FlowLayout(FlowLayout.LEFT, 10, 4)
-            maximumSize = Dimension(Int.MAX_VALUE, 58)
+            layout = StudioWrapLayout(FlowLayout.LEFT, 10, 4)
             add(StudioTheme.hardwareLabel("16-STEP SEQUENCER & PADS", StudioTheme.AmberHot, StudioTheme.TitleFont))
             add(playSeqBtn)
             add(bpmLabel)
@@ -137,62 +136,65 @@ class InstrumentsSeqPanel(
             add(StudioTheme.hardwareButton("CLEAR PAT", StudioTheme.TacCoral) { onClearPattern() })
         }
         root.add(ctrlBar)
-        root.add(Box.createVerticalStrut(8))
+        root.add(Box.createVerticalStrut(StudioTheme.s(8)))
 
         // Live Performance Trigger Pads
         val padPanel = StudioTheme.hardwarePanel(StudioTheme.NeonCyan).apply {
-            layout = BorderLayout(0, 6)
-            maximumSize = Dimension(Int.MAX_VALUE, 96)
+            layout = BorderLayout(0, StudioTheme.s(6))
             add(StudioTheme.hardwareLabel("LIVE DRUM & SAMPLE PADS (CLICK TO TRIGGER ONE-SHOT)", StudioTheme.NeonCyan, StudioTheme.LabelFont), BorderLayout.NORTH)
-            val grid = JPanel(GridLayout(1, 4, 10, 0)).apply {
+            val grid = JPanel(GridLayout(1, 4, StudioTheme.s(10), 0)).apply {
                 isOpaque = false
                 val labels = listOf("PAD 1 · DECK/SAMPLE", "PAD 2 · 808 KICK", "PAD 3 · 909 SNARE", "PAD 4 · HI-HAT")
                 val colors = listOf(StudioTheme.NeonCyan, StudioTheme.TacCoral, StudioTheme.AmberHot, StudioTheme.EmeraldSignal)
                 for (i in 0 until 4) {
                     add(StudioTheme.hardwareButton(labels[i], colors[i], filled = true) { onTriggerPad(i) }.apply {
-                        preferredSize = Dimension(140, 48)
+                        StudioTheme.setScaledPrefSize(this, 140, 48)
                     })
                 }
             }
             add(grid, BorderLayout.CENTER)
         }
         root.add(padPanel)
-        root.add(Box.createVerticalStrut(10))
+        root.add(Box.createVerticalStrut(StudioTheme.s(10)))
 
         // 4 x 16 Step Matrix
         val matrixPanel = StudioTheme.hardwarePanel(StudioTheme.AmberHot).apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             add(StudioTheme.hardwareLabel("16-STEP PATTERN MATRIX", StudioTheme.AmberHot, StudioTheme.TitleFont))
-            add(Box.createVerticalStrut(6))
+            add(Box.createVerticalStrut(StudioTheme.s(6)))
 
             for (laneId in 0 until 4) {
-                val laneRow = JPanel(BorderLayout(8, 0)).apply {
+                val laneRow = object : JPanel(BorderLayout(StudioTheme.s(8), 0)) {
+                    override fun getMaximumSize(): Dimension =
+                        Dimension(Int.MAX_VALUE, preferredSize.height.coerceAtLeast(StudioTheme.s(46)))
+                }.apply {
                     isOpaque = false
-                    maximumSize = Dimension(Int.MAX_VALUE, 46)
-                    val leftCtrl = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply {
-                        isOpaque = false
-                        preferredSize = Dimension(230, 40)
+                    val leftCtrl = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 4, 2).apply {
+                        StudioTheme.setScaledPrefSize(this, 240, 40)
                         val nameLbl = StudioTheme.hardwareLabel("LANE ${laneId + 1}", StudioTheme.TextPrimary, StudioTheme.MonoFont).apply {
-                            preferredSize = Dimension(92, 26)
+                            StudioTheme.setScaledPrefSize(this, 96, 26)
                         }
                         laneNameLabels[laneId] = nameLbl
                         val muteBtn = StudioTheme.hardwareButton("M", StudioTheme.TacCoral) { onToggleLaneMute(laneId) }.apply {
-                            preferredSize = Dimension(42, 28)
+                            StudioTheme.setScaledPrefSize(this, 44, 28)
                         }
                         laneMuteButtons[laneId] = muteBtn
                         val useDeckBtn = StudioTheme.hardwareButton("DECK", StudioTheme.NeonCyan) { onAssignDeckToLane(laneId) }.apply {
-                            preferredSize = Dimension(68, 28)
+                            StudioTheme.setScaledPrefSize(this, 68, 28)
                         }
                         add(nameLbl)
                         add(muteBtn)
                         add(useDeckBtn)
                     }
 
-                    val stepsGrid = JPanel(GridLayout(1, 16, 4, 0)).apply {
+                    val stepsGrid = JPanel(GridLayout(1, 16, StudioTheme.s(4), 0)).apply {
                         isOpaque = false
                         for (step in 0 until 16) {
                             val btn = JButton("${step + 1}").apply {
-                                font = StudioTheme.LabelFont
+                                StudioTheme.trackFont(this, "SansSerif", java.awt.Font.BOLD, 12f)
+                                margin = java.awt.Insets(2, 2, 2, 2)
+                                StudioTheme.setScaledMinSize(this, 28, 34)
+                                StudioTheme.setScaledPrefSize(this, 36, 36)
                                 isFocusPainted = false
                                 foreground = StudioTheme.TextPrimary
                                 background = StudioTheme.GunmetalDeck
@@ -207,16 +209,15 @@ class InstrumentsSeqPanel(
                     add(stepsGrid, BorderLayout.CENTER)
                 }
                 add(laneRow)
-                add(Box.createVerticalStrut(6))
+                add(Box.createVerticalStrut(StudioTheme.s(6)))
             }
         }
         root.add(matrixPanel)
-        root.add(Box.createVerticalStrut(10))
+        root.add(Box.createVerticalStrut(StudioTheme.s(10)))
 
         // Linux HW MIDI + Open 64-Ch VMC
         val midiBar = StudioTheme.hardwarePanel(StudioTheme.NeonCyan).apply {
-            layout = FlowLayout(FlowLayout.LEFT, 10, 4)
-            maximumSize = Dimension(Int.MAX_VALUE, 64)
+            layout = StudioWrapLayout(FlowLayout.LEFT, 10, 4)
             add(StudioTheme.hardwareLabel("ALSA / HARDWARE MIDI & 64-CH VMC:", StudioTheme.NeonCyan, StudioTheme.TitleFont))
             add(midiSummary)
             add(StudioTheme.hardwareButton("SCAN MIDI PORTS", StudioTheme.EmeraldSignal) { onRefreshMidi() })
@@ -225,11 +226,7 @@ class InstrumentsSeqPanel(
         root.add(midiBar)
         root.add(Box.createVerticalGlue())
 
-        add(JScrollPane(root).apply {
-            border = null
-            background = StudioTheme.ObsidianChassis
-            viewport.background = StudioTheme.ObsidianChassis
-        }, BorderLayout.CENTER)
+        add(StudioTheme.styleScrollPane(JScrollPane(root)), BorderLayout.CENTER)
     }
 
     fun updateState(seq: DesktopSequencerState, vmc: VmcEngineState, drumKit: CustomDrumKitState = CustomDrumKitState()) {

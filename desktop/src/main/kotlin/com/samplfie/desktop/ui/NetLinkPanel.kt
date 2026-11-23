@@ -13,6 +13,7 @@ import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JComboBox
 import javax.swing.JPanel
+import javax.swing.JScrollPane
 import javax.swing.JTextField
 
 /**
@@ -38,32 +39,13 @@ class NetLinkPanel(
 
     private var updating = false
 
-    private val bindPortField = darkTextField("9000")
-    private val txHostField = darkTextField("127.0.0.1")
-    private val txPortField = darkTextField("9001")
-    private val protocolBox = JComboBox(NetworkProtocol.entries.toTypedArray()).apply {
-        background = StudioTheme.ObsidianChassis
-        foreground = StudioTheme.TextPrimary
-        font = StudioTheme.MonoFont
-    }
-    private val sampleRateBox = JComboBox(arrayOf(22050, 44100, 48000, 96000)).apply {
-        selectedItem = 44100
-        background = StudioTheme.ObsidianChassis
-        foreground = StudioTheme.TextPrimary
-        font = StudioTheme.MonoFont
-    }
-    private val channelsBox = JComboBox(arrayOf(1, 2)).apply {
-        selectedItem = 1
-        background = StudioTheme.ObsidianChassis
-        foreground = StudioTheme.TextPrimary
-        font = StudioTheme.MonoFont
-    }
-    private val bufferBox = JComboBox(arrayOf(256, 512, 1024, 2048, 4096)).apply {
-        selectedItem = 1024
-        background = StudioTheme.ObsidianChassis
-        foreground = StudioTheme.TextPrimary
-        font = StudioTheme.MonoFont
-    }
+    private val bindPortField = darkTextField("9000", 92)
+    private val txHostField = darkTextField("127.0.0.1", 148)
+    private val txPortField = darkTextField("9001", 92)
+    private val protocolBox = StudioTheme.styleComboBox(JComboBox(NetworkProtocol.entries.toTypedArray()), 12f)
+    private val sampleRateBox = StudioTheme.styleComboBox(JComboBox(arrayOf(22050, 44100, 48000, 96000)).apply { selectedItem = 44100 }, 12f)
+    private val channelsBox = StudioTheme.styleComboBox(JComboBox(arrayOf(1, 2)).apply { selectedItem = 1 }, 12f)
+    private val bufferBox = StudioTheme.styleComboBox(JComboBox(arrayOf(256, 512, 1024, 2048, 4096)).apply { selectedItem = 1024 }, 12f)
 
     private val listenBtn = StudioTheme.hardwareButton("START SMP2/VMC2 RX LISTENER", StudioTheme.EmeraldSignal, filled = true) {
         applyFieldsToConfig()
@@ -91,20 +73,23 @@ class NetLinkPanel(
 
     init {
         background = StudioTheme.ObsidianChassis
-        layout = BoxLayout(this, BoxLayout.Y_AXIS)
-        border = javax.swing.BorderFactory.createEmptyBorder(10, 12, 10, 12)
+        layout = BorderLayout()
 
-        add(collabStrip)
-        add(Box.createVerticalStrut(10))
+        val root = JPanel().apply {
+            background = StudioTheme.ObsidianChassis
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            StudioTheme.setScaledPadding(this, 10, 12, 10, 12)
+        }
+
+        root.add(collabStrip)
+        root.add(Box.createVerticalStrut(StudioTheme.s(10)))
 
         val rxPanel = StudioTheme.hardwarePanel(StudioTheme.NeonCyan).apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            maximumSize = Dimension(Int.MAX_VALUE, 175)
             add(StudioTheme.hardwareLabel("LINUX PEER RECEIVER (SMP2 AUDIO + VMC2 64-CH MIDI + SMH2 HANDOFF)", StudioTheme.NeonCyan, StudioTheme.TitleFont))
-            add(Box.createVerticalStrut(8))
+            add(Box.createVerticalStrut(StudioTheme.s(8)))
 
-            val row1 = JPanel(FlowLayout(FlowLayout.LEFT, 10, 4)).apply {
-                isOpaque = false
+            val row1 = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 10, 4).apply {
                 add(StudioTheme.hardwareLabel("PROTOCOL:", StudioTheme.TextSecondary))
                 add(protocolBox)
                 add(StudioTheme.hardwareLabel("BIND PORT:", StudioTheme.TextSecondary))
@@ -113,28 +98,25 @@ class NetLinkPanel(
                 add(captureBtn)
             }
             add(row1)
-            add(Box.createVerticalStrut(8))
+            add(Box.createVerticalStrut(StudioTheme.s(8)))
             add(statusLabel)
             add(rxStatsLabel)
         }
-        add(rxPanel)
-        add(Box.createVerticalStrut(10))
+        root.add(rxPanel)
+        root.add(Box.createVerticalStrut(StudioTheme.s(10)))
 
         val txPanel = StudioTheme.hardwarePanel(StudioTheme.AmberHot).apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            maximumSize = Dimension(Int.MAX_VALUE, 165)
             add(StudioTheme.hardwareLabel("EQUAL PEER STREAMING & INSTANT SESSION HANDOFF", StudioTheme.AmberHot, StudioTheme.TitleFont))
-            add(Box.createVerticalStrut(8))
-            val row = JPanel(FlowLayout(FlowLayout.LEFT, 10, 4)).apply {
-                isOpaque = false
+            add(Box.createVerticalStrut(StudioTheme.s(8)))
+            val row = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 10, 4).apply {
                 add(StudioTheme.hardwareLabel("PEER IP:", StudioTheme.TextSecondary))
-                add(txHostField.apply { preferredSize = Dimension(140, 30) })
+                add(txHostField)
                 add(StudioTheme.hardwareLabel("PEER PORT:", StudioTheme.TextSecondary))
                 add(txPortField)
                 add(txBtn)
             }
-            val handoffRow = JPanel(FlowLayout(FlowLayout.LEFT, 10, 4)).apply {
-                isOpaque = false
+            val handoffRow = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 10, 4).apply {
                 add(pushHandoffBtn)
                 add(grabHandoffBtn)
             }
@@ -142,15 +124,14 @@ class NetLinkPanel(
             add(handoffRow)
             add(txStatsLabel)
         }
-        add(txPanel)
-        add(Box.createVerticalStrut(10))
+        root.add(txPanel)
+        root.add(Box.createVerticalStrut(StudioTheme.s(10)))
 
         val enginePanel = StudioTheme.hardwarePanel(StudioTheme.VioletMod).apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            maximumSize = Dimension(Int.MAX_VALUE, 130)
             add(StudioTheme.hardwareLabel("DESKTOP ENGINE FORMAT (ALSA / PULSEAUDIO / PIPEWIRE)", StudioTheme.VioletMod, StudioTheme.TitleFont))
-            add(Box.createVerticalStrut(8))
-            val row = JPanel(GridLayout(1, 3, 12, 0)).apply {
+            add(Box.createVerticalStrut(StudioTheme.s(8)))
+            val row = JPanel(GridLayout(1, 3, StudioTheme.s(12), 0)).apply {
                 isOpaque = false
                 add(labeledCombo("SAMPLE RATE (Hz)", sampleRateBox) { applyFieldsToConfig() })
                 add(labeledCombo("CHANNELS", channelsBox) { applyFieldsToConfig() })
@@ -158,8 +139,10 @@ class NetLinkPanel(
             }
             add(row)
         }
-        add(enginePanel)
-        add(Box.createVerticalGlue())
+        root.add(enginePanel)
+        root.add(Box.createVerticalGlue())
+
+        add(StudioTheme.styleScrollPane(JScrollPane(root)), BorderLayout.CENTER)
     }
 
     private fun applyFieldsToConfig() {
@@ -197,17 +180,11 @@ class NetLinkPanel(
         }
     }
 
-    private fun darkTextField(initial: String): JTextField = JTextField(initial).apply {
-        preferredSize = Dimension(86, 30)
-        background = StudioTheme.ObsidianChassis
-        foreground = StudioTheme.TextPrimary
-        caretColor = StudioTheme.NeonCyan
-        font = StudioTheme.MonoFont
-        border = StudioTheme.panelBorder(StudioTheme.HairlineDivider, 1)
-    }
+    private fun darkTextField(initial: String, baseWidth: Int = 92): JTextField =
+        StudioTheme.styleTextField(JTextField(initial), 12f, baseWidth, 32)
 
     private fun labeledCombo(title: String, box: JComboBox<*>, onChange: () -> Unit): JPanel =
-        JPanel(BorderLayout(0, 4)).apply {
+        JPanel(BorderLayout(0, StudioTheme.s(4))).apply {
             isOpaque = false
             add(StudioTheme.hardwareLabel(title, StudioTheme.TextSecondary), BorderLayout.NORTH)
             box.addActionListener { if (!updating) onChange() }

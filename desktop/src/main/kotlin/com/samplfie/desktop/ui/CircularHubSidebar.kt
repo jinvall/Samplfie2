@@ -69,9 +69,7 @@ class CircularHubSidebar(
     private val micBtn = StudioTheme.hardwareButton("REC MIC", StudioTheme.TacCoral) { onToggleMic() }
     private val stompBtn = StudioTheme.hardwareButton("STOMP ON", StudioTheme.VioletMod) { onToggleStompBypass() }
 
-    private val masterMuteBtn = StudioTheme.hardwareButton("VOL", StudioTheme.EmeraldSignal) { onToggleMasterMute() }.apply {
-        preferredSize = Dimension(62, 26)
-    }
+    private val masterMuteBtn = StudioTheme.hardwareButton("VOL", StudioTheme.EmeraldSignal) { onToggleMasterMute() }
     private val masterVolumeSlider = StudioTheme.hardwareSlider(0, 100, 85).apply {
         addChangeListener {
             if (!updating) {
@@ -94,23 +92,21 @@ class CircularHubSidebar(
 
     init {
         background = StudioTheme.GunmetalDeck
-        preferredSize = Dimension(334, 760)
+        StudioTheme.setScaledPrefSize(this, 360, 760)
         border = BorderFactory.createMatteBorder(0, 0, 0, 1, StudioTheme.HairlineDivider)
-        layout = BorderLayout(0, 8)
+        layout = BorderLayout(0, 0)
 
         val inner = JPanel().apply {
             background = StudioTheme.GunmetalDeck
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            border = BorderFactory.createEmptyBorder(10, 10, 10, 10)
+            StudioTheme.setScaledPadding(this, 10, 10, 10, 10)
         }
 
-        val header = JPanel(BorderLayout()).apply {
+        val header = JPanel(BorderLayout(6, 4)).apply {
             background = StudioTheme.GunmetalDeck
-            maximumSize = Dimension(Int.MAX_VALUE, 28)
-            add(StudioTheme.hardwareLabel("CIRCULAR PRODUCTION HUB", StudioTheme.NeonCyan, StudioTheme.TitleFont), BorderLayout.WEST)
-            add(StudioTheme.hardwareButton("BOOTH", StudioTheme.NeonCyan) { onSelectStation(DesktopStation.BOOTH) }.apply {
-                preferredSize = Dimension(68, 24)
-            }, BorderLayout.EAST)
+            alignmentX = LEFT_ALIGNMENT
+            add(StudioTheme.hardwareLabel("PRODUCTION HUB", StudioTheme.NeonCyan, StudioTheme.TitleFont), BorderLayout.CENTER)
+            add(StudioTheme.hardwareButton("BOOTH", StudioTheme.NeonCyan) { onSelectStation(DesktopStation.BOOTH) }, BorderLayout.EAST)
         }
         inner.add(header)
         inner.add(Box.createVerticalStrut(4))
@@ -119,15 +115,15 @@ class CircularHubSidebar(
         inner.add(Box.createVerticalStrut(6))
 
         wheelCanvas.alignmentX = LEFT_ALIGNMENT
-        wheelCanvas.preferredSize = Dimension(312, 312)
-        wheelCanvas.maximumSize = Dimension(312, 312)
+        StudioTheme.setScaledPrefSize(wheelCanvas, 326, 326)
+        StudioTheme.setScaledMinSize(wheelCanvas, 260, 260)
+        StudioTheme.setScaledMaxSize(wheelCanvas, Int.MAX_VALUE, 460)
         inner.add(wheelCanvas)
         inner.add(Box.createVerticalStrut(8))
 
         // Master Transport Grid
         val transportPanel = StudioTheme.hardwarePanel(StudioTheme.NeonCyan).apply {
             layout = GridLayout(2, 2, 6, 6)
-            maximumSize = Dimension(Int.MAX_VALUE, 80)
             alignmentX = LEFT_ALIGNMENT
             add(playBtn)
             add(stopBtn)
@@ -139,8 +135,7 @@ class CircularHubSidebar(
 
         // Equal Peer Handoff & 4-Device Band Strip
         val handoffPanel = StudioTheme.hardwarePanel(StudioTheme.AmberHot).apply {
-            layout = GridLayout(2, 2, 6, 4)
-            maximumSize = Dimension(Int.MAX_VALUE, 74)
+            layout = GridLayout(2, 2, 6, 6)
             alignmentX = LEFT_ALIGNMENT
             add(pushHandoffBtn)
             add(grabHandoffBtn)
@@ -153,18 +148,16 @@ class CircularHubSidebar(
         // Stomp + Master VU + Master Volume Control
         val masterPanel = StudioTheme.hardwarePanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            maximumSize = Dimension(Int.MAX_VALUE, 118)
             alignmentX = LEFT_ALIGNMENT
-            add(stompBtn.apply { alignmentX = LEFT_ALIGNMENT; maximumSize = Dimension(Int.MAX_VALUE, 28) })
-            add(Box.createVerticalStrut(4))
+            add(stompBtn.apply { alignmentX = LEFT_ALIGNMENT })
+            add(Box.createVerticalStrut(6))
             vuMeterCanvas.alignmentX = LEFT_ALIGNMENT
-            vuMeterCanvas.preferredSize = Dimension(280, 18)
-            vuMeterCanvas.maximumSize = Dimension(Int.MAX_VALUE, 18)
+            StudioTheme.setScaledPrefSize(vuMeterCanvas, 300, 22)
+            StudioTheme.setScaledMaxSize(vuMeterCanvas, Int.MAX_VALUE, 28)
             add(vuMeterCanvas)
-            add(Box.createVerticalStrut(4))
+            add(Box.createVerticalStrut(6))
             val volRow = JPanel(BorderLayout(6, 0)).apply {
                 isOpaque = false
-                maximumSize = Dimension(Int.MAX_VALUE, 28)
                 alignmentX = LEFT_ALIGNMENT
                 add(masterMuteBtn, BorderLayout.WEST)
                 add(masterVolumeSlider, BorderLayout.CENTER)
@@ -178,7 +171,6 @@ class CircularHubSidebar(
         // Quick File I/O Bar
         val ioPanel = StudioTheme.hardwarePanel(StudioTheme.EmeraldSignal).apply {
             layout = GridLayout(1, 3, 6, 0)
-            maximumSize = Dimension(Int.MAX_VALUE, 46)
             alignmentX = LEFT_ALIGNMENT
             add(openBtn)
             add(saveWavBtn)
@@ -187,7 +179,12 @@ class CircularHubSidebar(
         inner.add(ioPanel)
         inner.add(Box.createVerticalGlue())
 
-        add(inner, BorderLayout.CENTER)
+        add(StudioTheme.styleScrollPane(
+            javax.swing.JScrollPane(inner, javax.swing.JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, javax.swing.JScrollPane.HORIZONTAL_SCROLLBAR_NEVER).apply {
+                background = StudioTheme.GunmetalDeck
+                viewport.background = StudioTheme.GunmetalDeck
+            }
+        ), BorderLayout.CENTER)
     }
 
     fun updateState(
@@ -276,7 +273,7 @@ class CircularHubSidebar(
             g2.fill(Ellipse2D.Double(cx - minDim * 0.48, cy - minDim * 0.48, minDim * 0.96, minDim * 0.96))
 
             g2.color = StudioTheme.HairlineDivider
-            g2.stroke = BasicStroke(1.5f)
+            g2.stroke = StudioTheme.stroke(1.5f)
             g2.draw(Ellipse2D.Double(cx - outerR, cy - outerR, outerR * 2, outerR * 2))
             for (deg in 0 until 360 step 15) {
                 val r = Math.toRadians(deg.toDouble())
@@ -297,8 +294,8 @@ class CircularHubSidebar(
                 )
             }
             val count = wheelStations.size
-            val nodeW = if (count > 5) 68.0 else 82.0
-            val nodeH = if (count > 5) 36.0 else 42.0
+            val nodeW = minDim * (if (count > 5) 0.23 else 0.27)
+            val nodeH = minDim * (if (count > 5) 0.125 else 0.145)
             val hits = mutableListOf<SpokeHit>()
 
             wheelStations.forEachIndexed { idx, st ->
@@ -313,28 +310,30 @@ class CircularHubSidebar(
 
                 if (active) {
                     g2.color = StudioTheme.withAlpha(accent, 75)
-                    g2.stroke = BasicStroke(8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+                    g2.stroke = StudioTheme.stroke(8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
                     g2.drawLine(startX.toInt(), startY.toInt(), endX.toInt(), endY.toInt())
                 }
                 g2.color = if (active) accent else StudioTheme.withAlpha(accent, 150)
-                g2.stroke = BasicStroke(if (active) 3.2f else 1.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+                g2.stroke = StudioTheme.stroke(if (active) 3.2f else 1.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
                 g2.drawLine(startX.toInt(), startY.toInt(), endX.toInt(), endY.toInt())
 
-                val boxX = (cx + (minDim * 0.36) * cos(rad) - nodeW / 2.0).coerceIn(2.0, width - nodeW - 2.0)
-                val boxY = (cy + (minDim * 0.36) * sin(rad) - nodeH / 2.0).coerceIn(2.0, height - nodeH - 2.0)
-                val rr = RoundRectangle2D.Double(boxX, boxY, nodeW, nodeH, 10.0, 10.0)
+                val pad = StudioTheme.sd(2.0)
+                val boxX = (cx + (minDim * 0.36) * cos(rad) - nodeW / 2.0).coerceIn(pad, width - nodeW - pad)
+                val boxY = (cy + (minDim * 0.36) * sin(rad) - nodeH / 2.0).coerceIn(pad, height - nodeH - pad)
+                val arc = StudioTheme.sd(10.0)
+                val rr = RoundRectangle2D.Double(boxX, boxY, nodeW, nodeH, arc, arc)
                 hits.add(SpokeHit(st, rr, accent, deg))
 
                 g2.color = if (active) StudioTheme.withAlpha(accent, 65) else StudioTheme.GunmetalDeck
                 g2.fill(rr)
                 g2.color = if (active) accent else StudioTheme.withAlpha(accent, 190)
-                g2.stroke = BasicStroke(if (active) 2.2f else 1.2f)
+                g2.stroke = StudioTheme.stroke(if (active) 2.2f else 1.2f)
                 g2.draw(rr)
 
-                g2.font = Font("SansSerif", Font.BOLD, if (count > 5) 9 else 10)
+                g2.font = StudioTheme.font("SansSerif", Font.BOLD, if (count > 5) 9.5f else 10.5f)
                 val fm = g2.fontMetrics
                 g2.color = StudioTheme.TextPrimary
-                g2.drawString(st.shortLabel, (boxX + (nodeW - fm.stringWidth(st.shortLabel)) / 2).toFloat(), (boxY + 15).toFloat())
+                g2.drawString(st.shortLabel, (boxX + (nodeW - fm.stringWidth(st.shortLabel)) / 2).toFloat(), (boxY + nodeH * 0.45).toFloat())
 
                 val sub = when (st) {
                     DesktopStation.BOOTH -> "HUB"
@@ -344,25 +343,26 @@ class CircularHubSidebar(
                     DesktopStation.TRACKS -> "SYNC"
                     DesktopStation.FX_STOMP -> "${uiState.fxState.activeCount} FX"
                     DesktopStation.LIVE -> uiState.stompState.liveMode.name.take(5)
+                    DesktopStation.TOOLS -> "PRO"
                     DesktopStation.TUNER -> uiState.tunerReading.fullNote
                     DesktopStation.VMC -> "64CH"
                     DesktopStation.NET_LINK -> if (netState.isListening) ":${uiState.rigConfig.bindPort}" else uiState.rigConfig.protocol.label
                 }
-                g2.font = Font("Monospaced", Font.BOLD, 9)
+                g2.font = StudioTheme.font("Monospaced", Font.BOLD, 9f)
                 val fm2 = g2.fontMetrics
                 g2.color = accent
-                g2.drawString(sub, (boxX + (nodeW - fm2.stringWidth(sub)) / 2).toFloat(), (boxY + nodeH - 7).toFloat())
+                g2.drawString(sub, (boxX + (nodeW - fm2.stringWidth(sub)) / 2).toFloat(), (boxY + nodeH * 0.84).toFloat())
             }
             spokeHits = hits
 
             val peak = maxOf(playState.livePeak, micState.peakLevel, netState.rxLivePeak)
             val vuR = innerR * 1.22
             g2.color = StudioTheme.HairlineDivider
-            g2.stroke = BasicStroke(3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+            g2.stroke = StudioTheme.stroke(3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
             g2.draw(Arc2D.Double(cx - vuR, cy - vuR, vuR * 2, vuR * 2, 90.0, -360.0, Arc2D.OPEN))
             val sweep = if (playState.isPlaying) -(playState.playheadFraction * 360.0).coerceAtLeast(18.0) else -(peak * 360.0).coerceAtLeast(35.0)
             g2.color = if (playState.isPlaying) StudioTheme.EmeraldSignal else StudioTheme.NeonCyan
-            g2.stroke = BasicStroke(4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+            g2.stroke = StudioTheme.stroke(4f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
             g2.draw(Arc2D.Double(cx - vuR, cy - vuR, vuR * 2, vuR * 2, 90.0, sweep, Arc2D.OPEN))
 
             val hubR = innerR * 0.94
@@ -372,26 +372,26 @@ class CircularHubSidebar(
             g2.color = if (uiState.station == DesktopStation.BOOTH) StudioTheme.AmberHot
             else if (playState.isPlaying) StudioTheme.EmeraldSignal
             else StudioTheme.NeonCyan
-            g2.stroke = BasicStroke(2f)
+            g2.stroke = StudioTheme.stroke(2f)
             g2.draw(hubCircle)
 
-            g2.font = Font("SansSerif", Font.BOLD, 10)
+            g2.font = StudioTheme.font("SansSerif", Font.BOLD, 10.5f)
             val hubTitle = "BOOTH"
             val fmHub = g2.fontMetrics
             g2.color = StudioTheme.NeonCyan
-            g2.drawString(hubTitle, (cx - fmHub.stringWidth(hubTitle) / 2).toFloat(), (cy - 11).toFloat())
+            g2.drawString(hubTitle, (cx - fmHub.stringWidth(hubTitle) / 2).toFloat(), (cy - hubR * 0.25).toFloat())
 
             val stateText = if (playState.isPlaying) "PLAYING" else if (micState.isRecording) "REC" else "READY"
-            g2.font = Font("Monospaced", Font.BOLD, 11)
+            g2.font = StudioTheme.font("Monospaced", Font.BOLD, 11.5f)
             val fmSt = g2.fontMetrics
             g2.color = if (playState.isPlaying) StudioTheme.EmeraldSignal else StudioTheme.TextPrimary
-            g2.drawString(stateText, (cx - fmSt.stringWidth(stateText) / 2).toFloat(), (cy + 5).toFloat())
+            g2.drawString(stateText, (cx - fmSt.stringWidth(stateText) / 2).toFloat(), (cy + hubR * 0.12).toFloat())
 
             val stationTag = uiState.station.shortLabel
-            g2.font = Font("Monospaced", Font.PLAIN, 9)
+            g2.font = StudioTheme.font("Monospaced", Font.PLAIN, 9.5f)
             val fmTag = g2.fontMetrics
             g2.color = StudioTheme.TextSecondary
-            g2.drawString(stationTag, (cx - fmTag.stringWidth(stationTag) / 2).toFloat(), (cy + 19).toFloat())
+            g2.drawString(stationTag, (cx - fmTag.stringWidth(stationTag) / 2).toFloat(), (cy + hubR * 0.45).toFloat())
 
             g2.dispose()
         }
@@ -402,15 +402,21 @@ class CircularHubSidebar(
         override fun paintComponent(g: Graphics) {
             super.paintComponent(g)
             val g2 = g.create() as Graphics2D
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
             val peak = maxOf(playState.livePeak, micState.peakLevel, netState.rxLivePeak, uiState.processedBuffer?.peakLevel() ?: 0f)
             val segments = 24
-            val gap = 2
-            val segW = ((width - 42) - gap * (segments - 1)) / segments.toFloat()
+            val gap = StudioTheme.s(2)
+            g2.font = StudioTheme.font("Monospaced", Font.BOLD, 10.5f)
+            val fm = g2.fontMetrics
+            val labelW = fm.stringWidth("MST") + StudioTheme.s(8)
+            val segW = ((width - labelW - StudioTheme.s(6)) - gap * (segments - 1)) / segments.toFloat()
             val lit = (peak.coerceIn(0f, 1f) * segments).toInt()
-            g2.font = Font("Monospaced", Font.BOLD, 10)
             g2.color = StudioTheme.TextSecondary
-            g2.drawString("MST", 0, 14)
+            g2.drawString("MST", 0, (height + fm.ascent - fm.descent) / 2)
 
+            val barY = StudioTheme.s(3)
+            val barH = (height - barY * 2).coerceAtLeast(StudioTheme.s(8))
+            val arc = StudioTheme.s(3)
             for (i in 0 until segments) {
                 val c = when {
                     i >= segments - 3 -> StudioTheme.TacCoral
@@ -418,8 +424,8 @@ class CircularHubSidebar(
                     else -> StudioTheme.EmeraldSignal
                 }
                 g2.color = StudioTheme.withAlpha(c, if (i < lit) 245 else 40)
-                val x = (32 + i * (segW + gap)).toInt()
-                g2.fillRoundRect(x, 3, segW.toInt().coerceAtLeast(2), 12, 3, 3)
+                val x = (labelW + i * (segW + gap)).toInt()
+                g2.fillRoundRect(x, barY, segW.toInt().coerceAtLeast(2), barH, arc, arc)
             }
             g2.dispose()
         }

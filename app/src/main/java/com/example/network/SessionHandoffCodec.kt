@@ -140,6 +140,7 @@ data class SessionHandoffSnapshot(
             "TRACKS" -> StudioSpoke.TRACKS
             "FX_RACK", "FX_STOMP" -> StudioSpoke.FX_RACK
             "LIVE", "NET_LINK" -> StudioSpoke.LIVE
+            "TOOLS" -> StudioSpoke.TOOLS
             "TUNER" -> StudioSpoke.TUNER
             "VMC" -> StudioSpoke.VMC
             else -> StudioSpoke.DECK

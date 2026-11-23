@@ -16,6 +16,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -30,8 +31,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ElectricBolt
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Hub
@@ -85,6 +89,7 @@ import com.example.ui.screens.FxRackScreen
 import com.example.ui.screens.InstrumentsSpokeScreen
 import com.example.ui.screens.LiveSpokeScreen
 import com.example.ui.screens.SamplesSpokeScreen
+import com.example.ui.screens.ToolsAndPluginsScreen
 import com.example.ui.screens.TracksSpokeScreen
 import com.example.ui.screens.TunerSpokeScreen
 import com.example.ui.screens.VmcSpokeScreen
@@ -195,6 +200,36 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
         launchAudioPickerSafely()
     }
 
+    val importRefAudioLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: SecurityException) {
+            }
+            viewModel.loadReferenceBufferFromUri(uri)
+        }
+    }
+
+    val importPluginBundleLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: SecurityException) {
+            }
+            viewModel.importPluginOrIrFromUri(uri)
+        }
+    }
+
     val selectedSpoke by viewModel.selectedSpoke.collectAsStateWithLifecycle()
     val workspaceConfig by viewModel.workspaceConfig.collectAsStateWithLifecycle()
     val tunerState by viewModel.tunerState.collectAsStateWithLifecycle()
@@ -202,6 +237,7 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
     val rigConfig by viewModel.rigConfig.collectAsStateWithLifecycle()
     val secretsState by viewModel.secretsState.collectAsStateWithLifecycle()
     val stemState by viewModel.stemState.collectAsStateWithLifecycle()
+    val toolsState by viewModel.toolsState.collectAsStateWithLifecycle()
     val showSecretsVault by viewModel.showSecretsVault.collectAsStateWithLifecycle()
     val showCollabSheet by viewModel.showCollabSheet.collectAsStateWithLifecycle()
     val collabPeers by viewModel.collabPeers.collectAsStateWithLifecycle()
@@ -562,7 +598,12 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                                 onStreamTx = { viewModel.streamActiveAudioOverNetwork() },
                                 onExportWavClick = { viewModel.exportAsWav("samplfie2_deck") },
                                 onExportMp3Click = { showExportDialog = true },
-                                onLoadSavedTake = { viewModel.loadSavedTake(it) }
+                                onLoadSavedTake = { viewModel.loadSavedTake(it) },
+                                specPalette = toolsState.specPalette,
+                                specFreqLowHz = toolsState.specFreqLowHz,
+                                specFreqHighHz = toolsState.specFreqHighHz,
+                                onSpecFreqRangeChange = { lo, hi -> viewModel.updateSpecFreqRange(lo, hi) },
+                                onOpenTools = { viewModel.selectSpoke(StudioSpoke.TOOLS) }
                             )
 
                             StudioSpoke.SAMPLES -> SamplesSpokeScreen(
@@ -713,6 +754,66 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                                 onExportMp3 = { viewModel.exportAsMp3(it) }
                             )
 
+                            StudioSpoke.TOOLS -> ToolsAndPluginsScreen(
+                                editorState = editorState,
+                                toolsState = toolsState,
+                                playbackState = playbackState,
+                                micTelemetry = micTelemetry,
+                                fxRack = fxRack,
+                                onSelectTab = { viewModel.setToolsTab(it) },
+                                onVisualizerModeChange = { viewModel.setVisualizerMode(it) },
+                                onSelectionChange = { s, e -> viewModel.updateSelection(s, e) },
+                                onSeekPlayhead = { viewModel.seekPlayhead(it) },
+                                onTogglePlay = { viewModel.togglePlay() },
+                                onStop = { viewModel.stopPlayback() },
+                                onToggleLoop = { viewModel.toggleLoop() },
+                                onUndo = { viewModel.undoExtraction() },
+                                onSelectPalette = { viewModel.setSpectrogramPalette(it) },
+                                onApplyCustomHexStops = { viewModel.applyCustomTenStopGradient(it) },
+                                onSpecFreqRangeChange = { lo, hi -> viewModel.updateSpecFreqRange(lo, hi) },
+                                onSetSpecAttenDb = { viewModel.setSpecDeleteAttenuation(it) },
+                                onApplySpectralDelete = { viewModel.applySpectralDelete() },
+                                onSetInvertScope = { viewModel.setInvertScope(it) },
+                                onSetInvertSelectionOnly = { viewModel.setInvertSelectionOnly(it) },
+                                onApplyInvert = { viewModel.applyInvertPolarity() },
+                                onPickReferenceAudio = {
+                                    try {
+                                        importRefAudioLauncher.launch(arrayOf("audio/*"))
+                                    } catch (_: ActivityNotFoundException) {
+                                        importRefAudioLauncher.launch(arrayOf("*/*"))
+                                    }
+                                },
+                                onPickSessionReference = { viewModel.selectReferenceFromSessionSource(it) },
+                                onComputeDifference = { viewModel.computeAudioDifference() },
+                                onLoadDiffToDeck = { viewModel.loadDiffResultToDeck() },
+                                onUpdateMixParams = { p, s, o, lim -> viewModel.updateMixParams(p, s, o, lim) },
+                                onApplyMix = { viewModel.applyMixWithReference() },
+                                onSetMonoMode = { viewModel.setMonoFoldMode(it) },
+                                onApplyMixToMono = { viewModel.applyMixToMono() },
+                                onSetStereoParams = { m, p -> viewModel.setStereoSplitParams(m, p) },
+                                onApplySplitToStereo = { viewModel.applySplitToStereo() },
+                                onSetRateParams = { sr, reinterp -> viewModel.setRateConversionParams(sr, reinterp) },
+                                onApplyConvertRate = { viewModel.applyConvertSampleRate() },
+                                onSetFormatParams = { fmt, dith -> viewModel.setFormatConversionParams(fmt, dith) },
+                                onApplyConvertFormat = { viewModel.applyConvertSampleFormat() },
+                                onAddPluginToChain = { viewModel.addPluginToChain(it) },
+                                onRemovePluginFromChain = { viewModel.removePluginFromChain(it) },
+                                onMovePluginInChain = { id, d -> viewModel.movePluginInChain(id, d) },
+                                onTogglePluginBypass = { viewModel.togglePluginBypass(it) },
+                                onUpdatePluginWetMix = { id, w -> viewModel.updatePluginWetMix(id, w) },
+                                onUpdatePluginParam = { id, k, v -> viewModel.updatePluginParam(id, k, v) },
+                                onBouncePluginChain = { viewModel.bouncePluginChainToDryBuffer() },
+                                onInstallCatalogPlugin = { viewModel.installCatalogPlugin(it) },
+                                onUninstallCustomPlugin = { viewModel.uninstallCustomPlugin(it) },
+                                onImportPluginOrIrFile = {
+                                    try {
+                                        importPluginBundleLauncher.launch(arrayOf("*/*"))
+                                    } catch (ex: Exception) {
+                                        Toast.makeText(context, "No file picker found: ${ex.message}", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            )
+
                             StudioSpoke.TUNER -> TunerSpokeScreen(
                                 tunerState = tunerState,
                                 a4ReferenceHz = rigConfig.a4ReferenceHz,
@@ -760,17 +861,17 @@ private fun StudioSpokeBottomDock(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
                 .padding(horizontal = 4.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             visibleDock.forEach { spoke ->
                 val isSelected = selectedSpoke == spoke
                 Surface(
                     modifier = Modifier
-                        .weight(1f)
+                        .widthIn(min = 56.dp)
                         .minimumInteractiveComponentSize()
-                        .padding(horizontal = 2.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .clickable { onSelectSpoke(spoke) }
                         .testTag("nav_tab_${spoke.name.lowercase()}"),
@@ -779,7 +880,7 @@ private fun StudioSpokeBottomDock(
                     border = BorderStroke(1.dp, if (isSelected) NeonCyan else HairlineDivider.copy(alpha = 0.6f))
                 ) {
                     Column(
-                        modifier = Modifier.padding(vertical = 6.dp, horizontal = 2.dp),
+                        modifier = Modifier.padding(vertical = 6.dp, horizontal = 6.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
@@ -811,6 +912,7 @@ private fun spokeIcon(spoke: StudioSpoke) = when (spoke) {
     StudioSpoke.TRACKS -> Icons.Filled.ViewTimeline
     StudioSpoke.FX_RACK -> Icons.Filled.Tune
     StudioSpoke.LIVE -> Icons.Filled.ElectricBolt
+    StudioSpoke.TOOLS -> Icons.Filled.Build
     StudioSpoke.TUNER -> Icons.Filled.MusicNote
     StudioSpoke.VMC -> Icons.Filled.Piano
 }

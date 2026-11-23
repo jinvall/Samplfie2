@@ -56,13 +56,12 @@ class TracksTimelinePanel(
 
     init {
         background = StudioTheme.ObsidianChassis
-        layout = BorderLayout(0, 8)
-        border = javax.swing.BorderFactory.createEmptyBorder(10, 12, 10, 12)
+        layout = BorderLayout(0, StudioTheme.s(8))
+        StudioTheme.setScaledPadding(this, 10, 12, 10, 12)
 
         val topPanel = StudioTheme.hardwarePanel(StudioTheme.VioletMod).apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            val row1 = JPanel(FlowLayout(FlowLayout.LEFT, 10, 4)).apply {
-                isOpaque = false
+            val row1 = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 10, 4).apply {
                 add(StudioTheme.hardwareLabel("SYNCED TRACK TIMELINE", StudioTheme.VioletMod, StudioTheme.TitleFont))
                 add(syncPlayBtn)
                 add(tlPlayBtn)
@@ -72,8 +71,7 @@ class TracksTimelinePanel(
                 }
                 add(bpmSlider)
             }
-            val row2 = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4)).apply {
-                isOpaque = false
+            val row2 = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 8, 4).apply {
                 add(StudioTheme.hardwareButton("+ DECK -> TRACK 1", StudioTheme.NeonCyan) { onAddDeckToTrack(0) })
                 add(StudioTheme.hardwareButton("+ LOOPER -> TRACK 2", StudioTheme.EmeraldSignal) { onAddLooperMixToTrack2() })
                 add(StudioTheme.hardwareButton("+ SEQ BEAT -> TRACK 3", StudioTheme.AmberHot) { onAddSeqBeatToTrack3() })
@@ -85,16 +83,12 @@ class TracksTimelinePanel(
         }
         add(topPanel, BorderLayout.NORTH)
 
-        val centerSplit = JPanel(BorderLayout(0, 10)).apply {
+        val centerSplit = JPanel(BorderLayout(0, StudioTheme.s(10))).apply {
             isOpaque = false
-            timelineCanvas.preferredSize = Dimension(860, 260)
-            timelineCanvas.minimumSize = Dimension(400, 220)
+            StudioTheme.setScaledPrefSize(timelineCanvas, 860, 270)
+            StudioTheme.setScaledMinSize(timelineCanvas, 400, 220)
             add(timelineCanvas, BorderLayout.NORTH)
-            add(JScrollPane(trackRowsHost).apply {
-                border = null
-                background = StudioTheme.ObsidianChassis
-                viewport.background = StudioTheme.ObsidianChassis
-            }, BorderLayout.CENTER)
+            add(StudioTheme.styleScrollPane(JScrollPane(trackRowsHost)), BorderLayout.CENTER)
         }
         add(centerSplit, BorderLayout.CENTER)
     }
@@ -126,9 +120,7 @@ class TracksTimelinePanel(
             val accent = colors.getOrElse(idx) { StudioTheme.VioletMod }
             val panel = StudioTheme.hardwarePanel(accent).apply {
                 layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                maximumSize = Dimension(Int.MAX_VALUE, 120)
-                val header = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2)).apply {
-                    isOpaque = false
+                val header = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 8, 2).apply {
                     add(StudioTheme.hardwareLabel(track.name, accent, StudioTheme.TitleFont))
                     add(StudioTheme.hardwareButton(if (track.isMuted) "UNMUTE" else "MUTE", StudioTheme.TacCoral) {
                         onToggleMute(track.id)
@@ -138,13 +130,9 @@ class TracksTimelinePanel(
                     })
                 }
                 add(header)
-                val clipsRow = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2)).apply {
-                    isOpaque = false
+                val clipsRow = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 6, 2).apply {
                     if (track.clips.isEmpty()) {
-                        add(JLabel("NO CLIPS ON TRACK").apply {
-                            foreground = StudioTheme.TextMuted
-                            font = StudioTheme.MonoFont
-                        })
+                        add(StudioTheme.hardwareLabel("NO CLIPS ON TRACK", StudioTheme.TextMuted, StudioTheme.MonoFont))
                     } else {
                         track.clips.forEach { clip ->
                             add(StudioTheme.hardwareLabel("${clip.label} @${"%.1f".format(clip.startTimeSec)}s", StudioTheme.TextPrimary, StudioTheme.MonoFont))
@@ -157,7 +145,7 @@ class TracksTimelinePanel(
                 add(clipsRow)
             }
             trackRowsHost.add(panel)
-            trackRowsHost.add(Box.createVerticalStrut(6))
+            trackRowsHost.add(Box.createVerticalStrut(StudioTheme.s(6)))
         }
         trackRowsHost.revalidate()
         trackRowsHost.repaint()
@@ -166,12 +154,12 @@ class TracksTimelinePanel(
     private inner class TimelineArrangementCanvas : JPanel() {
         init {
             background = StudioTheme.ObsidianChassis
-            border = StudioTheme.panelBorder(StudioTheme.HairlineDivider, 1)
+            StudioTheme.setScaledPanelBorder(this, StudioTheme.HairlineDivider, 1, 2, 2)
             cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
             addMouseListener(object : MouseAdapter() {
                 override fun mouseClicked(e: MouseEvent) {
-                    val leftPad = 140f
-                    val usable = (width - leftPad - 12f).coerceAtLeast(1f)
+                    val leftPad = StudioTheme.sf(155f)
+                    val usable = (width - leftPad - StudioTheme.sf(12f)).coerceAtLeast(1f)
                     val frac = ((e.x - leftPad) / usable).coerceIn(0f, 1f)
                     onSeekPlayheadSec(frac * timelineState.totalDurationSec)
                 }
@@ -182,55 +170,63 @@ class TracksTimelinePanel(
             super.paintComponent(g)
             val g2 = g.create() as Graphics2D
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
 
-            val leftPad = 140f
+            val leftPad = StudioTheme.sf(155f)
             val totalSec = timelineState.totalDurationSec.coerceAtLeast(4f)
-            val usableW = (width - leftPad - 12f).coerceAtLeast(1f)
-            val rulerH = 26
+            val usableW = (width - leftPad - StudioTheme.sf(12f)).coerceAtLeast(1f)
+            val rulerH = StudioTheme.s(28)
 
             // Top beat/second ruler
             g2.color = StudioTheme.GunmetalDeck
             g2.fillRect(0, 0, width, rulerH)
+            g2.font = StudioTheme.LabelFont
+            val rulerFm = g2.fontMetrics
+            val rulerTextY = (rulerH - rulerFm.height) / 2 + rulerFm.ascent
+
             val beatSec = 60f / syncState.bpm.coerceIn(60f, 180f)
             var t = 0f
             var beatIdx = 0
             while (t <= totalSec) {
                 val x = (leftPad + (t / totalSec) * usableW).toInt()
                 g2.color = if (beatIdx % 4 == 0) StudioTheme.NeonCyan else StudioTheme.HairlineDivider
-                g2.drawLine(x, if (beatIdx % 4 == 0) 4 else 14, x, height)
+                g2.drawLine(x, if (beatIdx % 4 == 0) StudioTheme.s(4) else StudioTheme.s(14), x, height)
                 if (beatIdx % 4 == 0) {
-                    g2.font = StudioTheme.LabelFont
-                    g2.drawString("B${(beatIdx / 4) + 1}", x + 3, 16)
+                    g2.drawString("B${(beatIdx / 4) + 1}", x + StudioTheme.s(4), rulerTextY)
                 }
                 t += beatSec
                 beatIdx++
             }
 
             val colors = listOf(StudioTheme.NeonCyan, StudioTheme.EmeraldSignal, StudioTheme.AmberHot, StudioTheme.MagentaFx)
-            val laneH = ((height - rulerH - 8) / 4).coerceAtLeast(36)
+            val laneH = ((height - rulerH - StudioTheme.s(8)) / 4).coerceAtLeast(StudioTheme.s(36))
+            val arc = StudioTheme.s(8)
             timelineState.tracks.forEachIndexed { idx, track ->
-                val y = rulerH + 4 + idx * laneH
+                val y = rulerH + StudioTheme.s(4) + idx * laneH
                 val accent = colors.getOrElse(idx) { StudioTheme.VioletMod }
 
                 g2.color = StudioTheme.GunmetalDeck
-                g2.fillRect(4, y + 2, (leftPad - 12).toInt(), laneH - 6)
+                g2.fillRect(StudioTheme.s(4), y + StudioTheme.s(2), (leftPad - StudioTheme.s(12)).toInt(), laneH - StudioTheme.s(6))
                 g2.color = accent
                 g2.font = StudioTheme.LabelFont
-                g2.drawString(track.name.take(16), 10, y + laneH / 2 + 4)
+                val fm = g2.fontMetrics
+                val textY = y + (laneH - fm.height) / 2 + fm.ascent
+                g2.drawString(track.name.take(16), StudioTheme.s(10), textY)
 
                 g2.color = StudioTheme.BrushedPanel
-                g2.fillRect(leftPad.toInt(), y + 2, usableW.toInt(), laneH - 6)
+                g2.fillRect(leftPad.toInt(), y + StudioTheme.s(2), usableW.toInt(), laneH - StudioTheme.s(6))
 
                 track.clips.forEach { clip ->
                     val cx = (leftPad + (clip.startTimeSec / totalSec) * usableW).toInt()
-                    val cw = ((clip.buffer.durationSeconds / totalSec) * usableW).toInt().coerceAtLeast(14)
+                    val cw = ((clip.buffer.durationSeconds / totalSec) * usableW).toInt().coerceAtLeast(StudioTheme.s(14))
+                    val ch = (laneH - StudioTheme.s(12)).coerceAtLeast(StudioTheme.s(16))
                     g2.color = StudioTheme.withAlpha(accent, if (track.isMuted) 45 else 155)
-                    g2.fillRoundRect(cx, y + 5, cw, laneH - 12, 8, 8)
+                    g2.fillRoundRect(cx, y + StudioTheme.s(5), cw, ch, arc, arc)
                     g2.color = accent
-                    g2.drawRoundRect(cx, y + 5, cw, laneH - 12, 8, 8)
+                    g2.drawRoundRect(cx, y + StudioTheme.s(5), cw, ch, arc, arc)
                     g2.color = StudioTheme.ObsidianChassis
                     g2.font = StudioTheme.LabelFont
-                    g2.drawString(clip.label.take(12), cx + 6, y + laneH / 2 + 4)
+                    g2.drawString(clip.label.take(12), cx + StudioTheme.s(6), textY)
                 }
             }
 
@@ -238,7 +234,7 @@ class TracksTimelinePanel(
             val headSec = if (syncState.isPlaying) syncState.playheadSec else timelineState.playheadSec
             val px = (leftPad + (headSec / totalSec).coerceIn(0f, 1f) * usableW).toInt()
             g2.color = StudioTheme.TacCoral
-            g2.stroke = BasicStroke(2.2f)
+            g2.stroke = StudioTheme.stroke(2.2f)
             g2.drawLine(px, 0, px, height)
 
             g2.dispose()

@@ -87,12 +87,12 @@ class DesktopDrumKitPanel(
     }
 
     private val stageCanvas = DrumStageJava2DCanvas()
-    private val quickPadsPanel = JPanel(FlowLayout(FlowLayout.LEFT, 6, 4)).apply { isOpaque = false }
+    private val quickPadsPanel = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 6, 4)
     private val selectedInfoLbl = StudioTheme.hardwareLabel("NO PIECE SELECTED", StudioTheme.TextPrimary, StudioTheme.TitleFont)
     private val pitchSlider = StudioTheme.hardwareSlider(-12, 12, 0)
     private val decaySlider = StudioTheme.hardwareSlider(40, 200, 100)
     private val volSlider = StudioTheme.hardwareSlider(10, 120, 90)
-    private val beaterTargetPanel = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2)).apply { isOpaque = false }
+    private val beaterTargetPanel = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 6, 2)
     private val targetLeftBtn = StudioTheme.hardwareButton("TARGET: LEFT BEATER", StudioTheme.EmeraldSignal, filled = true) {
         onSetTargetBeater(BeaterSide.LEFT)
     }
@@ -110,7 +110,7 @@ class DesktopDrumKitPanel(
 
     init {
         background = StudioTheme.BrushedPanel
-        border = StudioTheme.panelBorder(StudioTheme.AmberHot)
+        StudioTheme.setScaledPanelBorder(this, StudioTheme.AmberHot, 1, 8, 10)
         layout = BorderLayout(8, 8)
 
         // Top Bar
@@ -120,16 +120,14 @@ class DesktopDrumKitPanel(
 
             val headerRow = JPanel(BorderLayout(8, 4)).apply {
                 isOpaque = false
-                val left = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2)).apply {
-                    isOpaque = false
+                val left = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 8, 2).apply {
                     add(StudioTheme.hardwareLabel("ARRANGEABLE DRUM KIT STUDIO", StudioTheme.TextPrimary, StudioTheme.TitleFont))
                     add(countLbl)
                 }
                 add(left, BorderLayout.WEST)
                 add(summaryLbl, BorderLayout.EAST)
             }
-            val modeRow = JPanel(FlowLayout(FlowLayout.LEFT, 6, 3)).apply {
-                isOpaque = false
+            val modeRow = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 6, 3).apply {
                 add(acousticStyleBtn)
                 add(electricStyleBtn)
                 add(arrangeBtn)
@@ -158,17 +156,16 @@ class DesktopDrumKitPanel(
         val rightColumn = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
-            preferredSize = Dimension(430, 390)
+            StudioTheme.setScaledPrefSize(this, 470, 420)
 
             val inspectorBox = StudioTheme.hardwarePanel(StudioTheme.HairlineDivider).apply {
                 layout = BoxLayout(this, BoxLayout.Y_AXIS)
                 add(selectedInfoLbl)
                 add(Box.createVerticalStrut(4))
 
-                val paramGrid = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2)).apply {
-                    isOpaque = false
+                val paramGrid = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 6, 2).apply {
                     add(StudioTheme.hardwareLabel("PITCH:", StudioTheme.TextSecondary))
-                    pitchSlider.preferredSize = Dimension(95, 22)
+                    StudioTheme.setScaledPrefSize(pitchSlider, 105, 24)
                     pitchSlider.addChangeListener {
                         val sel = currentState.selectedPiece ?: return@addChangeListener
                         if (!suppressSliderEvents && !pitchSlider.valueIsAdjusting) {
@@ -177,7 +174,7 @@ class DesktopDrumKitPanel(
                     }
                     add(pitchSlider)
                     add(StudioTheme.hardwareLabel("DECAY:", StudioTheme.TextSecondary))
-                    decaySlider.preferredSize = Dimension(95, 22)
+                    StudioTheme.setScaledPrefSize(decaySlider, 105, 24)
                     decaySlider.addChangeListener {
                         val sel = currentState.selectedPiece ?: return@addChangeListener
                         if (!suppressSliderEvents && !decaySlider.valueIsAdjusting) {
@@ -186,7 +183,7 @@ class DesktopDrumKitPanel(
                     }
                     add(decaySlider)
                     add(StudioTheme.hardwareLabel("VOL:", StudioTheme.TextSecondary))
-                    volSlider.preferredSize = Dimension(85, 22)
+                    StudioTheme.setScaledPrefSize(volSlider, 95, 24)
                     volSlider.addChangeListener {
                         val sel = currentState.selectedPiece ?: return@addChangeListener
                         if (!suppressSliderEvents && !volSlider.valueIsAdjusting) {
@@ -197,25 +194,24 @@ class DesktopDrumKitPanel(
                 }
                 add(paramGrid)
 
-                val routeRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply {
-                    isOpaque = false
+                val routeRow = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 4, 2).apply {
                     add(StudioTheme.hardwareLabel("SEQ:", StudioTheme.NeonCyan))
                     for (l in 0..3) {
                         add(StudioTheme.hardwareButton("L${l + 1}", StudioTheme.NeonCyan) {
                             val sel = currentState.selectedPiece ?: return@hardwareButton
                             val beater = if (sel.category.supportsDoubleBeater) currentState.targetBeaterForMount else BeaterSide.NONE
                             onRouteToSeqLane(sel.slotId, l, beater)
-                        }.apply { preferredSize = Dimension(42, 26) })
+                        })
                     }
                     add(StudioTheme.hardwareButton("DECK", StudioTheme.AmberHot) {
                         val sel = currentState.selectedPiece ?: return@hardwareButton
                         val beater = if (sel.category.supportsDoubleBeater) currentState.targetBeaterForMount else BeaterSide.NONE
                         onSendToDeck(sel.slotId, beater)
-                    }.apply { preferredSize = Dimension(56, 26) })
+                    })
                     add(StudioTheme.hardwareButton("REMOVE PIECE", StudioTheme.TacCoral) {
                         val sel = currentState.selectedPiece ?: return@hardwareButton
                         onRemovePiece(sel.slotId)
-                    }.apply { preferredSize = Dimension(112, 26) })
+                    })
                 }
                 add(routeRow)
 
@@ -223,15 +219,14 @@ class DesktopDrumKitPanel(
                 beaterTargetPanel.add(targetRightBtn)
                 add(beaterTargetPanel)
 
-                val mountRow = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply {
-                    isOpaque = false
+                val mountRow = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 4, 2).apply {
                     add(StudioTheme.hardwareLabel("MOUNT:", StudioTheme.MagentaFx))
                     DrumAddonType.entries.forEach { t ->
                         add(StudioTheme.hardwareButton("+${t.shortTag}", StudioTheme.MagentaFx) {
                             val sel = currentState.selectedPiece ?: return@hardwareButton
                             val beater = if (sel.category.supportsDoubleBeater) currentState.targetBeaterForMount else BeaterSide.NONE
                             onAttachAddon(t, sel.slotId, beater)
-                        }.apply { preferredSize = Dimension(72, 26) })
+                        })
                     }
                 }
                 add(mountRow)
@@ -241,26 +236,23 @@ class DesktopDrumKitPanel(
             add(Box.createVerticalStrut(6))
 
             // Library filter + scrollable list
-            val libBox = StudioTheme.hardwarePanel(StudioTheme.HairlineDivider).apply {
+            val libBox = StudioTheme.hardwarePanel(StudioTheme.HairlineDivider, autoFitBoxHeight = false).apply {
                 layout = BorderLayout(4, 4)
-                val filterBar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply {
-                    isOpaque = false
+                val filterBar = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 4, 2).apply {
                     add(StudioTheme.hardwareLabel("LIBRARY:", StudioTheme.TextPrimary))
                     add(StudioTheme.hardwareButton("ALL", StudioTheme.TextPrimary) {
                         libraryFilter = null; lastRenderedKey = ""; updateState(currentState)
-                    }.apply { preferredSize = Dimension(50, 24) })
+                    })
                     add(StudioTheme.hardwareButton("ACOUSTIC", StudioTheme.AmberHot) {
                         libraryFilter = DrumKitStyle.ACOUSTIC; lastRenderedKey = ""; updateState(currentState)
-                    }.apply { preferredSize = Dimension(82, 24) })
+                    })
                     add(StudioTheme.hardwareButton("ELECTRIC", StudioTheme.NeonCyan) {
                         libraryFilter = DrumKitStyle.ELECTRIC; lastRenderedKey = ""; updateState(currentState)
-                    }.apply { preferredSize = Dimension(82, 24) })
+                    })
                 }
                 add(filterBar, BorderLayout.NORTH)
-                add(JScrollPane(libraryListPanel).apply {
-                    border = null
-                    preferredSize = Dimension(410, 145)
-                    viewport.background = StudioTheme.ObsidianChassis
+                add(StudioTheme.styleScrollPane(JScrollPane(libraryListPanel)).apply {
+                    StudioTheme.setScaledPrefSize(this, 440, 170)
                 }, BorderLayout.CENTER)
             }
             add(libBox)
@@ -326,7 +318,7 @@ class DesktopDrumKitPanel(
                 StudioTheme.hardwareButton(txt, col, filled = isSel) {
                     onSelectSlot(piece.slotId)
                     if (!state.arrangeMode) onHitPiece(piece.slotId, BeaterSide.NONE)
-                }.apply { preferredSize = Dimension(96, 30) }
+                }
             )
         }
         val dbl = state.mainPieces.firstOrNull { it.category == DrumPieceCategory.DOUBLE_PEDAL }
@@ -334,12 +326,12 @@ class DesktopDrumKitPanel(
             quickPadsPanel.add(
                 StudioTheme.hardwareButton("L-BEATER", StudioTheme.EmeraldSignal) {
                     onHitPiece(dbl.slotId, BeaterSide.LEFT)
-                }.apply { preferredSize = Dimension(88, 30) }
+                }
             )
             quickPadsPanel.add(
                 StudioTheme.hardwareButton("R-BEATER", StudioTheme.VioletMod) {
                     onHitPiece(dbl.slotId, BeaterSide.RIGHT)
-                }.apply { preferredSize = Dimension(88, 30) }
+                }
             )
         }
 
@@ -349,22 +341,21 @@ class DesktopDrumKitPanel(
             val bTag = if (host?.category?.supportsDoubleBeater == true && addon.beaterSide != BeaterSide.NONE) {
                 " [${addon.beaterSide.shortTag}]"
             } else ""
-            val row = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply {
-                isOpaque = false
+            val row = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 4, 2).apply {
                 add(StudioTheme.hardwareLabel("${addon.addonType.shortTag}->$bTag${host?.customLabel ?: "?"}", StudioTheme.TextPrimary))
-                add(StudioTheme.hardwareButton("HIT", StudioTheme.NeonCyan) { onHitAddon(addon.instanceId) }.apply { preferredSize = Dimension(46, 22) })
-                add(StudioTheme.hardwareButton(if (addon.triggerCoupledWithHost) "COUPLED" else "SOLO", StudioTheme.EmeraldSignal, filled = addon.triggerCoupledWithHost) {
+                add(StudioTheme.hardwareButton("HIT", StudioTheme.NeonCyan, basePt = 11f) { onHitAddon(addon.instanceId) })
+                add(StudioTheme.hardwareButton(if (addon.triggerCoupledWithHost) "COUPLED" else "SOLO", StudioTheme.EmeraldSignal, filled = addon.triggerCoupledWithHost, basePt = 11f) {
                     onToggleAddonCoupled(addon.instanceId)
-                }.apply { preferredSize = Dimension(74, 22) })
-                add(StudioTheme.hardwareButton(if (addon.style == DrumKitStyle.ACOUSTIC) "AC" else "EL", StudioTheme.AmberHot) {
+                })
+                add(StudioTheme.hardwareButton(if (addon.style == DrumKitStyle.ACOUSTIC) "AC" else "EL", StudioTheme.AmberHot, basePt = 11f) {
                     onSetAddonStyle(addon.instanceId, if (addon.style == DrumKitStyle.ACOUSTIC) DrumKitStyle.ELECTRIC else DrumKitStyle.ACOUSTIC)
-                }.apply { preferredSize = Dimension(38, 22) })
+                })
                 if (host?.category?.supportsDoubleBeater == true) {
-                    add(StudioTheme.hardwareButton(addon.beaterSide.shortTag, StudioTheme.VioletMod) {
+                    add(StudioTheme.hardwareButton(addon.beaterSide.shortTag, StudioTheme.VioletMod, basePt = 11f) {
                         onSetAddonBeaterSide(addon.instanceId, if (addon.beaterSide == BeaterSide.LEFT) BeaterSide.RIGHT else BeaterSide.LEFT)
-                    }.apply { preferredSize = Dimension(56, 22) })
+                    })
                 }
-                add(StudioTheme.hardwareButton("X", StudioTheme.TacCoral) { onRemoveAddon(addon.instanceId) }.apply { preferredSize = Dimension(32, 22) })
+                add(StudioTheme.hardwareButton("X", StudioTheme.TacCoral, basePt = 11f) { onRemoveAddon(addon.instanceId) })
             }
             addonsListPanel.add(row)
         }
@@ -372,21 +363,20 @@ class DesktopDrumKitPanel(
         libraryListPanel.removeAll()
         DesktopDrumComponentLibrary.forStyle(libraryFilter).forEach { comp ->
             val col = if (comp.style == DrumKitStyle.ACOUSTIC) StudioTheme.AmberHot else StudioTheme.NeonCyan
-            val row = JPanel(BorderLayout(4, 2)).apply {
+            val row = JPanel(BorderLayout(6, 2)).apply {
                 background = StudioTheme.ObsidianChassis
-                border = BorderFactory.createEmptyBorder(2, 4, 2, 4)
-                maximumSize = Dimension(Int.MAX_VALUE, 30)
+                StudioTheme.setScaledPadding(this, 3, 6, 3, 6)
                 add(StudioTheme.hardwareLabel("${comp.shortLabel} (${comp.style.shortTag.take(2)}) · ${comp.displayName}", col, StudioTheme.BodyFont), BorderLayout.CENTER)
                 val btns = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0)).apply {
                     isOpaque = false
-                    add(StudioTheme.hardwareButton(if (state.canAddMainPiece) "+ADD" else "FULL", StudioTheme.EmeraldSignal) {
+                    add(StudioTheme.hardwareButton(if (state.canAddMainPiece) "+ADD" else "FULL", StudioTheme.EmeraldSignal, basePt = 11f) {
                         onAddPiece(comp.id)
-                    }.apply { preferredSize = Dimension(62, 24) })
+                    })
                     if (state.selectedPiece != null) {
-                        add(StudioTheme.hardwareButton("SWAP", col) {
+                        add(StudioTheme.hardwareButton("SWAP", col, basePt = 11f) {
                             val selId = state.selectedPiece?.slotId ?: return@hardwareButton
                             onSwapPiece(selId, comp.id)
-                        }.apply { preferredSize = Dimension(62, 24) })
+                        })
                     }
                 }
                 add(btns, BorderLayout.EAST)
@@ -404,8 +394,8 @@ class DesktopDrumKitPanel(
 
         init {
             background = StudioTheme.ObsidianChassis
-            preferredSize = Dimension(520, 295)
-            minimumSize = Dimension(380, 240)
+            StudioTheme.setScaledPrefSize(this, 520, 310)
+            StudioTheme.setScaledMinSize(this, 380, 240)
             cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
 
             addMouseListener(object : MouseAdapter() {
@@ -479,7 +469,7 @@ class DesktopDrumKitPanel(
 
             // Circular drum rug rings
             g2.color = StudioTheme.withAlpha(StudioTheme.HairlineDivider, 90)
-            g2.stroke = BasicStroke(1.5f)
+            g2.stroke = StudioTheme.stroke(1.5f)
             val r1 = (unit * 0.44f).toInt()
             g2.drawOval((w * 0.5f - r1).toInt(), (h * 0.55f - r1).toInt(), r1 * 2, r1 * 2)
             val r2 = (unit * 0.28f).toInt()
@@ -519,25 +509,26 @@ class DesktopDrumKitPanel(
                 g2.color = fill
                 g2.fillOval(cx - rad, cy - rad, rad * 2, rad * 2)
                 g2.color = rim
-                g2.stroke = BasicStroke(if (isSel) 3f else 2f)
+                g2.stroke = StudioTheme.stroke(if (isSel) 3f else 2f)
                 g2.drawOval(cx - rad, cy - rad, rad * 2, rad * 2)
 
+                g2.font = StudioTheme.font("SansSerif", Font.BOLD, 10.5f)
                 if (piece.category == DrumPieceCategory.DOUBLE_PEDAL) {
                     val pw = (rad * 0.62f).toInt()
                     val ph = (rad * 0.92f).toInt()
                     val py = cy + (rad * 0.1f).toInt()
+                    val arc = StudioTheme.s(6)
                     g2.color = StudioTheme.EmeraldSignal
-                    g2.drawRoundRect(cx - (rad * 0.78f).toInt(), py, pw, ph, 6, 6)
-                    g2.drawString("L", cx - (rad * 0.54f).toInt(), py + ph - 5)
+                    g2.drawRoundRect(cx - (rad * 0.78f).toInt(), py, pw, ph, arc, arc)
+                    g2.drawString("L", cx - (rad * 0.54f).toInt(), py + ph - StudioTheme.s(4))
                     g2.color = StudioTheme.VioletMod
-                    g2.drawRoundRect(cx + (rad * 0.16f).toInt(), py, pw, ph, 6, 6)
-                    g2.drawString("R", cx + (rad * 0.36f).toInt(), py + ph - 5)
+                    g2.drawRoundRect(cx + (rad * 0.16f).toInt(), py, pw, ph, arc, arc)
+                    g2.drawString("R", cx + (rad * 0.36f).toInt(), py + ph - StudioTheme.s(4))
                 }
 
-                g2.font = Font("SansSerif", Font.BOLD, 10)
                 val fm = g2.fontMetrics
                 g2.color = StudioTheme.TextPrimary
-                g2.drawString(piece.customLabel, cx - fm.stringWidth(piece.customLabel) / 2, cy - 2)
+                g2.drawString(piece.customLabel, cx - fm.stringWidth(piece.customLabel) / 2, cy - StudioTheme.s(2))
             }
 
             // Draw mounted add-ons
@@ -546,7 +537,7 @@ class DesktopDrumKitPanel(
                 val pt = computeAddonPoint(host, addon, w, h)
                 val bx = pt.x.toInt()
                 val by = pt.y.toInt()
-                val br = (unit * 0.056f).toInt().coerceAtLeast(11)
+                val br = (unit * 0.058f).toInt().coerceAtLeast(StudioTheme.s(12))
                 val col = when (addon.addonType) {
                     DrumAddonType.COWBELL -> StudioTheme.AmberHot
                     DrumAddonType.TAMBOURINE -> StudioTheme.NeonCyan
@@ -555,7 +546,7 @@ class DesktopDrumKitPanel(
                     DrumAddonType.CHIME_SPLASHER -> StudioTheme.VioletMod
                 }
                 g2.color = col
-                g2.stroke = BasicStroke(2f)
+                g2.stroke = StudioTheme.stroke(2f)
                 g2.drawLine((host.xNorm * w).toInt(), (host.yNorm * h).toInt(), bx, by)
                 if (addon.addonType == DrumAddonType.COWBELL) {
                     val poly = Polygon(
@@ -568,16 +559,17 @@ class DesktopDrumKitPanel(
                     g2.fillOval(bx - br, by - br, br * 2, br * 2)
                 }
                 g2.color = StudioTheme.ObsidianChassis
-                g2.font = Font("SansSerif", Font.BOLD, 8)
+                g2.font = StudioTheme.font("SansSerif", Font.BOLD, 8.5f)
                 val t = addon.addonType.shortTag.take(4)
                 val fm = g2.fontMetrics
-                g2.drawString(t, bx - fm.stringWidth(t) / 2, by + 3)
+                g2.drawString(t, bx - fm.stringWidth(t) / 2, by + fm.ascent / 2 - StudioTheme.s(1))
             }
 
             if (st.arrangeMode) {
                 g2.color = StudioTheme.EmeraldSignal
-                g2.font = Font("SansSerif", Font.BOLD, 11)
-                g2.drawString("ARRANGE MODE ACTIVE: DRAG PIECES ANYWHERE ON RUG", 12, 18)
+                g2.font = StudioTheme.font("SansSerif", Font.BOLD, 11.5f)
+                val fm = g2.fontMetrics
+                g2.drawString("ARRANGE MODE ACTIVE: DRAG PIECES ANYWHERE ON RUG", StudioTheme.s(12), fm.ascent + StudioTheme.s(4))
             }
             g2.dispose()
         }

@@ -128,6 +128,7 @@ data class SessionHandoffSnapshot(
             "TRACKS" -> DesktopStation.TRACKS
             "FX_RACK", "FX_STOMP" -> DesktopStation.FX_STOMP
             "LIVE" -> DesktopStation.LIVE
+            "TOOLS", "PLUGINS" -> DesktopStation.TOOLS
             "TUNER" -> DesktopStation.TUNER
             "VMC" -> DesktopStation.VMC
             "NET_LINK" -> DesktopStation.NET_LINK

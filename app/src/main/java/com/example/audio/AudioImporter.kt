@@ -6,7 +6,6 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
-import android.os.Build
 import android.provider.OpenableColumns
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -139,9 +138,7 @@ object AudioImporter {
             var rawChannels = if (trackFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
                 trackFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT).coerceAtLeast(1)
             } else 1
-            var pcmEncoding = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
-                trackFormat.containsKey(MediaFormat.KEY_PCM_ENCODING)
-            ) {
+            var pcmEncoding = if (trackFormat.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
                 trackFormat.getInteger(MediaFormat.KEY_PCM_ENCODING)
             } else {
                 AudioFormat.ENCODING_PCM_16BIT
@@ -194,9 +191,7 @@ object AudioImporter {
                         if (outFmt.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
                             rawChannels = outFmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT).coerceAtLeast(1)
                         }
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
-                            outFmt.containsKey(MediaFormat.KEY_PCM_ENCODING)
-                        ) {
+                        if (outFmt.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
                             pcmEncoding = outFmt.getInteger(MediaFormat.KEY_PCM_ENCODING)
                         }
                     }

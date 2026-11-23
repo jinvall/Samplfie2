@@ -80,27 +80,24 @@ class FxAndStompPanel(
         val root = JPanel().apply {
             background = StudioTheme.ObsidianChassis
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            border = javax.swing.BorderFactory.createEmptyBorder(10, 12, 10, 12)
+            StudioTheme.setScaledPadding(this, 10, 12, 10, 12)
         }
 
         // Presets Strip
         val presetsBar = StudioTheme.hardwarePanel(StudioTheme.NeonCyan).apply {
-            layout = FlowLayout(FlowLayout.LEFT, 8, 2)
-            maximumSize = Dimension(Int.MAX_VALUE, 52)
+            layout = StudioWrapLayout(FlowLayout.LEFT, 8, 4)
             add(StudioTheme.hardwareLabel("PRESETS:", StudioTheme.NeonCyan))
             DesktopPreset.entries.forEach { preset ->
                 add(StudioTheme.hardwareButton(preset.label, StudioTheme.NeonCyan) { onApplyPreset(preset) })
             }
         }
         root.add(presetsBar)
-        root.add(Box.createVerticalStrut(8))
+        root.add(Box.createVerticalStrut(StudioTheme.s(8)))
 
         // Master Stompbox Mini Processor Strip
         val stompPanel = StudioTheme.hardwarePanel(StudioTheme.TacCoral).apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            maximumSize = Dimension(Int.MAX_VALUE, 138)
-            val top = JPanel(FlowLayout(FlowLayout.LEFT, 10, 2)).apply {
-                isOpaque = false
+            val top = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 10, 4).apply {
                 add(StudioTheme.hardwareLabel("STOMPBOX MASTER PROCESSOR", StudioTheme.TacCoral, StudioTheme.TitleFont))
                 add(stompStatusLabel)
                 add(StudioTheme.hardwareButton("TOGGLE STOMP", StudioTheme.TacCoral, filled = true) { onToggleMasterStomp() })
@@ -108,7 +105,7 @@ class FxAndStompPanel(
                 add(killModCb)
                 add(killTimeCb)
             }
-            val sliders = JPanel(GridLayout(1, 3, 12, 0)).apply {
+            val sliders = JPanel(GridLayout(1, 3, StudioTheme.s(12), 0)).apply {
                 isOpaque = false
                 add(labeledSlider("DJ TONE TILT (BASS ↔ AIR)", tiltSlider) { v ->
                     onUpdateStomp { copy(engaged = true, toneTilt = v / 100f) }
@@ -124,10 +121,10 @@ class FxAndStompPanel(
             add(sliders)
         }
         root.add(stompPanel)
-        root.add(Box.createVerticalStrut(8))
+        root.add(Box.createVerticalStrut(StudioTheme.s(8)))
 
         // 12 DSP Module Grid (3 columns x 4 rows)
-        val grid = JPanel(GridLayout(4, 3, 8, 8)).apply {
+        val grid = JPanel(GridLayout(4, 3, StudioTheme.s(8), StudioTheme.s(8))).apply {
             background = StudioTheme.ObsidianChassis
             add(fxCard(gateCb, "THRESH (dB)", gateThresh) { v -> onUpdateFx { copy(noiseGateEnabled = true, noiseThresholdDb = v.toFloat()) } })
             add(fxCard(pitchCb, "SEMITONES", pitchSemi) { v -> onUpdateFx { copy(pitchEnabled = true, pitchSemitones = v.toFloat()) } })
@@ -144,11 +141,7 @@ class FxAndStompPanel(
         }
         root.add(grid)
 
-        add(JScrollPane(root).apply {
-            border = null
-            background = StudioTheme.ObsidianChassis
-            viewport.background = StudioTheme.ObsidianChassis
-        }, BorderLayout.CENTER)
+        add(StudioTheme.styleScrollPane(JScrollPane(root)), BorderLayout.CENTER)
     }
 
     fun updateState(ui: DesktopStudioUiState) {
@@ -182,10 +175,7 @@ class FxAndStompPanel(
     }
 
     private fun darkCheck(title: String, color: Color, onToggle: (Boolean) -> Unit): JCheckBox =
-        JCheckBox(title).apply {
-            isOpaque = false
-            foreground = color
-            font = StudioTheme.LabelFont
+        StudioTheme.darkCheckBox(title, color).apply {
             addActionListener { if (!updating) onToggle(isSelected) }
         }
 
@@ -207,9 +197,7 @@ class FxAndStompPanel(
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
         cb.alignmentX = LEFT_ALIGNMENT
         add(cb)
-        val lbl = JLabel("$paramTitle: ${slider.value}").apply {
-            foreground = StudioTheme.TextSecondary
-            font = StudioTheme.MonoFont
+        val lbl = StudioTheme.hardwareLabel("$paramTitle: ${slider.value}", StudioTheme.TextSecondary, StudioTheme.MonoFont).apply {
             alignmentX = LEFT_ALIGNMENT
         }
         slider.alignmentX = LEFT_ALIGNMENT

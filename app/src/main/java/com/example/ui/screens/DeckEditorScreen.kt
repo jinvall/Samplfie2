@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.audio.MicCaptureTelemetry
 import com.example.audio.PlaybackState
+import com.example.audio.SpectrogramPalette
 import com.example.dsp.FxRackState
 import com.example.network.NetworkLinkState
 import com.example.ui.EditorState
@@ -97,6 +98,11 @@ fun DeckEditorScreen(
     onExportWavClick: () -> Unit,
     onExportMp3Click: () -> Unit,
     onLoadSavedTake: (SavedTakeItem) -> Unit,
+    specPalette: SpectrogramPalette = SpectrogramPalette.SAMPLFIE_NEON,
+    specFreqLowHz: Float = 220f,
+    specFreqHighHz: Float = 3800f,
+    onSpecFreqRangeChange: (Float, Float) -> Unit = { _, _ -> },
+    onOpenTools: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val activeBuf = editorState.processedBuffer ?: editorState.dryBuffer
@@ -151,6 +157,15 @@ fun DeckEditorScreen(
                     accentColor = VioletMod,
                     modifier = Modifier.testTag("osc_tone_button")
                 )
+                if (activeBuf != null) {
+                    HardwareChipToggle(
+                        label = "${activeBuf.sampleRate / 1000}k ${activeBuf.sampleFormat.shortLabel} ${activeBuf.channels}CH",
+                        selected = true,
+                        onClick = onOpenTools,
+                        accentColor = EmeraldSignal,
+                        modifier = Modifier.testTag("deck_format_chip")
+                    )
+                }
             }
         }
 
@@ -171,7 +186,12 @@ fun DeckEditorScreen(
             visualizerMode = editorState.visualizerMode,
             onModeChange = onVisualizerModeChange,
             onSelectionChange = onSelectionChange,
-            onSeekPlayhead = onSeekPlayhead
+            onSeekPlayhead = onSeekPlayhead,
+            spectrogram = editorState.spectrogram,
+            specPalette = specPalette,
+            specFreqLowHz = specFreqLowHz,
+            specFreqHighHz = specFreqHighHz,
+            onSpecFreqRangeChange = onSpecFreqRangeChange
         )
 
         // Live VU Meter
