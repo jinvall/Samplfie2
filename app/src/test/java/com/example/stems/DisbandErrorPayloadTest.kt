@@ -1,6 +1,8 @@
 package com.example.stems
 
 import com.example.audio.AudioBuffer
+import com.example.audio.AudioSampleFormat
+import com.example.audio.WavCodec
 import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
 import kotlin.math.PI
@@ -102,4 +104,107 @@ class DisbandErrorPayloadTest {
             assertTrue(ex.fullDiagnostics.contains("_FINAL_BYTE_MARKER"))
         }
     }
+
+    @Test
+    fun `prepareUploadPayload compacts large stereo PCM16 mix to smaller MP3 payload`() {
+        val sr = 44100
+        val seconds = 20 // Stereo 44.1kHz PCM16 WAV ~ 3.53 MB (> 2.5 MB threshold)
+        val totalSamples = sr * 2 * seconds
+        val samples = FloatArray(totalSamples) { idx ->
+            (0.35f * sin(2.0 * PI * 220.0 * (idx / 2) / sr)).toFloat()
+        }
+        val largeMix = AudioBuffer(samples, sr, 2, "long_studio_mix")
+        val client = DisbandApiClient()
+
+        val prepared = client.prepareUploadPayload(largeMix)
+        assertTrue("Expected MP3 extension, got ${prepared.fileName}", prepared.fileName.endsWith(".mp3"))
+        assertEquals("audio/mpeg", prepared.contentType)
+        assertTrue(
+            "Expected MP3 (${prepared.bytes.size} bytes) smaller than raw WAV (${totalSamples * 2} bytes)",
+            prepared.bytes.size < totalSamples
+        )
+    }
+
+    @Test
+    fun `separateAndDownloadStems automatically recovers from HTTP 413 via 128kbps MP3 and Reserved Upload`() {
+        val sr = 44100
+        val toneSamples = FloatArray(sr / 4) { i -> (0.4f * sin(2.0 * PI * 330.0 * i / sr)).toFloat() }
+        val source = AudioBuffer(toneSamples, sr, 1, "clip_413_test")
+        val stemWav = WavCodec.encodeToBytes(source, AudioSampleFormat.PCM_16, dither = false)
+
+        var directPostCount = 0
+        var reservePostCount = 0
+        var reservedPutCount = 0
+        var reservedPutHadAuthHeader = false
+        var reservedPutContentType = ""
+        var reservedBytesQuery = 0
+
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val port = server.address.port
+        server.createContext("/v1/separations") { ex ->
+            val path = ex.requestURI.path
+            val query = ex.requestURI.rawQuery.orEmpty()
+            val reqBytes = ex.requestBody.readBytes()
+            when {
+                ex.requestMethod == "POST" && path == "/v1/separations" && !query.contains("bytes=") -> {
+                    directPostCount++
+                    val err = """{"error":"Payload Too Large for direct POST"}""".toByteArray(Charsets.UTF_8)
+                    ex.sendResponseHeaders(413, err.size.toLong())
+                    ex.responseBody.use { it.write(err) }
+                }
+                ex.requestMethod == "POST" && path == "/v1/separations" && query.contains("bytes=") -> {
+                    reservePostCount++
+                    reservedBytesQuery = Regex("bytes=(\\d+)").find(query)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                    val json = """{"id":"sep_413_rec","status":"uploading","upload_url":"http://127.0.0.1:$port/upload/sep_413_rec"}"""
+                    val b = json.toByteArray(Charsets.UTF_8)
+                    ex.sendResponseHeaders(202, b.size.toLong())
+                    ex.responseBody.use { it.write(b) }
+                }
+                ex.requestMethod == "GET" && path == "/v1/separations/sep_413_rec" -> {
+                    val json = """{"id":"sep_413_rec","status":"ready","charge":8,"duration":0.25,"stems":{"vocals":{"wav":{"url":"http://127.0.0.1:$port/v1/separations/sep_413_rec/stems/vocals/wav","bytes":${stemWav.size}}}}}"""
+                    val b = json.toByteArray(Charsets.UTF_8)
+                    ex.sendResponseHeaders(200, b.size.toLong())
+                    ex.responseBody.use { it.write(b) }
+                }
+                ex.requestMethod == "GET" && path.endsWith("/stems/vocals/wav") -> {
+                    ex.sendResponseHeaders(200, stemWav.size.toLong())
+                    ex.responseBody.use { it.write(stemWav) }
+                }
+                else -> {
+                    ex.sendResponseHeaders(404, 0)
+                    ex.responseBody.close()
+                }
+            }
+        }
+        server.createContext("/upload/sep_413_rec") { ex ->
+            reservedPutCount++
+            reservedPutHadAuthHeader = ex.requestHeaders.containsKey("Authorization")
+            reservedPutContentType = ex.requestHeaders.getFirst("Content-Type").orEmpty()
+            ex.requestBody.readBytes()
+            ex.sendResponseHeaders(200, -1)
+            ex.close()
+        }
+        server.start()
+        try {
+            val client = DisbandApiClient()
+            val (job, tracks) = client.separateAndDownloadStems(
+                baseUrl = "http://127.0.0.1:$port/v1",
+                apiKey = "key_413_recovery",
+                stems = listOf(DisbandStem.VOCALS),
+                sourceBuffer = source
+            )
+            assertEquals("sep_413_rec", job.id)
+            assertEquals(1, directPostCount)
+            assertEquals(1, reservePostCount)
+            assertEquals(1, reservedPutCount)
+            assertTrue("Reserved upload must reserve > 0 bytes", reservedBytesQuery > 0)
+            assertEquals("audio/mpeg", reservedPutContentType)
+            assertTrue("Reserved signed PUT must NOT send Authorization header", !reservedPutHadAuthHeader)
+            assertEquals(1, tracks.size)
+            assertEquals("vocals", tracks.first().stemId)
+        } finally {
+            server.stop(0)
+        }
+    }
 }
+

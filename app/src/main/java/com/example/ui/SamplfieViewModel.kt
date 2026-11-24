@@ -99,6 +99,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 
 class SamplfieViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -109,15 +110,20 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
     val secretsVault = SecretsVaultRepository(appContext)
     @Volatile
     private var disbandClient = DisbandApiClient()
-    private val micEngine: MicCaptureEngine = MicCaptureEngine { mono, sr ->
-        if (_tunerState.value.source == TunerInputSource.LIVE_MIC) {
-            analyzeSamplesForTuner(mono, sr)
+    private val micEngine: MicCaptureEngine = MicCaptureEngine(
+        onMonoFrame = { mono, sr ->
+            if (_tunerState.value.source == TunerInputSource.LIVE_MIC) {
+                analyzeSamplesForTuner(mono, sr)
+            }
+            val band = _bandRecState.value
+            if (band.isRecording) {
+                networkTransmitter.sendCollabLiveChunk(mono, sr, band.myStyle, band.myTrackSlot)
+            }
+        },
+        onMonitorDeckSnapshot = { snapshot ->
+            handleLiveMonitorDeckSnapshot(snapshot)
         }
-        val band = _bandRecState.value
-        if (band.isRecording) {
-            networkTransmitter.sendCollabLiveChunk(mono, sr, band.myStyle, band.myTrackSlot)
-        }
-    }
+    )
     private val playbackEngine: AudioPlaybackEngine = AudioPlaybackEngine { mono, sr ->
         if (_tunerState.value.source == TunerInputSource.DECK_BUFFER && playbackEngine.state.value.isPlaying) {
             analyzeSamplesForTuner(mono, sr)
@@ -174,6 +180,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
     private var fxRenderJob: Job? = null
     private var stemJob: Job? = null
     private val rigSaveMutex = Mutex()
+    private val liveMonitorSnapshotBusy = AtomicBoolean(false)
     private var lastTapMs: Long = 0L
 
     @Volatile
@@ -243,6 +250,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
                 _rigConfig.value = loaded
                 playbackEngine.setMasterVolume(loaded.masterVolume, loaded.isMasterMuted)
                 studioEngine.setMasterVolume(loaded.masterVolume, loaded.isMasterMuted)
+                micEngine.setMasterVolume(loaded.masterVolume, loaded.isMasterMuted)
                 val style = CollabInstrumentStyle.fromOrdinalOrName(null, loaded.myStyleName)
                 _bandRecState.value = _bandRecState.value.copy(
                     myStyle = style,
@@ -360,6 +368,155 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
                 _editorState.value = _editorState.value.copy(
                     statusBanner = err.message ?: "Hold TAC button longer to capture"
                 )
+            }
+        }
+    }
+
+    // --- CONTINUOUS LIVE MONITOR MODE -> LOAD INTO DECK ---
+
+    fun toggleLiveMonitor() {
+        if (micEngine.telemetry.value.isLiveMonitoring) {
+            stopLiveMonitorAndLoadToDeck(saveWav = true)
+            return
+        }
+        val cfg = _rigConfig.value
+        val curTele = micEngine.telemetry.value
+        val result = micEngine.startLiveMonitor(
+            sampleRate = cfg.sampleRate,
+            channels = cfg.channels,
+            bufferSizeFrames = cfg.bufferSize,
+            windowSeconds = curTele.monitorWindowSec,
+            passthroughEnabled = curTele.monitorPassthrough,
+            gain = curTele.monitorGain,
+            syncToDeck = curTele.liveSyncToDeck
+        )
+        if (result.isFailure) {
+            val msg = result.exceptionOrNull()?.message ?: "Live Monitor unavailable"
+            _editorState.value = _editorState.value.copy(statusBanner = msg)
+            _toastEvents.tryEmit(msg)
+        } else {
+            val msg = "LIVE MONITOR ACTIVE (${curTele.monitorWindowSec}s RING -> DECK)"
+            _editorState.value = _editorState.value.copy(statusBanner = msg)
+        }
+    }
+
+    fun stopLiveMonitorAndLoadToDeck(saveWav: Boolean = true) {
+        viewModelScope.launch {
+            val stamp = SimpleDateFormat("HHmmss", Locale.US).format(Date())
+            val takeName = "MON_$stamp"
+            val outFile = if (saveWav) File(takesDir, "$takeName.wav") else null
+            val res = micEngine.stopLiveMonitorAndCollect(saveWavFile = outFile, takeName = takeName)
+            res.onSuccess { buffer ->
+                loadNewRawBuffer(
+                    buffer = buffer,
+                    banner = "LOADED LIVE MONITOR -> DECK (${"%.2f".format(buffer.durationSeconds)}s)",
+                    preserveLoopPlayback = true
+                )
+                if (saveWav) refreshSavedTakes()
+            }.onFailure { err ->
+                _editorState.value = _editorState.value.copy(
+                    statusBanner = err.message ?: "Live Monitor stopped"
+                )
+            }
+        }
+    }
+
+    fun loadLiveMonitorToDeck(saveWav: Boolean = true) {
+        val stamp = SimpleDateFormat("HHmmss", Locale.US).format(Date())
+        val takeName = "MON_$stamp"
+        val snapshot = micEngine.snapshotLiveMonitorBuffer(takeName)
+        if (snapshot == null || snapshot.frameCount == 0) {
+            val msg = "LIVE MONITOR BUFFER EMPTY — TURN ON LIVE MONITOR FIRST"
+            _editorState.value = _editorState.value.copy(statusBanner = msg)
+            _toastEvents.tryEmit(msg)
+            return
+        }
+        loadNewRawBuffer(
+            buffer = snapshot,
+            banner = "LOADED LIVE MONITOR -> DECK (${"%.2f".format(snapshot.durationSeconds)}s)",
+            preserveLoopPlayback = true
+        )
+        if (saveWav) {
+            viewModelScope.launch(Dispatchers.IO) {
+                runCatching { WavCodec.writeWav(snapshot, File(takesDir, "$takeName.wav")) }
+                refreshSavedTakes()
+            }
+        }
+    }
+
+    fun setMonitorPassthrough(enabled: Boolean) = micEngine.setMonitorPassthrough(enabled)
+
+    fun setMonitorGain(gain: Float) = micEngine.setMonitorGain(gain)
+
+    fun setMonitorWindowSec(seconds: Int) = micEngine.setMonitorWindowSec(seconds)
+
+    fun setLiveMonitorSyncToDeck(enabled: Boolean) = micEngine.setLiveSyncToDeck(enabled)
+
+    internal fun ingestLiveMonitorForTest(
+        samples: FloatArray,
+        sampleRate: Int = _rigConfig.value.sampleRate,
+        channels: Int = _rigConfig.value.channels,
+        windowSeconds: Int = micEngine.telemetry.value.monitorWindowSec,
+        syncToDeck: Boolean = true,
+        forceSnapshot: Boolean = true
+    ): AudioBuffer? = micEngine.ingestLiveMonitorSamplesForTest(
+        samples = samples,
+        sampleRate = sampleRate,
+        channels = channels,
+        windowSeconds = windowSeconds,
+        syncToDeck = syncToDeck,
+        forceSnapshot = forceSnapshot
+    )
+
+    private fun handleLiveMonitorDeckSnapshot(snapshot: AudioBuffer) {
+        if (!liveMonitorSnapshotBusy.compareAndSet(false, true)) return
+        val rack = _fxRack.value
+        val stomp = _stompbox.value
+        val bpm = studioEngine.syncedPlayhead.value.bpm
+        val pluginChain = _toolsState.value.pluginChain
+        val pluginDefs = _toolsState.value.installedPlugins.associateBy { it.id }
+        val bufSize = _rigConfig.value.bufferSize
+        val winSec = micEngine.telemetry.value.monitorWindowSec
+
+        viewModelScope.launch(Dispatchers.Default) {
+            try {
+                val processed = DspChainEngine.process(
+                    source = snapshot,
+                    rack = rack,
+                    stompbox = stomp,
+                    bpm = bpm,
+                    pluginChain = pluginChain,
+                    pluginDefs = pluginDefs
+                )
+                val dryPeaks = AudioAnalyzer.computeWaveformPeaks(snapshot, 140)
+                val procPeaks = AudioAnalyzer.computeWaveformPeaks(processed, 140)
+                val spectrum = AudioAnalyzer.computeSpectrumBands(processed, processed.frameCount / 2, 512, 32)
+                val spectrogram = SpectrogramAnalyzer.compute(processed, maxFrames = 96, freqBins = 56)
+                withContext(Dispatchers.Main) {
+                    val keepLoop = playbackEngine.state.value.isPlaying && playbackEngine.state.value.isLooping
+                    _editorState.value = _editorState.value.copy(
+                        rawBuffer = snapshot,
+                        dryBuffer = snapshot,
+                        processedBuffer = processed,
+                        dryPeaks = dryPeaks,
+                        processedPeaks = procPeaks,
+                        staticSpectrum = spectrum,
+                        spectrogram = spectrogram,
+                        isProcessingFx = false,
+                        statusBanner = "LIVE MON -> DECK (${"%.1f".format(snapshot.durationSeconds)}s / ${winSec}s)"
+                    )
+                    studioEngine.setSequencerSampleIfUnlocked(0, snapshot)
+                    playbackEngine.updateBufferHot(
+                        processed,
+                        bufSize,
+                        preserveLoopPlayback = keepLoop
+                    )
+                    if (_tunerState.value.source == TunerInputSource.DECK_BUFFER) {
+                        analyzeActiveBufferWindowForTuner()
+                    }
+                }
+            } finally {
+                liveMonitorSnapshotBusy.set(false)
             }
         }
     }
@@ -1033,6 +1190,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         val clamped = volume.coerceIn(0f, 1f)
         playbackEngine.setMasterVolume(clamped, _rigConfig.value.isMasterMuted)
         studioEngine.setMasterVolume(clamped, _rigConfig.value.isMasterMuted)
+        micEngine.setMasterVolume(clamped, _rigConfig.value.isMasterMuted)
         updateRigConfig { copy(masterVolume = clamped) }
     }
 
@@ -1041,6 +1199,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         val vol = _rigConfig.value.masterVolume
         playbackEngine.setMasterVolume(vol, nextMuted)
         studioEngine.setMasterVolume(vol, nextMuted)
+        micEngine.setMasterVolume(vol, nextMuted)
         updateRigConfig { copy(isMasterMuted = nextMuted) }
     }
 
@@ -1247,6 +1406,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         val cfg = _rigConfig.value
         playbackEngine.setMasterVolume(cfg.masterVolume, cfg.isMasterMuted)
         studioEngine.setMasterVolume(cfg.masterVolume, cfg.isMasterMuted)
+        micEngine.setMasterVolume(cfg.masterVolume, cfg.isMasterMuted)
         syncLocalPresence()
         viewModelScope.launch {
             rigSaveMutex.withLock {

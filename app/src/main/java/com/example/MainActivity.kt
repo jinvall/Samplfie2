@@ -160,10 +160,17 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    var pendingLiveMonitorOnMicGrant by remember { mutableStateOf(false) }
     val micPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         hasMicPermission = granted
+        if (granted && pendingLiveMonitorOnMicGrant) {
+            pendingLiveMonitorOnMicGrant = false
+            viewModel.toggleLiveMonitor()
+        } else {
+            pendingLiveMonitorOnMicGrant = false
+        }
     }
 
     val importAudioLauncher = rememberLauncherForActivityResult(
@@ -398,7 +405,7 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                     selectedSpoke = selectedSpoke,
                     activeFxCount = fxRack.activeCount,
                     isMasterBypass = fxRack.masterBypass,
-                    isRecording = micTelemetry.isRecording,
+                    isRecording = micTelemetry.isActiveCapture,
                     hasAudio = hasAudio,
                     bpm = syncedPlayhead.bpm,
                     hasDisbandKey = secretsState.hasDisbandKey,
@@ -605,7 +612,20 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                                 onSpecFreqRangeChange = { lo, hi -> viewModel.updateSpecFreqRange(lo, hi) },
                                 onOpenTools = { viewModel.selectSpoke(StudioSpoke.TOOLS) },
                                 onFadesChange = { fin, fout -> viewModel.setDeckFades(fin, fout) },
-                                onApplyFades = { viewModel.applyDeckFades() }
+                                onApplyFades = { viewModel.applyDeckFades() },
+                                onToggleLiveMonitor = {
+                                    if (hasMicPermission) {
+                                        viewModel.toggleLiveMonitor()
+                                    } else {
+                                        pendingLiveMonitorOnMicGrant = true
+                                        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    }
+                                },
+                                onToggleMonitorPassthrough = { viewModel.setMonitorPassthrough(it) },
+                                onMonitorGainChange = { viewModel.setMonitorGain(it) },
+                                onMonitorWindowSecChange = { viewModel.setMonitorWindowSec(it) },
+                                onToggleMonitorSyncToDeck = { viewModel.setLiveMonitorSyncToDeck(it) },
+                                onLoadLiveMonitorToDeck = { viewModel.loadLiveMonitorToDeck() }
                             )
 
                             StudioSpoke.SAMPLES -> SamplesSpokeScreen(

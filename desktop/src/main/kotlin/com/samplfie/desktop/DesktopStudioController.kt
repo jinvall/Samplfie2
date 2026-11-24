@@ -79,6 +79,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -125,6 +126,8 @@ class DesktopStudioController {
     private val undoStack = ArrayDeque<DesktopAudioBuffer>()
     private var lastTapMs: Long = 0L
     private val stemExecutor = Executors.newSingleThreadExecutor()
+    private val monitorSyncExecutor = Executors.newSingleThreadExecutor()
+    private val liveMonitorSyncBusy = AtomicBoolean(false)
     private var stemFuture: Future<*>? = null
 
     val defaultExportDir: File = File(System.getProperty("user.home"), "Music/Samplfie2").apply { mkdirs() }
@@ -164,6 +167,9 @@ class DesktopStudioController {
             if (band.isRecording) {
                 netNode.sendCollabLiveChunk(monoChunk, sr, band.myStyle, band.myTrackSlot)
             }
+        },
+        onLiveMonitorDeckSnapshot = { snapshot ->
+            handleLiveMonitorDeckSnapshot(snapshot)
         }
     )
 
@@ -900,6 +906,116 @@ class DesktopStudioController {
         } else {
             soundEngine.startMicCapture(_uiState.value.rigConfig.sampleRate, tunerOnly = false)
             _uiState.value = _uiState.value.copy(statusLine = "RECORDING LINUX MIC INPUT…")
+        }
+    }
+
+    // --- CONTINUOUS LIVE MONITOR MODE -> LOAD INTO DECK ---
+
+    fun toggleLiveMonitor() {
+        val cur = soundEngine.micState.value
+        if (cur.isLiveMonitoring) {
+            val collected = soundEngine.stopLiveMonitorAndCollectBuffer("LIVE_MONITOR")
+            if (collected != null) {
+                loadNewBuffer(
+                    collected,
+                    "LOADED LIVE MONITOR -> DECK (${"%.2f".format(collected.durationSeconds)}s)",
+                    preserveLoopPlayback = true
+                )
+            } else {
+                _uiState.value = _uiState.value.copy(statusLine = "LIVE MONITOR STOPPED (EMPTY BUFFER)")
+            }
+        } else {
+            val cfg = _uiState.value.rigConfig
+            soundEngine.startLiveMonitor(
+                sampleRate = cfg.sampleRate,
+                channels = cfg.channels,
+                windowSeconds = cur.monitorWindowSec,
+                passthrough = cur.monitorPassthrough,
+                gain = cur.monitorGain,
+                syncToDeck = cur.liveSyncToDeck
+            )
+            _uiState.value = _uiState.value.copy(statusLine = "LIVE MONITOR ACTIVE (${cur.monitorWindowSec}s RING -> DECK)")
+        }
+    }
+
+    fun loadLiveMonitorToDeck(): Boolean {
+        val snap = soundEngine.snapshotLiveMonitorBuffer("LIVE_MON_DECK")
+        if (snap == null || snap.frameCount == 0) {
+            _uiState.value = _uiState.value.copy(statusLine = "LIVE MONITOR BUFFER EMPTY — ENABLE LIVE MONITOR FIRST")
+            return false
+        }
+        loadNewBuffer(
+            snap,
+            "LOADED LIVE MONITOR -> DECK (${"%.2f".format(snap.durationSeconds)}s)",
+            preserveLoopPlayback = true
+        )
+        return true
+    }
+
+    fun setMonitorPassthrough(enabled: Boolean) = soundEngine.setMonitorPassthrough(enabled)
+
+    fun setMonitorGain(gain: Float) = soundEngine.setMonitorGain(gain)
+
+    fun setMonitorWindowSec(seconds: Int) = soundEngine.setMonitorWindowSec(seconds)
+
+    fun setLiveMonitorSyncToDeck(enabled: Boolean) = soundEngine.setLiveSyncToDeck(enabled)
+
+    fun ingestLiveMonitorForTest(
+        samples: FloatArray,
+        sampleRate: Int = _uiState.value.rigConfig.sampleRate,
+        channels: Int = _uiState.value.rigConfig.channels,
+        windowSeconds: Int = soundEngine.micState.value.monitorWindowSec,
+        syncToDeck: Boolean = true,
+        forceSnapshot: Boolean = true
+    ): DesktopAudioBuffer? = soundEngine.ingestLiveMonitorSamplesForTest(
+        samples = samples,
+        sampleRate = sampleRate,
+        channels = channels,
+        windowSeconds = windowSeconds,
+        syncToDeck = syncToDeck,
+        forceSnapshot = forceSnapshot
+    )
+
+    private fun handleLiveMonitorDeckSnapshot(snapshot: DesktopAudioBuffer) {
+        if (!liveMonitorSyncBusy.compareAndSet(false, true)) return
+        monitorSyncExecutor.submit {
+            try {
+                val fx = _uiState.value.fxState
+                val stomp = _uiState.value.stompState
+                val ts = _toolsState.value
+                val defs = ts.installedPlugins.associateBy { it.id }
+                val proc = DesktopDspProcessor.process(
+                    dry = snapshot,
+                    fx = fx,
+                    stomp = stomp,
+                    pluginChain = ts.pluginChain,
+                    pluginDefs = defs,
+                    bpm = arrangement.syncedPlayhead.value.bpm
+                )
+                val dryEnv = SignalAnalyzer.computeWaveformEnvelope(snapshot, 180)
+                val procEnv = SignalAnalyzer.computeWaveformEnvelope(proc, 180)
+                val spec = SignalAnalyzer.computeSpectrumBands(proc, proc.frameCount / 2, 1024, 48)
+                val spectrogram = DesktopSpectrogramAnalyzer.compute(proc, 112, 64)
+                val keepLoop = playbackState.value.isPlaying && playbackState.value.isLooping
+                val winSec = soundEngine.micState.value.monitorWindowSec
+                _uiState.value = _uiState.value.copy(
+                    rawBuffer = snapshot,
+                    dryBuffer = snapshot,
+                    processedBuffer = proc,
+                    dryEnvelope = dryEnv,
+                    processedEnvelope = procEnv,
+                    staticSpectrum = spec,
+                    spectrogram = spectrogram,
+                    statusLine = "LIVE MON -> DECK (${"%.1f".format(snapshot.durationSeconds)}s / ${winSec}s)"
+                )
+                arrangement.setSequencerSampleIfUnlocked(0, snapshot)
+                soundEngine.updateBufferHot(proc, preserveLoopPlayback = keepLoop)
+                if (_uiState.value.tunerSource == TunerInputSource.DECK_BUFFER) {
+                    analyzeActiveBufferWindowForTuner()
+                }
+            } finally {
+                liveMonitorSyncBusy.set(false)
+            }
         }
     }
 
@@ -1793,7 +1909,9 @@ class DesktopStudioController {
     fun shutdown() {
         stemFuture?.cancel(true)
         stemExecutor.shutdownNow()
+        monitorSyncExecutor.shutdownNow()
         soundEngine.stopPlayback()
+        soundEngine.stopLiveMonitorAndCollectBuffer()
         soundEngine.stopMicAndCollectBuffer()
         arrangement.release()
         hwMidi.closeAll()

@@ -465,7 +465,12 @@ class CircularHubSidebar(
             g2.color = volColor
             g2.drawString(mstText, (cx - fmMst.stringWidth(mstText) / 2.0).toFloat(), (cy + fmMst.ascent * 0.25).toFloat())
 
-            val subStatus = if (playState.isPlaying) "PLAYING" else if (micState.isRecording) "REC" else uiState.station.shortLabel
+            val subStatus = when {
+                playState.isPlaying -> "PLAYING"
+                micState.isRecording -> "REC"
+                micState.isLiveMonitoring -> "MON"
+                else -> uiState.station.shortLabel
+            }
             g2.font = StudioTheme.font("Monospaced", Font.PLAIN, 8.5f)
             val fmSub = g2.fontMetrics
             g2.color = StudioTheme.TextSecondary

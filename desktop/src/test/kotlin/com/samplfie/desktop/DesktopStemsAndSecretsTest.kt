@@ -196,6 +196,101 @@ class DesktopStemsAndSecretsTest {
         }
     }
 
+    @Test
+    fun desktopDisbandClient_compactsLargeWavToMp3AndRecoversFromHttp413ViaReservedUpload() {
+        val sr = 44100
+        val seconds = 20 // Stereo PCM16 WAV ~ 3.53 MB (> 2.5 MB threshold)
+        val largeSamples = FloatArray(sr * 2 * seconds) { idx ->
+            (0.35f * kotlin.math.sin(2.0 * kotlin.math.PI * 220.0 * (idx / 2) / sr)).toFloat()
+        }
+        val largeMix = com.samplfie.desktop.model.DesktopAudioBuffer(largeSamples, sr, 2, "desktop_long_mix")
+        val client = com.samplfie.desktop.stems.DesktopDisbandClient()
+        val prepared = client.prepareUploadPayload(largeMix)
+        assertTrue("Expected MP3 compaction, got ${prepared.fileName}", prepared.fileName.endsWith(".mp3"))
+        assertEquals("audio/mpeg", prepared.contentType)
+        assertTrue(prepared.bytes.size < largeSamples.size)
+
+        // Verify DesktopStudioController automatically falls back from HTTP 413 to Reserved Upload
+        val sampleWav = DesktopWavCodec.encodeToBytes(
+            SignalAnalyzer.generateTestSignal(SignalWaveformType.SINE, 440.0, 0.25f, 44100, 1)
+        )
+        var directPostCount = 0
+        var reserveCount = 0
+        var putCount = 0
+        var putHadAuth = false
+        var putContentType = ""
+
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val port = server.address.port
+        server.createContext("/v1/separations") { ex ->
+            val path = ex.requestURI.path
+            val query = ex.requestURI.rawQuery.orEmpty()
+            ex.requestBody.readBytes()
+            when {
+                ex.requestMethod == "POST" && path == "/v1/separations" && !query.contains("bytes=") -> {
+                    directPostCount++
+                    val err = """{"error":"Request entity too large"}""".toByteArray()
+                    ex.sendResponseHeaders(413, err.size.toLong())
+                    ex.responseBody.use { it.write(err) }
+                }
+                ex.requestMethod == "POST" && path == "/v1/separations" && query.contains("bytes=") -> {
+                    reserveCount++
+                    val json = """{"id":"desk_413_ok","status":"uploading","upload_url":"http://127.0.0.1:$port/upload/desk_413_ok"}"""
+                    val b = json.toByteArray()
+                    ex.sendResponseHeaders(202, b.size.toLong())
+                    ex.responseBody.use { it.write(b) }
+                }
+                ex.requestMethod == "GET" && path == "/v1/separations/desk_413_ok" -> {
+                    val json = """{"id":"desk_413_ok","status":"ready","charge":10,"duration":0.25,"stems":{"vocals":{"wav":{"url":"http://127.0.0.1:$port/v1/separations/desk_413_ok/stems/vocals/wav","bytes":${sampleWav.size}}}}}"""
+                    val b = json.toByteArray()
+                    ex.sendResponseHeaders(200, b.size.toLong())
+                    ex.responseBody.use { it.write(b) }
+                }
+                ex.requestMethod == "GET" && path.endsWith("/stems/vocals/wav") -> {
+                    ex.sendResponseHeaders(200, sampleWav.size.toLong())
+                    ex.responseBody.use { it.write(sampleWav) }
+                }
+                else -> {
+                    ex.sendResponseHeaders(404, 0)
+                    ex.responseBody.close()
+                }
+            }
+        }
+        server.createContext("/upload/desk_413_ok") { ex ->
+            putCount++
+            putHadAuth = ex.requestHeaders.containsKey("Authorization")
+            putContentType = ex.requestHeaders.getFirst("Content-Type").orEmpty()
+            ex.requestBody.readBytes()
+            ex.sendResponseHeaders(200, -1)
+            ex.close()
+        }
+        server.start()
+        val controller = DesktopStudioController()
+        try {
+            controller.saveSecretKey(DesktopSecretsVault.KEY_DISBAND_API_KEY, "desk_413_key")
+            controller.saveSecretKey(DesktopSecretsVault.KEY_DISBAND_BASE_URL, "http://127.0.0.1:$port/v1")
+            controller.applyStemPreset(DesktopStemPreset.VOCALS_ONLY)
+            assertTrue(controller.requestStemSeparation())
+
+            val deadline = System.currentTimeMillis() + 8000
+            while (controller.stemState.value.isRunning && System.currentTimeMillis() < deadline) {
+                Thread.sleep(25)
+            }
+            assertFalse(controller.stemState.value.isRunning)
+            assertEquals("READY", controller.stemState.value.jobStatusLabel)
+            assertEquals(1, directPostCount)
+            assertEquals(1, reserveCount)
+            assertEquals(1, putCount)
+            assertFalse("Reserved signed PUT must omit Authorization", putHadAuth)
+            assertEquals("audio/mpeg", putContentType)
+            assertEquals(1, controller.stemState.value.separatedStems.size)
+            assertEquals("vocals", controller.stemState.value.separatedStems.first().stemId)
+        } finally {
+            controller.shutdown()
+            server.stop(0)
+        }
+    }
+
     private fun queryOrLastStems(query: String): List<String> {
         val stems = query.split('&')
             .filter { it.startsWith("stems=") }
@@ -203,3 +298,4 @@ class DesktopStemsAndSecretsTest {
         return stems.ifEmpty { listOf("vocals") }
     }
 }
+

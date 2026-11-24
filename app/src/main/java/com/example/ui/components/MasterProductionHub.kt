@@ -127,8 +127,8 @@ fun DockedCircularProductionHub(
 ) {
     var wheelExpanded by remember { mutableStateOf(false) }
     val activeAccent = spokeAccent(selectedSpoke)
-    val livePeak = if (micTelemetry.isRecording) micTelemetry.peakLevel else playbackState.livePeak
-    val liveRms = if (micTelemetry.isRecording) micTelemetry.rmsLevel else playbackState.liveRms
+    val livePeak = if (micTelemetry.isActiveCapture) micTelemetry.peakLevel else playbackState.livePeak
+    val liveRms = if (micTelemetry.isActiveCapture) micTelemetry.rmsLevel else playbackState.liveRms
     val spokes = buildStudioSpokes(
         editorState = editorState,
         looperState = looperState,
@@ -557,8 +557,8 @@ fun WideCircularProductionSidebar(
     onPushHandoffClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val livePeak = if (micTelemetry.isRecording) micTelemetry.peakLevel else playbackState.livePeak
-    val liveRms = if (micTelemetry.isRecording) micTelemetry.rmsLevel else playbackState.liveRms
+    val livePeak = if (micTelemetry.isActiveCapture) micTelemetry.peakLevel else playbackState.livePeak
+    val liveRms = if (micTelemetry.isActiveCapture) micTelemetry.rmsLevel else playbackState.liveRms
 
     Surface(
         modifier = modifier

@@ -31,6 +31,12 @@ data class DesktopPlaybackState(
 data class DesktopMicState(
     val isRecording: Boolean = false,
     val isTunerMonitorOn: Boolean = false,
+    val isLiveMonitoring: Boolean = false,
+    val monitorPassthrough: Boolean = false,
+    val monitorGain: Float = 0.7f,
+    val monitorWindowSec: Int = 12,
+    val liveSyncToDeck: Boolean = true,
+    val bufferedSamples: Int = 0,
     val capturedSeconds: Float = 0f,
     val peakLevel: Float = 0f,
     val statusNote: String = "LINUX AUDIO READY"
@@ -40,12 +46,14 @@ data class DesktopMicState(
  * Native Linux ALSA / PulseAudio / PipeWire Java Sound engine supporting:
  * - Hot-swappable DesktopAudioBuffer playback that persists uninterrupted across edits & extractions when looping
  * - Live microphone capture into editable WAV buffers
+ * - Continuous Live Monitor Mode with rolling capture window, optional SourceDataLine passthrough, and live Deck loading
  * - Live microphone streaming into the Chromatic Tuner
  * - Reference tuning tones & one-shot pad auditioning without stopping deck loop playback
  */
 class LinuxSoundEngine(
     private val onLiveSamplesForTuner: (FloatArray, Int) -> Unit = { _, _ -> },
-    private val onLiveRecordedAudio: (FloatArray, Int) -> Unit = { _, _ -> }
+    private val onLiveRecordedAudio: (FloatArray, Int) -> Unit = { _, _ -> },
+    private val onLiveMonitorDeckSnapshot: (DesktopAudioBuffer) -> Unit = { _ -> }
 ) {
     private val _playbackState = MutableStateFlow(DesktopPlaybackState())
     val playbackState: StateFlow<DesktopPlaybackState> = _playbackState.asStateFlow()
@@ -88,6 +96,33 @@ class LinuxSoundEngine(
     private var micThread: Thread? = null
     private val recordedSamples = mutableListOf<Float>()
     private var recordedSampleRate = 44100
+
+    private val monitorRunning = AtomicBoolean(false)
+    private var monitorThread: Thread? = null
+    private val monitorLock = Any()
+
+    @Volatile
+    private var monitorSampleRate = 44100
+
+    @Volatile
+    private var monitorChannels = 1
+
+    @Volatile
+    private var monitorPassthrough = false
+
+    @Volatile
+    private var monitorGain = 0.7f
+
+    @Volatile
+    private var monitorWindowSec = 12
+
+    @Volatile
+    private var liveSyncToDeck = true
+
+    private var monitorRingBuf = FloatArray(44100 * 12)
+    private var monitorWritePos = 0
+    private var monitorCount = 0
+    private var lastMonitorSyncMs = 0L
 
     /**
      * Updates the playback buffer. When [preserveLoopPlayback] is true and a loop is currently playing,
@@ -273,13 +308,13 @@ class LinuxSoundEngine(
         }
     }
 
-    private fun openOutputLine(sampleRate: Int, channels: Int): SourceDataLine? {
+    private fun openOutputLine(sampleRate: Int, channels: Int, bufferBytes: Int = 4096): SourceDataLine? {
         return runCatching {
             val fmt = AudioFormat(sampleRate.toFloat(), 16, channels, true, false)
             val info = DataLine.Info(SourceDataLine::class.java, fmt)
             if (!AudioSystem.isLineSupported(info)) return null
             (AudioSystem.getLine(info) as SourceDataLine).apply {
-                open(fmt, 4096)
+                open(fmt, bufferBytes)
                 start()
             }
         }.getOrNull()
@@ -353,12 +388,16 @@ class LinuxSoundEngine(
     }
 
     fun startMicCapture(sampleRate: Int = 44100, tunerOnly: Boolean = false) {
+        if (monitorRunning.get()) {
+            stopLiveMonitorAndCollectBuffer()
+        }
         if (micRunning.getAndSet(true)) return
         recordedSampleRate = sampleRate
         synchronized(recordedSamples) { recordedSamples.clear() }
-        _micState.value = DesktopMicState(
+        _micState.value = _micState.value.copy(
             isRecording = !tunerOnly,
             isTunerMonitorOn = tunerOnly,
+            isLiveMonitoring = false,
             statusNote = if (tunerOnly) "TUNER LIVE MIC ACTIVE" else "RECORDING LINUX MIC…"
         )
 
@@ -438,5 +477,292 @@ class LinuxSoundEngine(
         val samples = synchronized(recordedSamples) { recordedSamples.toFloatArray() }
         if (samples.size < 256) return null
         return DesktopAudioBuffer(samples, recordedSampleRate, 1, name)
+    }
+
+    // --- CONTINUOUS LIVE MONITOR MODE -> LOAD INTO DECK ---
+
+    fun setMonitorPassthrough(enabled: Boolean) {
+        monitorPassthrough = enabled
+        _micState.value = _micState.value.copy(monitorPassthrough = enabled)
+    }
+
+    fun setMonitorGain(gain: Float) {
+        val clamped = gain.coerceIn(0f, 1f)
+        monitorGain = clamped
+        _micState.value = _micState.value.copy(monitorGain = clamped)
+    }
+
+    fun setMonitorWindowSec(seconds: Int) {
+        val clamped = seconds.coerceIn(2, 60)
+        monitorWindowSec = clamped
+        synchronized(monitorLock) {
+            val newCap = (clamped * monitorSampleRate.coerceAtLeast(8000) * monitorChannels.coerceAtLeast(1)).coerceAtLeast(1024)
+            if (newCap != monitorRingBuf.size) {
+                val recent = readMonitorSamplesLocked(limit = newCap)
+                val nextBuf = FloatArray(newCap)
+                System.arraycopy(recent, 0, nextBuf, 0, recent.size)
+                monitorRingBuf = nextBuf
+                monitorCount = recent.size
+                monitorWritePos = recent.size % newCap
+            }
+        }
+        val buffered = synchronized(monitorLock) { monitorCount }
+        _micState.value = _micState.value.copy(
+            monitorWindowSec = clamped,
+            bufferedSamples = buffered,
+            capturedSeconds = buffered.toFloat() / (monitorSampleRate * monitorChannels).coerceAtLeast(1)
+        )
+    }
+
+    fun setLiveSyncToDeck(enabled: Boolean) {
+        liveSyncToDeck = enabled
+        _micState.value = _micState.value.copy(liveSyncToDeck = enabled)
+    }
+
+    fun startLiveMonitor(
+        sampleRate: Int = 44100,
+        channels: Int = 1,
+        windowSeconds: Int = monitorWindowSec,
+        passthrough: Boolean = monitorPassthrough,
+        gain: Float = monitorGain,
+        syncToDeck: Boolean = liveSyncToDeck
+    ) {
+        if (micRunning.get()) {
+            stopMicAndCollectBuffer()
+        }
+        if (monitorRunning.getAndSet(true)) return
+
+        monitorSampleRate = sampleRate.coerceAtLeast(8000)
+        monitorChannels = channels.coerceIn(1, 2)
+        monitorWindowSec = windowSeconds.coerceIn(2, 60)
+        monitorPassthrough = passthrough
+        monitorGain = gain.coerceIn(0f, 1f)
+        liveSyncToDeck = syncToDeck
+        lastMonitorSyncMs = 0L
+
+        synchronized(monitorLock) {
+            val cap = (monitorWindowSec * monitorSampleRate * monitorChannels).coerceAtLeast(2048)
+            monitorRingBuf = FloatArray(cap)
+            monitorWritePos = 0
+            monitorCount = 0
+        }
+
+        _micState.value = _micState.value.copy(
+            isRecording = false,
+            isTunerMonitorOn = false,
+            isLiveMonitoring = true,
+            monitorPassthrough = monitorPassthrough,
+            monitorGain = monitorGain,
+            monitorWindowSec = monitorWindowSec,
+            liveSyncToDeck = liveSyncToDeck,
+            bufferedSamples = 0,
+            capturedSeconds = 0f,
+            statusNote = "LIVE MONITOR ACTIVE (${monitorWindowSec}s RING)"
+        )
+
+        monitorThread = thread(isDaemon = true, name = "SamplfieDesktopLiveMonitor") {
+            var targetLine: TargetDataLine? = null
+            var outLine: SourceDataLine? = null
+            try {
+                val fmt = AudioFormat(monitorSampleRate.toFloat(), 16, monitorChannels, true, false)
+                val info = DataLine.Info(TargetDataLine::class.java, fmt)
+                if (!AudioSystem.isLineSupported(info)) {
+                    _micState.value = _micState.value.copy(
+                        isLiveMonitoring = false,
+                        statusNote = "NO LINUX INPUT DEVICE FOR LIVE MONITOR"
+                    )
+                    monitorRunning.set(false)
+                    return@thread
+                }
+                targetLine = (AudioSystem.getLine(info) as TargetDataLine).apply {
+                    open(fmt, 4096)
+                    start()
+                }
+                val byteBuf = ByteArray(2048 * monitorChannels)
+                val rollingTuner = FloatArray(4096)
+                var rollingFill = 0
+
+                while (monitorRunning.get()) {
+                    val n = targetLine.read(byteBuf, 0, byteBuf.size)
+                    if (n > 1) {
+                        val floats = DesktopWavCodec.pcm16BytesToFloats(byteBuf, n)
+                        ingestLiveMonitorChunkInternal(floats, monitorSampleRate, monitorChannels, System.currentTimeMillis(), forceSnapshot = false)
+
+                        val mono = mixToMono(floats, monitorChannels)
+                        for (s in mono) {
+                            if (rollingFill < rollingTuner.size) rollingTuner[rollingFill++] = s
+                        }
+                        if (rollingFill >= 2048) {
+                            onLiveSamplesForTuner(rollingTuner.copyOfRange(0, rollingFill), monitorSampleRate)
+                            rollingFill = 0
+                        }
+
+                        if (monitorPassthrough) {
+                            if (outLine == null) {
+                                outLine = openOutputLine(monitorSampleRate, monitorChannels, 4096)
+                            }
+                            outLine?.let { out ->
+                                val outGain = (monitorGain * effectiveMasterGain()).coerceIn(0f, 1f)
+                                val scaled = FloatArray(floats.size) { i -> (floats[i] * outGain).coerceIn(-1f, 1f) }
+                                val pcmOut = DesktopWavCodec.floatToPcm16Bytes(scaled)
+                                out.write(pcmOut, 0, pcmOut.size)
+                            }
+                        } else if (outLine != null) {
+                            runCatching { outLine?.drain(); outLine?.stop(); outLine?.close() }
+                            outLine = null
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                _micState.value = _micState.value.copy(
+                    isLiveMonitoring = false,
+                    statusNote = "MONITOR ERROR: ${e.message ?: "Unavailable"}"
+                )
+            } finally {
+                monitorRunning.set(false)
+                runCatching { outLine?.drain(); outLine?.stop(); outLine?.close() }
+                runCatching { targetLine?.stop(); targetLine?.close() }
+            }
+        }
+    }
+
+    /**
+     * Pure-Kotlin deterministic helper to ingest PCM samples into the Live Monitor rolling buffer
+     * and trigger live Deck snapshot loading during headless/unit tests.
+     */
+    fun ingestLiveMonitorSamplesForTest(
+        samples: FloatArray,
+        sampleRate: Int = monitorSampleRate,
+        channels: Int = monitorChannels,
+        windowSeconds: Int = monitorWindowSec,
+        syncToDeck: Boolean = liveSyncToDeck,
+        forceSnapshot: Boolean = true
+    ): DesktopAudioBuffer? {
+        if (sampleRate != monitorSampleRate || channels != monitorChannels || windowSeconds != monitorWindowSec) {
+            monitorSampleRate = sampleRate.coerceAtLeast(8000)
+            monitorChannels = channels.coerceIn(1, 2)
+            monitorWindowSec = windowSeconds.coerceIn(2, 60)
+            synchronized(monitorLock) {
+                val cap = (monitorWindowSec * monitorSampleRate * monitorChannels).coerceAtLeast(256)
+                if (monitorRingBuf.size != cap) {
+                    monitorRingBuf = FloatArray(cap)
+                    monitorWritePos = 0
+                    monitorCount = 0
+                }
+            }
+        }
+        liveSyncToDeck = syncToDeck
+        if (!_micState.value.isLiveMonitoring) {
+            _micState.value = _micState.value.copy(
+                isLiveMonitoring = true,
+                monitorWindowSec = monitorWindowSec,
+                liveSyncToDeck = liveSyncToDeck,
+                statusNote = "LIVE MONITOR ACTIVE (${monitorWindowSec}s RING)"
+            )
+        }
+        return ingestLiveMonitorChunkInternal(
+            floats = samples,
+            sampleRate = monitorSampleRate,
+            channels = monitorChannels,
+            nowMs = System.currentTimeMillis(),
+            forceSnapshot = forceSnapshot
+        )
+    }
+
+    private fun ingestLiveMonitorChunkInternal(
+        floats: FloatArray,
+        sampleRate: Int,
+        channels: Int,
+        nowMs: Long,
+        forceSnapshot: Boolean
+    ): DesktopAudioBuffer? {
+        if (floats.isEmpty()) return null
+        val totalBuffered: Int
+        synchronized(monitorLock) {
+            appendMonitorSamplesLocked(floats)
+            totalBuffered = monitorCount
+        }
+        var peak = 0f
+        for (s in floats) peak = max(peak, abs(s))
+        val sec = totalBuffered.toFloat() / (sampleRate * channels).coerceAtLeast(1)
+        _micState.value = _micState.value.copy(
+            isLiveMonitoring = true,
+            monitorPassthrough = monitorPassthrough,
+            monitorGain = monitorGain,
+            monitorWindowSec = monitorWindowSec,
+            liveSyncToDeck = liveSyncToDeck,
+            bufferedSamples = totalBuffered,
+            capturedSeconds = sec,
+            peakLevel = peak
+        )
+        val shouldSnapshot = forceSnapshot || (liveSyncToDeck && totalBuffered >= 256 * channels && (nowMs - lastMonitorSyncMs) >= 220L)
+        if (!shouldSnapshot) return null
+        lastMonitorSyncMs = nowMs
+        val snap = snapshotLiveMonitorBuffer("LIVE_MONITOR") ?: return null
+        onLiveMonitorDeckSnapshot(snap)
+        return snap
+    }
+
+    fun snapshotLiveMonitorBuffer(name: String = "LIVE_MONITOR"): DesktopAudioBuffer? {
+        val samples = synchronized(monitorLock) {
+            if (monitorCount <= 0) FloatArray(0) else readMonitorSamplesLocked()
+        }
+        if (samples.size < 64) return null
+        return DesktopAudioBuffer(samples, monitorSampleRate, monitorChannels, name)
+    }
+
+    fun stopLiveMonitorAndCollectBuffer(name: String = "LIVE_MONITOR"): DesktopAudioBuffer? {
+        monitorRunning.set(false)
+        runCatching { monitorThread?.join(250) }
+        val snap = snapshotLiveMonitorBuffer(name)
+        _micState.value = _micState.value.copy(
+            isLiveMonitoring = false,
+            peakLevel = 0f,
+            statusNote = "LINUX AUDIO READY"
+        )
+        return snap
+    }
+
+    private fun appendMonitorSamplesLocked(samples: FloatArray) {
+        val cap = monitorRingBuf.size.coerceAtLeast(1)
+        if (samples.size >= cap) {
+            System.arraycopy(samples, samples.size - cap, monitorRingBuf, 0, cap)
+            monitorWritePos = 0
+            monitorCount = cap
+            return
+        }
+        val firstPart = min(samples.size, cap - monitorWritePos)
+        System.arraycopy(samples, 0, monitorRingBuf, monitorWritePos, firstPart)
+        val secondPart = samples.size - firstPart
+        if (secondPart > 0) {
+            System.arraycopy(samples, firstPart, monitorRingBuf, 0, secondPart)
+        }
+        monitorWritePos = (monitorWritePos + samples.size) % cap
+        monitorCount = min(cap, monitorCount + samples.size)
+    }
+
+    private fun readMonitorSamplesLocked(limit: Int = Int.MAX_VALUE): FloatArray {
+        val cap = monitorRingBuf.size.coerceAtLeast(1)
+        val take = min(monitorCount, limit).coerceAtLeast(0)
+        if (take == 0) return FloatArray(0)
+        val out = FloatArray(take)
+        val start = ((monitorWritePos - take) % cap + cap) % cap
+        val firstPart = min(take, cap - start)
+        System.arraycopy(monitorRingBuf, start, out, 0, firstPart)
+        val secondPart = take - firstPart
+        if (secondPart > 0) {
+            System.arraycopy(monitorRingBuf, 0, out, firstPart, secondPart)
+        }
+        return out
+    }
+
+    private fun mixToMono(floats: FloatArray, channels: Int): FloatArray {
+        if (channels <= 1) return floats
+        val frames = floats.size / channels
+        return FloatArray(frames) { f ->
+            var s = 0f
+            for (c in 0 until channels) s += floats[f * channels + c]
+            s / channels
+        }
     }
 }

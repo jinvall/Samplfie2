@@ -19,6 +19,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -105,17 +107,23 @@ fun DeckEditorScreen(
     onOpenTools: () -> Unit = {},
     onFadesChange: (Float, Float) -> Unit = { _, _ -> },
     onApplyFades: () -> Unit = {},
+    onToggleLiveMonitor: () -> Unit = {},
+    onToggleMonitorPassthrough: (Boolean) -> Unit = {},
+    onMonitorGainChange: (Float) -> Unit = {},
+    onMonitorWindowSecChange: (Int) -> Unit = {},
+    onToggleMonitorSyncToDeck: (Boolean) -> Unit = {},
+    onLoadLiveMonitorToDeck: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val activeBuf = editorState.processedBuffer ?: editorState.dryBuffer
     val hasAudio = activeBuf != null && activeBuf.frameCount > 0
     val liveSpectrum = when {
-        micTelemetry.isRecording -> micTelemetry.liveSpectrum
+        micTelemetry.isActiveCapture -> micTelemetry.liveSpectrum
         playbackState.isPlaying -> playbackState.liveSpectrum
         else -> editorState.staticSpectrum
     }
-    val livePeak = if (micTelemetry.isRecording) micTelemetry.peakLevel else playbackState.livePeak
-    val liveRms = if (micTelemetry.isRecording) micTelemetry.rmsLevel else playbackState.liveRms
+    val livePeak = if (micTelemetry.isActiveCapture) micTelemetry.peakLevel else playbackState.livePeak
+    val liveRms = if (micTelemetry.isActiveCapture) micTelemetry.rmsLevel else playbackState.liveRms
 
     Column(
         modifier = modifier
@@ -129,7 +137,7 @@ fun DeckEditorScreen(
             Text(
                 text = editorState.statusBanner,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (micTelemetry.isRecording) TacCoral else NeonCyan
+                color = if (micTelemetry.isActiveCapture) TacCoral else NeonCyan
             )
             Spacer(modifier = Modifier.height(6.dp))
             FlowRow(
@@ -177,7 +185,7 @@ fun DeckEditorScreen(
             processedPeaks = editorState.processedPeaks,
             liveSpectrum = liveSpectrum,
             liveMicWaveform = micTelemetry.liveWaveform,
-            isRecording = micTelemetry.isRecording,
+            isRecording = micTelemetry.isActiveCapture,
             isPlaying = playbackState.isPlaying,
             playheadFraction = playbackState.playheadFraction,
             selectionStart = editorState.selectionStart,
@@ -201,7 +209,11 @@ fun DeckEditorScreen(
             VuPeakMeterBar(
                 peak = livePeak,
                 rms = liveRms,
-                label = if (micTelemetry.isRecording) "MIC" else "OUT"
+                label = when {
+                    micTelemetry.isLiveMonitoring -> "MON"
+                    micTelemetry.isRecording -> "MIC"
+                    else -> "OUT"
+                }
             )
         }
 
@@ -384,6 +396,131 @@ fun DeckEditorScreen(
                     modifier = Modifier.testTag("transport_bypass_button")
                 )
             }
+        }
+
+        // Live Monitor Mode -> Continuous Capture, Optional Passthrough, & Direct Load to Deck
+        HardwarePanel(
+            borderColor = if (micTelemetry.isLiveMonitoring) EmeraldSignal.copy(alpha = 0.85f) else HairlineDivider
+        ) {
+            val bufferedSec = if (micTelemetry.monitorBufferedSamples > 0) {
+                micTelemetry.elapsedMs / 1000f
+            } else 0f
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Headphones,
+                        contentDescription = null,
+                        tint = if (micTelemetry.isLiveMonitoring) EmeraldSignal else NeonCyan
+                    )
+                    Text(
+                        text = "LIVE MONITOR -> DECK",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (micTelemetry.isLiveMonitoring) EmeraldSignal else TextPrimary
+                    )
+                }
+                Text(
+                    text = if (micTelemetry.isLiveMonitoring) {
+                        "STREAMING ${"%.1f".format(bufferedSec)}s / ${micTelemetry.monitorWindowSec}s"
+                    } else if (micTelemetry.monitorBufferedSamples > 0) {
+                        "RING READY (${micTelemetry.monitorWindowSec}s)"
+                    } else {
+                        "IDLE • ${micTelemetry.monitorWindowSec}s RING"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (micTelemetry.isLiveMonitoring) EmeraldSignal else TextSecondary
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = onToggleLiveMonitor,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (micTelemetry.isLiveMonitoring) TacCoral else EmeraldSignal
+                    ),
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("deck_live_monitor_button")
+                ) {
+                    Icon(
+                        imageVector = if (micTelemetry.isLiveMonitoring) Icons.Filled.Stop else Icons.Filled.GraphicEq,
+                        contentDescription = null,
+                        tint = ObsidianChassis
+                    )
+                    Text(
+                        text = if (micTelemetry.isLiveMonitoring) " STOP MONITOR" else " LIVE MONITOR",
+                        color = ObsidianChassis,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+
+                Button(
+                    onClick = onLoadLiveMonitorToDeck,
+                    enabled = micTelemetry.monitorBufferedSamples > 0 || micTelemetry.isLiveMonitoring,
+                    colors = ButtonDefaults.buttonColors(containerColor = NeonCyan),
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("deck_load_monitor_button")
+                ) {
+                    Text(
+                        text = "LOAD -> DECK",
+                        color = ObsidianChassis,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+
+                HardwareChipToggle(
+                    label = if (micTelemetry.liveSyncToDeck) "AUTO -> DECK: ON" else "AUTO -> DECK: OFF",
+                    selected = micTelemetry.liveSyncToDeck,
+                    onClick = { onToggleMonitorSyncToDeck(!micTelemetry.liveSyncToDeck) },
+                    accentColor = EmeraldSignal,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("deck_monitor_auto_deck_chip")
+                )
+
+                HardwareChipToggle(
+                    label = if (micTelemetry.monitorPassthrough) "PASSTHROUGH: ON" else "PASSTHROUGH: OFF",
+                    selected = micTelemetry.monitorPassthrough,
+                    onClick = { onToggleMonitorPassthrough(!micTelemetry.monitorPassthrough) },
+                    accentColor = AmberHot,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("deck_monitor_passthrough_chip")
+                )
+
+                listOf(5, 12, 30).forEach { win ->
+                    HardwareChipToggle(
+                        label = "${win}s RING",
+                        selected = micTelemetry.monitorWindowSec == win,
+                        onClick = { onMonitorWindowSecChange(win) },
+                        accentColor = VioletMod,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("deck_monitor_window_${win}s")
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            HardwareParameterSlider(
+                label = "MONITOR GAIN",
+                valueText = "${(micTelemetry.monitorGain * 100f).toInt()}%",
+                value = micTelemetry.monitorGain,
+                valueRange = 0f..1f,
+                onValueChange = onMonitorGainChange,
+                accentColor = EmeraldSignal,
+                testTag = "deck_monitor_gain_slider"
+            )
         }
 
         // Tactile Hold-to-Record TAC Pad

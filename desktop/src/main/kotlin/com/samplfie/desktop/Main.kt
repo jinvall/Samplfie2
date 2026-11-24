@@ -162,7 +162,13 @@ class SamplfieDesktopFrame(
         onGenerateSignal = { type, hz -> controller.generateTestSignal(type, hz) },
         onSpecFreqRange = { lo, hi -> controller.updateSpecFreqRange(lo, hi) },
         onOpenTools = { controller.selectStation(DesktopStation.TOOLS) },
-        onFadesChange = { fin, fout -> controller.setDeckFades(fin, fout) }
+        onFadesChange = { fin, fout -> controller.setDeckFades(fin, fout) },
+        onToggleLiveMonitor = { controller.toggleLiveMonitor() },
+        onToggleMonitorPassthrough = { controller.setMonitorPassthrough(it) },
+        onMonitorGainChange = { controller.setMonitorGain(it) },
+        onMonitorWindowSecChange = { controller.setMonitorWindowSec(it) },
+        onToggleMonitorSyncToDeck = { controller.setLiveMonitorSyncToDeck(it) },
+        onLoadLiveMonitorToDeck = { controller.loadLiveMonitorToDeck() }
     )
 
     private val samplesPanel = SamplesLooperPanel(
@@ -611,7 +617,7 @@ class SamplfieDesktopFrame(
 
         hubSidebar.updateState(ui, play, mic, net, collabPeers)
         boothPanel.updateState(ui, play, net, sync, stems, secrets, collabPeers)
-        editorPanel.updateState(ui, play, tools)
+        editorPanel.updateState(ui, play, tools, mic)
         samplesPanel.updateState(looper, refiner)
         instrumentsPanel.updateState(seq, vmc, controller.customDrumKitState.value)
         tracksPanel.updateState(tl, sync)

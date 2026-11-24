@@ -1,6 +1,7 @@
 package com.samplfie.desktop.ui
 
 import com.samplfie.desktop.DesktopStudioUiState
+import com.samplfie.desktop.audio.DesktopMicState
 import com.samplfie.desktop.audio.DesktopPlaybackState
 import com.samplfie.desktop.audio.DesktopSpectrogramData
 import com.samplfie.desktop.audio.DesktopSpectrogramPalette
@@ -289,12 +290,19 @@ class SignalEditorPanel(
     private val onGenerateSignal: (SignalWaveformType, Double) -> Unit,
     private val onSpecFreqRange: (Float, Float) -> Unit = { _, _ -> },
     private val onOpenTools: () -> Unit = {},
-    private val onFadesChange: (Float, Float) -> Unit = { _, _ -> }
+    private val onFadesChange: (Float, Float) -> Unit = { _, _ -> },
+    private val onToggleLiveMonitor: () -> Unit = {},
+    private val onToggleMonitorPassthrough: (Boolean) -> Unit = {},
+    private val onMonitorGainChange: (Float) -> Unit = {},
+    private val onMonitorWindowSecChange: (Int) -> Unit = {},
+    private val onToggleMonitorSyncToDeck: (Boolean) -> Unit = {},
+    private val onLoadLiveMonitorToDeck: () -> Unit = {}
 ) : JPanel() {
 
     private var updating = false
     private var uiState = DesktopStudioUiState()
     private var playState = DesktopPlaybackState()
+    private var micState = DesktopMicState()
 
     private val waveformCanvas = WaveformCanvas()
     private val spectrogramCanvas = DesktopSpectrogramCanvas(
@@ -322,6 +330,21 @@ class SignalEditorPanel(
     private val fadeOutSlider = StudioTheme.hardwareSlider(0, 2000, 15)
     private val fadeInValLabel = StudioTheme.hardwareLabel("10 ms", StudioTheme.NeonCyan, StudioTheme.MonoFont)
     private val fadeOutValLabel = StudioTheme.hardwareLabel("15 ms", StudioTheme.AmberHot, StudioTheme.MonoFont)
+
+    private val liveMonBtn = StudioTheme.hardwareButton("LIVE MONITOR", StudioTheme.EmeraldSignal) { onToggleLiveMonitor() }
+    private val loadMonBtn = StudioTheme.hardwareButton("LOAD -> DECK", StudioTheme.NeonCyan, filled = true) { onLoadLiveMonitorToDeck() }
+    private val monPassthroughBtn = StudioTheme.hardwareButton("PASSTHROUGH: OFF", StudioTheme.AmberHot) {
+        onToggleMonitorPassthrough(!micState.monitorPassthrough)
+    }
+    private val monAutoDeckBtn = StudioTheme.hardwareButton("AUTO -> DECK: ON", StudioTheme.EmeraldSignal) {
+        onToggleMonitorSyncToDeck(!micState.liveSyncToDeck)
+    }
+    private val monWin5Btn = StudioTheme.hardwareButton("5s RING", StudioTheme.VioletMod) { onMonitorWindowSecChange(5) }
+    private val monWin12Btn = StudioTheme.hardwareButton("12s RING", StudioTheme.VioletMod) { onMonitorWindowSecChange(12) }
+    private val monWin30Btn = StudioTheme.hardwareButton("30s RING", StudioTheme.VioletMod) { onMonitorWindowSecChange(30) }
+    private val monGainSlider = StudioTheme.hardwareSlider(0, 100, 70)
+    private val monGainLabel = StudioTheme.hardwareLabel("70%", StudioTheme.EmeraldSignal, StudioTheme.MonoFont)
+    private val monStatusLabel = StudioTheme.hardwareLabel("IDLE • 12s RING", StudioTheme.TextSecondary, StudioTheme.MonoSmallFont)
 
     private val genTypeBox = StudioTheme.styleComboBox(JComboBox(SignalWaveformType.entries.toTypedArray()))
     private val genFreqSpinner = StudioTheme.styleSpinner(JSpinner(SpinnerNumberModel(440.0, 20.0, 8000.0, 10.0)), baseWidth = 96, baseHeight = 32)
@@ -423,6 +446,39 @@ class SignalEditorPanel(
         root.add(editPanel)
         root.add(Box.createVerticalStrut(8))
 
+        // Live Monitor -> Deck Strip
+        val monitorPanel = StudioTheme.hardwarePanel(StudioTheme.EmeraldSignal).apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            val monHeaderRow = JPanel(BorderLayout(8, 2)).apply {
+                isOpaque = false
+                add(StudioTheme.hardwareLabel("LIVE MONITOR -> DECK", StudioTheme.EmeraldSignal), BorderLayout.WEST)
+                add(monStatusLabel, BorderLayout.EAST)
+            }
+            add(monHeaderRow)
+            add(Box.createVerticalStrut(6))
+            val monCtrlRow = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 8, 4).apply {
+                monGainSlider.addChangeListener {
+                    monGainLabel.text = "${monGainSlider.value}%"
+                    if (!updating) {
+                        onMonitorGainChange(monGainSlider.value / 100f)
+                    }
+                }
+                add(liveMonBtn)
+                add(loadMonBtn)
+                add(monAutoDeckBtn)
+                add(monPassthroughBtn)
+                add(monWin5Btn)
+                add(monWin12Btn)
+                add(monWin30Btn)
+                add(StudioTheme.hardwareLabel("MON GAIN:", StudioTheme.TextSecondary))
+                add(monGainSlider.apply { StudioTheme.setScaledPrefSize(this, 140, 28) })
+                add(monGainLabel)
+            }
+            add(monCtrlRow)
+        }
+        root.add(monitorPanel)
+        root.add(Box.createVerticalStrut(8))
+
         // Test Signal Generator Strip
         val genPanel = StudioTheme.hardwarePanel(StudioTheme.VioletMod).apply {
             layout = StudioWrapLayout(FlowLayout.LEFT, 10, 4)
@@ -454,12 +510,14 @@ class SignalEditorPanel(
     fun updateState(
         ui: DesktopStudioUiState,
         play: DesktopPlaybackState,
-        tools: DesktopToolsState = DesktopToolsState()
+        tools: DesktopToolsState = DesktopToolsState(),
+        mic: DesktopMicState = DesktopMicState()
     ) {
         updating = true
         try {
             uiState = ui
             playState = play
+            micState = mic
 
             val buf = ui.processedBuffer ?: ui.dryBuffer
             val sr = buf?.sampleRate ?: ui.rigConfig.sampleRate
@@ -470,6 +528,25 @@ class SignalEditorPanel(
             playSelBtn.text = if (ui.playSelectionOnly) "SEL ONLY: ON" else "SEL ONLY: OFF"
             undoBtn.isEnabled = ui.canUndo
             resetBtn.isEnabled = ui.rawBuffer != null
+
+            liveMonBtn.text = if (mic.isLiveMonitoring) "STOP MONITOR" else "LIVE MONITOR"
+            liveMonBtn.foreground = if (mic.isLiveMonitoring) StudioTheme.TacCoral else StudioTheme.EmeraldSignal
+            loadMonBtn.isEnabled = mic.bufferedSamples > 0 || mic.isLiveMonitoring
+            monPassthroughBtn.text = if (mic.monitorPassthrough) "PASSTHROUGH: ON" else "PASSTHROUGH: OFF"
+            monAutoDeckBtn.text = if (mic.liveSyncToDeck) "AUTO -> DECK: ON" else "AUTO -> DECK: OFF"
+            monWin5Btn.foreground = if (mic.monitorWindowSec == 5) StudioTheme.NeonCyan else StudioTheme.TextSecondary
+            monWin12Btn.foreground = if (mic.monitorWindowSec == 12) StudioTheme.NeonCyan else StudioTheme.TextSecondary
+            monWin30Btn.foreground = if (mic.monitorWindowSec == 30) StudioTheme.NeonCyan else StudioTheme.TextSecondary
+            if (!monGainSlider.valueIsAdjusting) {
+                monGainSlider.value = (mic.monitorGain * 100f).toInt().coerceIn(0, 100)
+                monGainLabel.text = "${monGainSlider.value}%"
+            }
+            monStatusLabel.text = when {
+                mic.isLiveMonitoring -> "STREAMING ${"%.1f".format(mic.capturedSeconds)}s / ${mic.monitorWindowSec}s"
+                mic.bufferedSamples > 0 -> "RING READY (${"%.1f".format(mic.capturedSeconds)}s / ${mic.monitorWindowSec}s)"
+                else -> "IDLE • ${mic.monitorWindowSec}s RING"
+            }
+            monStatusLabel.foreground = if (mic.isLiveMonitoring) StudioTheme.EmeraldSignal else StudioTheme.TextSecondary
 
             if (!fadeInSlider.valueIsAdjusting) {
                 fadeInSlider.value = ui.fadeInMs.toInt().coerceIn(0, 2000)

@@ -1,8 +1,10 @@
 package com.example.stems
 
 import com.example.audio.AudioBuffer
+import com.example.audio.AudioSampleFormat
 import com.example.audio.WavCodec
-import java.io.ByteArrayOutputStream
+import de.sciss.jump3r.Main as LameMain
+import java.io.File
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URI
@@ -84,7 +86,14 @@ data class DisbandJobResponse(
     val durationSec: Float?,
     val error: String?,
     val stemRefs: List<DisbandStemFileRef>,
+    val uploadUrl: String? = null,
     val rawDiagnostics: String? = null
+)
+
+data class DisbandPreparedUpload(
+    val bytes: ByteArray,
+    val fileName: String,
+    val contentType: String
 )
 
 class DisbandApiException(
@@ -194,6 +203,21 @@ internal object DisbandDiagnosticsFormatter {
             }.trimEnd()
         }
 
+        val isMp3 = body.size >= 3 && (
+            (body[0] == 'I'.code.toByte() && body[1] == 'D'.code.toByte() && body[2] == '3'.code.toByte()) ||
+                ((body[0].toInt() and 0xFF) == 0xFF && (body[1].toInt() and 0xE0) == 0xE0)
+            )
+        if (isMp3) {
+            val headBytes = body.copyOfRange(0, minOf(body.size, 128))
+            return buildString {
+                appendLine("  Type: Binary MP3 audio/mpeg (${body.size} bytes, SHA-256=$sha256)")
+                appendLine("  First ${headBytes.size} bytes (hex): ${headBytes.joinToString(" ") { "%02X".format(it) }}")
+                if (body.size <= 4096) {
+                    appendLine("  Full payload (base64): ${encodeBase64(body)}")
+                }
+            }.trimEnd()
+        }
+
         val textCandidate = String(body, Charsets.UTF_8)
         val controlChars = textCandidate.count { it < ' ' && it != '\n' && it != '\r' && it != '\t' }
         return if (controlChars == 0) {
@@ -235,13 +259,62 @@ internal object DisbandDiagnosticsFormatter {
  * Pure Kotlin client for Disband Audio Stem Separation API (`https://api.disband.io/v1`).
  *
  * Workflow:
- * 1) `POST /separations?stems=...&formats=wav&name=...` with raw audio payload & Bearer key
- * 2) `GET /separations/{id}` with `Prefer: wait=20` until status == `ready`
- * 3) `GET /separations/{id}/stems/{stem}/{format}` (or explicit `stems[stem][format].url`)
+ * 1) Automatically encodes compact PCM-16 WAV for short clips or 256kbps MP3 for longer mixes to prevent 413 Request Too Large.
+ * 2) Direct `POST /separations?stems=...&formats=wav&name=...` for payloads <= 12 MB, OR two-step Reserved Upload
+ *    (`POST /separations?...&bytes=<len>` -> `PUT <upload_url>`) for large payloads or automatic 413 recovery.
+ * 3) `GET /separations/{id}` with `Prefer: wait=20` until status == `ready`.
+ * 4) `GET /separations/{id}/stems/{stem}/{format}` (or explicit `stems[stem][format].url`).
  */
 class DisbandApiClient(
     private val transport: DisbandHttpTransport = HttpUrlConnectionDisbandTransport()
 ) {
+    companion object {
+        internal const val MP3_SWITCH_WAV_BYTES = 2_500_000
+        internal const val DIRECT_POST_LIMIT_BYTES = 12_000_000
+    }
+
+    fun prepareUploadPayload(
+        sourceBuffer: AudioBuffer,
+        preferCompressedMp3: Boolean = false,
+        mp3BitrateKbps: Int = 256
+    ): DisbandPreparedUpload {
+        val baseName = sourceBuffer.name.ifBlank { "samplfie2_mix" }
+            .replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        val wavBytes = WavCodec.encodeToBytes(sourceBuffer, AudioSampleFormat.PCM_16, dither = false)
+        if (!preferCompressedMp3 && wavBytes.size <= MP3_SWITCH_WAV_BYTES) {
+            return DisbandPreparedUpload(wavBytes, "$baseName.wav", "application/octet-stream")
+        }
+        val mp3Bytes = encodeMp3BytesOrNull(wavBytes, mp3BitrateKbps)
+        return if (mp3Bytes != null && mp3Bytes.isNotEmpty() && mp3Bytes.size < wavBytes.size) {
+            DisbandPreparedUpload(mp3Bytes, "$baseName.mp3", "audio/mpeg")
+        } else {
+            DisbandPreparedUpload(wavBytes, "$baseName.wav", "application/octet-stream")
+        }
+    }
+
+    private fun encodeMp3BytesOrNull(wavBytes: ByteArray, bitrateKbps: Int): ByteArray? = runCatching {
+        val tmpDir = File(System.getProperty("java.io.tmpdir") ?: "/tmp")
+        val inWav = File(tmpDir, "dbnd_in_${System.nanoTime()}.wav")
+        val outMp3 = File(tmpDir, "dbnd_out_${System.nanoTime()}.mp3")
+        try {
+            inWav.writeBytes(wavBytes)
+            val code = LameMain().run(
+                arrayOf(
+                    "--silent",
+                    "-b",
+                    bitrateKbps.coerceIn(96, 320).toString(),
+                    "-q",
+                    "2",
+                    inWav.absolutePath,
+                    outMp3.absolutePath
+                )
+            )
+            if (code == 0 && outMp3.exists() && outMp3.length() > 0L) outMp3.readBytes() else null
+        } finally {
+            inWav.delete()
+            outMp3.delete()
+        }
+    }.getOrNull()
 
     fun submitSeparation(
         baseUrl: String,
@@ -249,7 +322,8 @@ class DisbandApiClient(
         stems: List<String>,
         audioBytes: ByteArray,
         fileName: String,
-        format: String = "wav"
+        format: String = "wav",
+        contentType: String = "application/octet-stream"
     ): DisbandJobResponse {
         require(stems.isNotEmpty()) { "At least one stem ID must be specified" }
         val cleanBase = baseUrl.trim().trimEnd('/')
@@ -262,7 +336,7 @@ class DisbandApiClient(
         val url = "$cleanBase/separations?${queryParts.joinToString("&")}"
         val reqHeaders = linkedMapOf(
             "Authorization" to "Bearer $apiKey",
-            "Content-Type" to "application/octet-stream",
+            "Content-Type" to contentType,
             "Accept" to "application/json"
         )
 
@@ -272,7 +346,7 @@ class DisbandApiClient(
             url = url,
             headers = reqHeaders,
             body = audioBytes,
-            readTimeoutMs = 65_000
+            readTimeoutMs = 90_000
         )
         return parseJobOrThrow(
             stage = "SUBMIT_SEPARATION",
@@ -285,6 +359,79 @@ class DisbandApiClient(
             format = format,
             baseUrl = cleanBase
         )
+    }
+
+    fun reserveSeparationUpload(
+        baseUrl: String,
+        apiKey: String,
+        stems: List<String>,
+        byteSize: Int,
+        fileName: String,
+        format: String = "wav"
+    ): DisbandJobResponse {
+        require(stems.isNotEmpty()) { "At least one stem ID must be specified" }
+        val cleanBase = baseUrl.trim().trimEnd('/')
+        val queryParts = mutableListOf<String>()
+        stems.forEach { stem ->
+            queryParts += "stems=${urlEncode(stem)}"
+        }
+        queryParts += "formats=${urlEncode(format)}"
+        queryParts += "name=${urlEncode(fileName)}"
+        queryParts += "bytes=$byteSize"
+        val url = "$cleanBase/separations?${queryParts.joinToString("&")}"
+        val reqHeaders = linkedMapOf(
+            "Authorization" to "Bearer $apiKey",
+            "Accept" to "application/json"
+        )
+        val resp = executeWithDiagnostics(
+            stage = "RESERVE_UPLOAD",
+            method = "POST",
+            url = url,
+            headers = reqHeaders,
+            body = null,
+            readTimeoutMs = 45_000
+        )
+        return parseJobOrThrow(
+            stage = "RESERVE_UPLOAD",
+            method = "POST",
+            url = url,
+            reqHeaders = reqHeaders,
+            reqBody = null,
+            resp = resp,
+            requestedStems = stems,
+            format = format,
+            baseUrl = cleanBase
+        )
+    }
+
+    fun uploadToReservedUrl(
+        uploadUrl: String,
+        audioBytes: ByteArray,
+        contentType: String = "application/octet-stream"
+    ) {
+        val reqHeaders = linkedMapOf("Content-Type" to contentType)
+        val resp = executeWithDiagnostics(
+            stage = "PUT_RESERVED_UPLOAD",
+            method = "PUT",
+            url = uploadUrl,
+            headers = reqHeaders,
+            body = audioBytes,
+            readTimeoutMs = 120_000
+        )
+        if (resp.statusCode !in 200..299) {
+            val bodyText = String(resp.body, Charsets.UTF_8)
+            val summary = "Reserved upload PUT failed (HTTP ${resp.statusCode}): ${bodyText.ifBlank { resp.statusMessage }}"
+            val diag = DisbandDiagnosticsFormatter.formatHttpExchange(
+                stage = "PUT_RESERVED_UPLOAD",
+                method = "PUT",
+                url = uploadUrl,
+                requestHeaders = reqHeaders,
+                requestBody = audioBytes,
+                response = resp,
+                errorSummary = summary
+            )
+            throw DisbandApiException(resp.statusCode, summary, diag)
+        }
     }
 
     fun pollSeparationStatus(
@@ -374,20 +521,34 @@ class DisbandApiClient(
         onStatusUpdate: (jobId: String?, status: String, charge: Int?) -> Unit = { _, _, _ -> }
     ): Pair<DisbandJobResponse, List<SeparatedStemTrack>> {
         if (isCancelled()) throw InterruptedException("Stem separation cancelled")
-        val wavBytes = WavCodec.encodeToBytes(sourceBuffer)
+        val prepared = prepareUploadPayload(sourceBuffer)
         val stemIds = stems.map { it.apiId }
-        val cleanName = (sourceBuffer.name.ifBlank { "samplfie2_mix" }
-            .replace(Regex("[^a-zA-Z0-9._-]"), "_")) + ".wav"
 
-        onStatusUpdate(null, "UPLOADING ${wavBytes.size / 1024}KB", null)
-        var job = submitSeparation(
-            baseUrl = baseUrl,
-            apiKey = apiKey,
-            stems = stemIds,
-            audioBytes = wavBytes,
-            fileName = cleanName,
-            format = "wav"
-        )
+        var job = if (prepared.bytes.size > DIRECT_POST_LIMIT_BYTES) {
+            submitViaReservedUpload(baseUrl, apiKey, stemIds, prepared, onStatusUpdate)
+        } else {
+            onStatusUpdate(null, "UPLOADING ${prepared.bytes.size / 1024}KB (${prepared.fileName.substringAfterLast('.').uppercase()})", null)
+            try {
+                submitSeparation(
+                    baseUrl = baseUrl,
+                    apiKey = apiKey,
+                    stems = stemIds,
+                    audioBytes = prepared.bytes,
+                    fileName = prepared.fileName,
+                    format = "wav",
+                    contentType = prepared.contentType
+                )
+            } catch (ex: DisbandApiException) {
+                if (ex.httpCode != 413) throw ex
+                // Auto-recover from HTTP 413: compact further via 128kbps MP3 and use Disband Reserved Upload (?bytes=... -> PUT upload_url)
+                val compact = if (!prepared.fileName.endsWith(".mp3", ignoreCase = true) || prepared.bytes.size > 4_000_000) {
+                    prepareUploadPayload(sourceBuffer, preferCompressedMp3 = true, mp3BitrateKbps = 128)
+                } else {
+                    prepared
+                }
+                submitViaReservedUpload(baseUrl, apiKey, stemIds, compact, onStatusUpdate, prior413Exception = ex)
+            }
+        }
         onStatusUpdate(job.id, job.status.uppercase(), job.charge)
 
         var polls = 0
@@ -473,6 +634,50 @@ class DisbandApiClient(
         return job to out
     }
 
+    private fun submitViaReservedUpload(
+        baseUrl: String,
+        apiKey: String,
+        stemIds: List<String>,
+        payload: DisbandPreparedUpload,
+        onStatusUpdate: (jobId: String?, status: String, charge: Int?) -> Unit,
+        prior413Exception: DisbandApiException? = null
+    ): DisbandJobResponse {
+        onStatusUpdate(null, "RESERVING UPLOAD (${payload.bytes.size / 1024}KB)", null)
+        val reserved = try {
+            reserveSeparationUpload(
+                baseUrl = baseUrl,
+                apiKey = apiKey,
+                stems = stemIds,
+                byteSize = payload.bytes.size,
+                fileName = payload.fileName,
+                format = "wav"
+            )
+        } catch (reserveErr: DisbandApiException) {
+            if (prior413Exception != null) {
+                val combined = buildString {
+                    appendLine(prior413Exception.fullDiagnostics)
+                    appendLine()
+                    appendLine("=== RESERVED UPLOAD FALLBACK ALSO FAILED ===")
+                    appendLine(reserveErr.fullDiagnostics)
+                }
+                throw DisbandApiException(prior413Exception.httpCode, prior413Exception.message ?: "HTTP 413 Request Too Large", combined)
+            }
+            throw reserveErr
+        }
+        val uploadUrl = reserved.uploadUrl?.takeIf { it.startsWith("http") }
+        if (uploadUrl == null) {
+            if (reserved.id.isNotBlank() && reserved.status.isNotBlank() && !reserved.status.equals("uploading", ignoreCase = true)) {
+                return reserved
+            }
+            if (prior413Exception != null) throw prior413Exception
+            val msg = "Disband reserve response missing upload_url for ${payload.bytes.size} bytes"
+            throw DisbandApiException(500, msg, reserved.rawDiagnostics ?: msg)
+        }
+        onStatusUpdate(reserved.id, "PUT ${payload.bytes.size / 1024}KB -> UPLOAD URL", reserved.charge)
+        uploadToReservedUrl(uploadUrl, payload.bytes, payload.contentType)
+        return reserved
+    }
+
     private fun executeWithDiagnostics(
         stage: String,
         method: String,
@@ -533,6 +738,7 @@ class DisbandApiClient(
             val hint = when (resp.statusCode) {
                 401, 403 -> "Unauthorized — check DISBAND_API_KEY in Keys & Secrets"
                 402 -> "Insufficient Disband credits"
+                413 -> "Request Too Large (${reqBody?.size?.div(1024) ?: 0}KB) — enable Selection Only or check Disband tier limit"
                 else -> "Disband API error (${resp.statusCode})"
             }
             val summary = "$hint: $msg"
@@ -567,6 +773,7 @@ class DisbandApiClient(
         val charge = (json["charge"] as? Number)?.toInt()
         val duration = (json["duration"] as? Number)?.toFloat()
         val error = json["error"] as? String
+        val uploadUrl = json["upload_url"] as? String
 
         val rawDiag = DisbandDiagnosticsFormatter.formatHttpExchange(
             stage = "$stage (STATUS=$status)",
@@ -610,6 +817,7 @@ class DisbandApiClient(
             durationSec = duration,
             error = error,
             stemRefs = stemRefs,
+            uploadUrl = uploadUrl,
             rawDiagnostics = rawDiag
         )
     }
