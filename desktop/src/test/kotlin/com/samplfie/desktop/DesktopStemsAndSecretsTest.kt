@@ -149,6 +149,53 @@ class DesktopStemsAndSecretsTest {
         }
     }
 
+    @Test
+    fun desktopController_errorCapturesFullRequestAndResponsePayloadWithHeaders() {
+        val tailMarker = "END_OF_LONG_DESKTOP_ERROR_PAYLOAD_777"
+        val longBody = """{"error":"Rejected wav payload","reason":"quota_or_format","pad":"${"y".repeat(450)}","tail":"$tailMarker"}"""
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/v1/separations") { ex ->
+            ex.requestBody.readBytes()
+            ex.responseHeaders.add("Content-Type", "application/json")
+            ex.responseHeaders.add("X-Disband-Debug-Id", "dbg_desktop_500")
+            ex.responseHeaders.add("X-Upstream-Node", "worker-09")
+            val b = longBody.toByteArray(Charsets.UTF_8)
+            ex.sendResponseHeaders(400, b.size.toLong())
+            ex.responseBody.use { it.write(b) }
+        }
+        server.start()
+        val port = server.address.port
+        val controller = DesktopStudioController()
+        try {
+            controller.saveSecretKey(DesktopSecretsVault.KEY_DISBAND_API_KEY, "desk_err_key_555")
+            controller.saveSecretKey(DesktopSecretsVault.KEY_DISBAND_BASE_URL, "http://127.0.0.1:$port/v1")
+            controller.applyStemPreset(DesktopStemPreset.VOCALS_ONLY)
+            assertTrue(controller.requestStemSeparation())
+
+            val deadline = System.currentTimeMillis() + 5000
+            while (controller.stemState.value.isRunning && System.currentTimeMillis() < deadline) {
+                Thread.sleep(25)
+            }
+            assertFalse(controller.stemState.value.isRunning)
+            assertEquals("ERROR", controller.stemState.value.jobStatusLabel)
+            val detail = controller.stemState.value.errorPayloadDetail
+            assertNotNull("Expected full errorPayloadDetail on DesktopStemState", detail)
+            detail!!
+            assertTrue(detail.contains("POST http://127.0.0.1:$port/v1/separations?"))
+            assertTrue(detail.contains("Authorization: Bearer desk_err_key_555"))
+            assertTrue(detail.contains("Content-Type: application/octet-stream"))
+            assertTrue(detail.contains("Binary WAV/RIFF"))
+            assertTrue(detail.contains("HTTP 400"))
+            assertTrue(detail.contains("dbg_desktop_500"))
+            assertTrue(detail.contains("worker-09"))
+            assertTrue("Must contain entire error body", detail.contains(longBody))
+            assertTrue(detail.contains(tailMarker))
+        } finally {
+            controller.shutdown()
+            server.stop(0)
+        }
+    }
+
     private fun queryOrLastStems(query: String): List<String> {
         val stems = query.split('&')
             .filter { it.startsWith("stems=") }

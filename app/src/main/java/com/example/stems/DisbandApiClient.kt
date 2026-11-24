@@ -7,10 +7,14 @@ import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URLEncoder
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 data class DisbandHttpResponse(
     val statusCode: Int,
-    val body: ByteArray
+    val body: ByteArray,
+    val headers: Map<String, List<String>> = emptyMap(),
+    val statusMessage: String = ""
 )
 
 /**
@@ -51,9 +55,15 @@ class HttpUrlConnectionDisbandTransport : DisbandHttpTransport {
                 conn.outputStream.use { it.write(body) }
             }
             val code = conn.responseCode
+            val statusMsg = runCatching { conn.responseMessage.orEmpty() }.getOrDefault("")
+            val respHeaders = linkedMapOf<String, List<String>>()
+            runCatching { conn.headerFields }.getOrNull()?.forEach { (k, v) ->
+                val key = k ?: "Status-Line"
+                respHeaders[key] = v ?: emptyList()
+            }
             val stream: InputStream? = if (code in 200..399) conn.inputStream else conn.errorStream
             val bytes = stream?.use { it.readBytes() } ?: ByteArray(0)
-            return DisbandHttpResponse(code, bytes)
+            return DisbandHttpResponse(code, bytes, respHeaders, statusMsg)
         } finally {
             conn.disconnect()
         }
@@ -73,10 +83,153 @@ data class DisbandJobResponse(
     val charge: Int?,
     val durationSec: Float?,
     val error: String?,
-    val stemRefs: List<DisbandStemFileRef>
+    val stemRefs: List<DisbandStemFileRef>,
+    val rawDiagnostics: String? = null
 )
 
-class DisbandApiException(val httpCode: Int, message: String) : RuntimeException(message)
+class DisbandApiException(
+    val httpCode: Int,
+    message: String,
+    val fullDiagnostics: String = message
+) : RuntimeException(message)
+
+internal object DisbandDiagnosticsFormatter {
+    fun formatHttpExchange(
+        stage: String,
+        method: String,
+        url: String,
+        requestHeaders: Map<String, String>,
+        requestBody: ByteArray?,
+        response: DisbandHttpResponse?,
+        errorSummary: String,
+        cause: Throwable? = null
+    ): String = buildString {
+        appendLine("=== DISBAND ERROR DIAGNOSTICS ===")
+        appendLine("STAGE: $stage")
+        appendLine("SUMMARY: $errorSummary")
+        appendLine()
+        appendLine("--- HTTP REQUEST ---")
+        appendLine("$method $url")
+        appendLine("Request Headers:")
+        if (requestHeaders.isEmpty()) {
+            appendLine("  (none)")
+        } else {
+            requestHeaders.forEach { (k, v) ->
+                appendLine("  $k: $v")
+            }
+        }
+        if (requestBody != null && !requestHeaders.keys.any { it.equals("Content-Length", ignoreCase = true) }) {
+            appendLine("  Content-Length: ${requestBody.size}")
+        }
+        appendLine("Request Payload:")
+        appendLine(formatRequestBody(requestBody))
+        appendLine()
+        appendLine("--- HTTP RESPONSE ---")
+        if (response == null) {
+            appendLine("(No HTTP response received — transport/client failure before response)")
+        } else {
+            val statusSuffix = if (response.statusMessage.isNotBlank()) " ${response.statusMessage}" else ""
+            appendLine("HTTP ${response.statusCode}$statusSuffix")
+            appendLine("Response Headers:")
+            if (response.headers.isEmpty()) {
+                appendLine("  (none reported by transport)")
+            } else {
+                response.headers.forEach { (k, vals) ->
+                    appendLine("  $k: ${vals.joinToString(", ")}")
+                }
+            }
+            appendLine("Response Body (${response.body.size} bytes):")
+            val bodyText = String(response.body, Charsets.UTF_8)
+            appendLine(bodyText.ifEmpty { "(empty response body)" })
+        }
+        if (cause != null) {
+            appendLine()
+            appendLine("--- EXCEPTION TRACE ---")
+            appendLine("${cause::class.java.name}: ${cause.message}")
+            cause.stackTrace.take(12).forEach { frame ->
+                appendLine("  at $frame")
+            }
+        }
+    }.trimEnd()
+
+    private fun formatRequestBody(body: ByteArray?): String {
+        if (body == null) return "  (empty — no request body)"
+        if (body.isEmpty()) return "  (0 bytes)"
+        val sha256 = runCatching {
+            java.security.MessageDigest.getInstance("SHA-256")
+                .digest(body)
+                .joinToString("") { "%02x".format(it) }
+        }.getOrDefault("unavailable")
+
+        val isWav = body.size >= 44 &&
+            body[0] == 'R'.code.toByte() && body[1] == 'I'.code.toByte() &&
+            body[2] == 'F'.code.toByte() && body[3] == 'F'.code.toByte() &&
+            body[8] == 'W'.code.toByte() && body[9] == 'A'.code.toByte() &&
+            body[10] == 'V'.code.toByte() && body[11] == 'E'.code.toByte()
+
+        if (isWav) {
+            val bb = ByteBuffer.wrap(body).order(ByteOrder.LITTLE_ENDIAN)
+            val riffSize = bb.getInt(4)
+            val fmtSize = bb.getInt(16)
+            val audioFmt = bb.getShort(20).toInt() and 0xFFFF
+            val channels = bb.getShort(22).toInt() and 0xFFFF
+            val sampleRate = bb.getInt(24)
+            val byteRate = bb.getInt(28)
+            val blockAlign = bb.getShort(32).toInt() and 0xFFFF
+            val bitsPerSample = bb.getShort(34).toInt() and 0xFFFF
+            val dataTag = String(body, 36, 4, Charsets.US_ASCII)
+            val dataSize = bb.getInt(40)
+            return buildString {
+                appendLine("  Type: Binary WAV/RIFF (${body.size} bytes, SHA-256=$sha256)")
+                appendLine("  WAV Header: RIFF size=$riffSize, fmtSize=$fmtSize, audioFormat=$audioFmt, channels=$channels, sampleRate=${sampleRate}Hz, byteRate=$byteRate, blockAlign=$blockAlign, bitsPerSample=$bitsPerSample, chunk4='$dataTag', dataBytes=$dataSize")
+                val headBytes = body.copyOfRange(0, minOf(body.size, 128))
+                appendLine("  First ${headBytes.size} bytes (hex): ${headBytes.joinToString(" ") { "%02X".format(it) }}")
+                if (body.size <= 4096) {
+                    appendLine("  Full payload (base64): ${encodeBase64(body)}")
+                } else {
+                    val tailStart = (body.size - 64).coerceAtLeast(0)
+                    val tailBytes = body.copyOfRange(tailStart, body.size)
+                    appendLine("  Last ${tailBytes.size} bytes (hex): ${tailBytes.joinToString(" ") { "%02X".format(it) }}")
+                }
+            }.trimEnd()
+        }
+
+        val textCandidate = String(body, Charsets.UTF_8)
+        val controlChars = textCandidate.count { it < ' ' && it != '\n' && it != '\r' && it != '\t' }
+        return if (controlChars == 0) {
+            "  Type: Text (${body.size} bytes, SHA-256=$sha256)\n$textCandidate"
+        } else {
+            val headBytes = body.copyOfRange(0, minOf(body.size, 256))
+            buildString {
+                appendLine("  Type: Binary (${body.size} bytes, SHA-256=$sha256)")
+                appendLine("  First ${headBytes.size} bytes (hex): ${headBytes.joinToString(" ") { "%02X".format(it) }}")
+                if (body.size <= 4096) {
+                    appendLine("  Full payload (base64): ${encodeBase64(body)}")
+                }
+            }.trimEnd()
+        }
+    }
+
+    private fun encodeBase64(data: ByteArray): String {
+        val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        val out = StringBuilder(((data.size + 2) / 3) * 4)
+        var i = 0
+        while (i < data.size) {
+            val b0 = data[i].toInt() and 0xFF
+            val hasB1 = i + 1 < data.size
+            val hasB2 = i + 2 < data.size
+            val b1 = if (hasB1) data[i + 1].toInt() and 0xFF else 0
+            val b2 = if (hasB2) data[i + 2].toInt() and 0xFF else 0
+            val triple = (b0 shl 16) or (b1 shl 8) or b2
+            out.append(alphabet[(triple ushr 18) and 0x3F])
+            out.append(alphabet[(triple ushr 12) and 0x3F])
+            out.append(if (hasB1) alphabet[(triple ushr 6) and 0x3F] else '=')
+            out.append(if (hasB2) alphabet[triple and 0x3F] else '=')
+            i += 3
+        }
+        return out.toString()
+    }
+}
 
 /**
  * Pure Kotlin client for Disband Audio Stem Separation API (`https://api.disband.io/v1`).
@@ -107,18 +260,31 @@ class DisbandApiClient(
         queryParts += "formats=${urlEncode(format)}"
         queryParts += "name=${urlEncode(fileName)}"
         val url = "$cleanBase/separations?${queryParts.joinToString("&")}"
+        val reqHeaders = linkedMapOf(
+            "Authorization" to "Bearer $apiKey",
+            "Content-Type" to "application/octet-stream",
+            "Accept" to "application/json"
+        )
 
-        val resp = transport.request(
+        val resp = executeWithDiagnostics(
+            stage = "SUBMIT_SEPARATION",
             method = "POST",
             url = url,
-            headers = mapOf(
-                "Authorization" to "Bearer $apiKey",
-                "Content-Type" to "application/octet-stream",
-                "Accept" to "application/json"
-            ),
-            body = audioBytes
+            headers = reqHeaders,
+            body = audioBytes,
+            readTimeoutMs = 65_000
         )
-        return parseJobOrThrow(resp, stems, format, cleanBase)
+        return parseJobOrThrow(
+            stage = "SUBMIT_SEPARATION",
+            method = "POST",
+            url = url,
+            reqHeaders = reqHeaders,
+            reqBody = audioBytes,
+            resp = resp,
+            requestedStems = stems,
+            format = format,
+            baseUrl = cleanBase
+        )
     }
 
     fun pollSeparationStatus(
@@ -131,21 +297,33 @@ class DisbandApiClient(
     ): DisbandJobResponse {
         val cleanBase = baseUrl.trim().trimEnd('/')
         val url = "$cleanBase/separations/${urlEncode(jobId)}"
-        val headers = mutableMapOf(
+        val reqHeaders = linkedMapOf(
             "Authorization" to "Bearer $apiKey",
             "Accept" to "application/json"
         )
         if (waitSeconds > 0) {
-            headers["Prefer"] = "wait=$waitSeconds"
+            reqHeaders["Prefer"] = "wait=$waitSeconds"
         }
-        val resp = transport.request(
+        val timeoutMs = ((waitSeconds + 15) * 1000).coerceAtLeast(25_000)
+        val resp = executeWithDiagnostics(
+            stage = "POLL_STATUS",
             method = "GET",
             url = url,
-            headers = headers,
+            headers = reqHeaders,
             body = null,
-            readTimeoutMs = ((waitSeconds + 15) * 1000).coerceAtLeast(25_000)
+            readTimeoutMs = timeoutMs
         )
-        return parseJobOrThrow(resp, expectedStems, format, cleanBase)
+        return parseJobOrThrow(
+            stage = "POLL_STATUS",
+            method = "GET",
+            url = url,
+            reqHeaders = reqHeaders,
+            reqBody = null,
+            resp = resp,
+            requestedStems = expectedStems,
+            format = format,
+            baseUrl = cleanBase
+        )
     }
 
     fun downloadStemAudio(
@@ -159,15 +337,28 @@ class DisbandApiClient(
         val cleanBase = baseUrl.trim().trimEnd('/')
         val targetUrl = explicitUrl?.takeIf { it.startsWith("http") }
             ?: "$cleanBase/separations/${urlEncode(jobId)}/stems/${urlEncode(stemId)}/${urlEncode(format)}"
-        val resp = transport.request(
+        val reqHeaders = linkedMapOf("Authorization" to "Bearer $apiKey")
+        val resp = executeWithDiagnostics(
+            stage = "DOWNLOAD_STEM ($stemId)",
             method = "GET",
             url = targetUrl,
-            headers = mapOf("Authorization" to "Bearer $apiKey"),
-            body = null
+            headers = reqHeaders,
+            body = null,
+            readTimeoutMs = 65_000
         )
         if (resp.statusCode !in 200..299) {
-            val errDetail = String(resp.body, Charsets.UTF_8).take(180)
-            throw DisbandApiException(resp.statusCode, "Stem download ($stemId) failed (${resp.statusCode}): $errDetail")
+            val fullBody = String(resp.body, Charsets.UTF_8)
+            val summary = "Stem download ($stemId) failed (HTTP ${resp.statusCode}): ${fullBody.ifBlank { resp.statusMessage }}"
+            val diag = DisbandDiagnosticsFormatter.formatHttpExchange(
+                stage = "DOWNLOAD_STEM ($stemId)",
+                method = "GET",
+                url = targetUrl,
+                requestHeaders = reqHeaders,
+                requestBody = null,
+                response = resp,
+                errorSummary = summary
+            )
+            throw DisbandApiException(resp.statusCode, summary, diag)
         }
         return resp.body
     }
@@ -227,10 +418,12 @@ class DisbandApiClient(
         if (isCancelled()) throw InterruptedException("Stem separation cancelled")
 
         if (job.status.equals("failed", ignoreCase = true) || job.status.equals("error", ignoreCase = true)) {
-            throw DisbandApiException(500, job.error ?: "Disband job ${job.id} failed")
+            val summary = job.error ?: "Disband job ${job.id} failed (${job.status})"
+            throw DisbandApiException(500, summary, job.rawDiagnostics ?: summary)
         }
         if (!job.status.equals("ready", ignoreCase = true) && !job.status.equals("completed", ignoreCase = true)) {
-            throw DisbandApiException(504, "Disband job ${job.id} timed out (${job.status})")
+            val summary = "Disband job ${job.id} timed out (${job.status})"
+            throw DisbandApiException(504, summary, job.rawDiagnostics ?: summary)
         }
 
         val charge = job.charge ?: 0
@@ -252,7 +445,20 @@ class DisbandApiClient(
                 format = ref.format,
                 explicitUrl = ref.url
             )
-            val decoded = WavCodec.readWav(rawStemBytes, name = "${sourceBuffer.name}_${ref.stemId}")
+            val decoded = runCatching {
+                WavCodec.readWav(rawStemBytes, name = "${sourceBuffer.name}_${ref.stemId}")
+            }.getOrElse { decodeErr ->
+                val summary = "Decoded WAV error for stem '${ref.stemId}': ${decodeErr.message}"
+                val textBody = String(rawStemBytes.copyOfRange(0, minOf(rawStemBytes.size, 8192)), Charsets.UTF_8)
+                val diag = buildString {
+                    appendLine("=== DISBAND STEM WAV DECODE ERROR ===")
+                    appendLine("STEM: ${ref.stemId} (${rawStemBytes.size} bytes)")
+                    appendLine("ERROR: ${decodeErr::class.java.name}: ${decodeErr.message}")
+                    appendLine("RAW BYTES AS UTF-8 (first ${minOf(rawStemBytes.size, 8192)} bytes):")
+                    appendLine(textBody)
+                }
+                throw DisbandApiException(500, summary, diag)
+            }
             val displayLabel = DisbandStem.entries.firstOrNull { it.apiId == ref.stemId }?.label
                 ?: ref.stemId.replace('_', ' ').uppercase()
             out += SeparatedStemTrack(
@@ -267,12 +473,52 @@ class DisbandApiClient(
         return job to out
     }
 
+    private fun executeWithDiagnostics(
+        stage: String,
+        method: String,
+        url: String,
+        headers: Map<String, String>,
+        body: ByteArray?,
+        readTimeoutMs: Int
+    ): DisbandHttpResponse {
+        return try {
+            transport.request(
+                method = method,
+                url = url,
+                headers = headers,
+                body = body,
+                readTimeoutMs = readTimeoutMs
+            )
+        } catch (ie: InterruptedException) {
+            throw ie
+        } catch (t: Throwable) {
+            if (t is DisbandApiException) throw t
+            val summary = "Transport error at $stage: ${t.message ?: t::class.java.simpleName}"
+            val diag = DisbandDiagnosticsFormatter.formatHttpExchange(
+                stage = stage,
+                method = method,
+                url = url,
+                requestHeaders = headers,
+                requestBody = body,
+                response = null,
+                errorSummary = summary,
+                cause = t
+            )
+            throw DisbandApiException(-1, summary, diag)
+        }
+    }
+
     private fun isTerminalStatus(status: String): Boolean {
         val s = status.lowercase()
         return s == "ready" || s == "completed" || s == "failed" || s == "error"
     }
 
     private fun parseJobOrThrow(
+        stage: String,
+        method: String,
+        url: String,
+        reqHeaders: Map<String, String>,
+        reqBody: ByteArray?,
         resp: DisbandHttpResponse,
         requestedStems: List<String>,
         format: String,
@@ -289,15 +535,48 @@ class DisbandApiClient(
                 402 -> "Insufficient Disband credits"
                 else -> "Disband API error (${resp.statusCode})"
             }
-            throw DisbandApiException(resp.statusCode, "$hint: $msg")
+            val summary = "$hint: $msg"
+            val diag = DisbandDiagnosticsFormatter.formatHttpExchange(
+                stage = stage,
+                method = method,
+                url = url,
+                requestHeaders = reqHeaders,
+                requestBody = reqBody,
+                response = resp,
+                errorSummary = summary
+            )
+            throw DisbandApiException(resp.statusCode, summary, diag)
         }
 
-        val json = MiniJson.parseObject(text)
+        val json = runCatching { MiniJson.parseObject(text) }.getOrElse { parseErr ->
+            val summary = "Invalid JSON from Disband (${resp.statusCode}): ${parseErr.message}"
+            val diag = DisbandDiagnosticsFormatter.formatHttpExchange(
+                stage = "$stage (JSON_PARSE)",
+                method = method,
+                url = url,
+                requestHeaders = reqHeaders,
+                requestBody = reqBody,
+                response = resp,
+                errorSummary = summary,
+                cause = parseErr
+            )
+            throw DisbandApiException(resp.statusCode, summary, diag)
+        }
         val id = (json["id"] as? String).orEmpty()
         val status = (json["status"] as? String).orEmpty().ifBlank { "queued" }
         val charge = (json["charge"] as? Number)?.toInt()
         val duration = (json["duration"] as? Number)?.toFloat()
         val error = json["error"] as? String
+
+        val rawDiag = DisbandDiagnosticsFormatter.formatHttpExchange(
+            stage = "$stage (STATUS=$status)",
+            method = method,
+            url = url,
+            requestHeaders = reqHeaders,
+            requestBody = reqBody,
+            response = resp,
+            errorSummary = error ?: "Job $id status=$status"
+        )
 
         val stemRefs = mutableListOf<DisbandStemFileRef>()
         val stemsObj = json["stems"] as? Map<*, *>
@@ -308,10 +587,10 @@ class DisbandApiClient(
                 val fmtObj = (formatMap[format] as? Map<*, *>)
                     ?: formatMap.values.firstOrNull() as? Map<*, *>
                 val fmtKey = if (formatMap[format] != null) format else formatMap.keys.firstOrNull()?.toString() ?: format
-                val url = fmtObj?.get("url")?.toString()
+                val urlRef = fmtObj?.get("url")?.toString()
                     ?: "$baseUrl/separations/${urlEncode(id)}/stems/${urlEncode(stemId)}/${urlEncode(fmtKey)}"
                 val bytes = (fmtObj?.get("bytes") as? Number)?.toInt() ?: 0
-                stemRefs += DisbandStemFileRef(stemId, fmtKey, url, bytes)
+                stemRefs += DisbandStemFileRef(stemId, fmtKey, urlRef, bytes)
             }
         } else if (status.equals("ready", ignoreCase = true) || status.equals("completed", ignoreCase = true)) {
             requestedStems.forEach { stemId ->
@@ -330,7 +609,8 @@ class DisbandApiClient(
             charge = charge,
             durationSec = duration,
             error = error,
-            stemRefs = stemRefs
+            stemRefs = stemRefs,
+            rawDiagnostics = rawDiag
         )
     }
 

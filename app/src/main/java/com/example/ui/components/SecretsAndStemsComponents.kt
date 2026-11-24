@@ -1,8 +1,13 @@
 package com.example.ui.components
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -48,12 +54,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.config.SecretsVaultRepository
 import com.example.config.SecretsVaultState
 import com.example.stems.DisbandStem
@@ -468,6 +477,14 @@ fun DisbandStemSeparationPanel(
     modifier: Modifier = Modifier
 ) {
     var showSubStems by remember { mutableStateOf(false) }
+    var showFullErrorDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    fun copyErrorDiagnostics(text: String) {
+        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        cm?.setPrimaryClip(ClipData.newPlainText("disband_error_payload", text))
+        Toast.makeText(context, "Copied full error payload & headers", Toast.LENGTH_SHORT).show()
+    }
 
     HardwarePanel(
         borderColor = MagentaFx.copy(alpha = 0.55f),
@@ -668,6 +685,136 @@ fun DisbandStemSeparationPanel(
             color = if (stemState.errorMessage != null) TacCoral else TextSecondary,
             modifier = Modifier.testTag("disband_status_text")
         )
+
+        val errPayload = stemState.errorPayloadDetail
+        if (!errPayload.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Surface(
+                color = ObsidianChassis,
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, TacCoral),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("disband_error_payload_panel")
+            ) {
+                Column(modifier = Modifier.padding(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "ERROR PAYLOAD & HEADERS (FULL)",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = TacCoral,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            HardwareChipToggle(
+                                label = "COPY",
+                                selected = false,
+                                onClick = { copyErrorDiagnostics(errPayload) },
+                                accentColor = NeonCyan,
+                                modifier = Modifier.testTag("disband_error_copy_button")
+                            )
+                            HardwareChipToggle(
+                                label = "EXPAND",
+                                selected = false,
+                                onClick = { showFullErrorDialog = true },
+                                accentColor = TacCoral,
+                                modifier = Modifier.testTag("disband_error_expand_button")
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    val vScroll = rememberScrollState()
+                    val hScroll = rememberScrollState()
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 120.dp, max = 300.dp)
+                            .verticalScroll(vScroll)
+                            .horizontalScroll(hScroll)
+                    ) {
+                        SelectionContainer {
+                            Text(
+                                text = errPayload,
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    lineHeight = 15.sp
+                                ),
+                                color = TextPrimary,
+                                modifier = Modifier.testTag("disband_error_payload_text")
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (showFullErrorDialog && !errPayload.isNullOrBlank()) {
+            AlertDialog(
+                onDismissRequest = { showFullErrorDialog = false },
+                containerColor = GunmetalDeck,
+                modifier = Modifier.testTag("disband_error_dialog"),
+                title = {
+                    Text(
+                        text = "FULL ERROR PAYLOAD & HEADERS",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = TacCoral
+                    )
+                },
+                text = {
+                    val vScroll = rememberScrollState()
+                    val hScroll = rememberScrollState()
+                    Surface(
+                        color = ObsidianChassis,
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, HairlineDivider),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 220.dp, max = 440.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .padding(10.dp)
+                                .verticalScroll(vScroll)
+                                .horizontalScroll(hScroll)
+                        ) {
+                            SelectionContainer {
+                                Text(
+                                    text = errPayload,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp,
+                                        lineHeight = 15.sp
+                                    ),
+                                    color = TextPrimary
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { copyErrorDiagnostics(errPayload) },
+                        colors = ButtonDefaults.buttonColors(containerColor = NeonCyan),
+                        modifier = Modifier.minimumInteractiveComponentSize()
+                    ) {
+                        Text("COPY ALL", color = ObsidianChassis)
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { showFullErrorDialog = false },
+                        modifier = Modifier.minimumInteractiveComponentSize()
+                    ) {
+                        Text("CLOSE", color = TextSecondary)
+                    }
+                }
+            )
+        }
 
         // Separated Stem Outputs
         if (stemState.separatedStems.isNotEmpty()) {

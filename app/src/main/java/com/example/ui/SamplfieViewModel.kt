@@ -60,6 +60,7 @@ import com.example.plugins.PluginCatalogEntry
 import com.example.plugins.PluginCatalogRegistry
 import com.example.plugins.SamplfiePluginDefinition
 import com.example.stems.DisbandApiClient
+import com.example.stems.DisbandApiException
 import com.example.stems.DisbandHttpTransport
 import com.example.stems.DisbandStem
 import com.example.stems.SeparatedStemTrack
@@ -1625,6 +1626,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         _stemState.value = _stemState.value.copy(
             selectedStems = next,
             errorMessage = null,
+            errorPayloadDetail = null,
             statusMessage = if (next.isEmpty()) {
                 "NO SPECIFIC STEMS SELECTED — SEPARATING WILL PROMPT FOR ALL-STEMS CONFIRMATION"
             } else {
@@ -1638,6 +1640,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         _stemState.value = _stemState.value.copy(
             selectedStems = next,
             errorMessage = null,
+            errorPayloadDetail = null,
             statusMessage = if (next.isEmpty()) {
                 "UNSPECIFIED STEM SET — SEPARATING WILL ASK CONFIRMATION FOR ALL STEMS"
             } else {
@@ -1654,14 +1657,24 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         if (_stemState.value.isRunning) return
         val source = resolveSourceBufferForStems() ?: run {
             val msg = "LOAD OR RECORD AUDIO BEFORE SEPARATING STEMS"
-            _stemState.value = _stemState.value.copy(errorMessage = msg, statusMessage = msg, lastToastMessage = msg)
+            _stemState.value = _stemState.value.copy(
+                errorMessage = msg,
+                errorPayloadDetail = null,
+                statusMessage = msg,
+                lastToastMessage = msg
+            )
             _toastEvents.tryEmit(msg)
             return
         }
         val apiKey = secretsVault.resolveDisbandApiKey()
         if (apiKey.isNullOrBlank()) {
             val msg = "DISBAND_API_KEY MISSING — STORE KEY IN TOP TOOLBAR OR HUB VAULT"
-            _stemState.value = _stemState.value.copy(errorMessage = msg, statusMessage = msg, lastToastMessage = msg)
+            _stemState.value = _stemState.value.copy(
+                errorMessage = msg,
+                errorPayloadDetail = null,
+                statusMessage = msg,
+                lastToastMessage = msg
+            )
             _toastEvents.tryEmit(msg)
             _showSecretsVault.value = true
             return
@@ -1676,6 +1689,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
                 pendingAllStemsEstimatedCredits = estCredits,
                 pendingAudioDurationSec = source.durationSeconds,
                 errorMessage = null,
+                errorPayloadDetail = null,
                 lastToastMessage = toast,
                 statusMessage = "CONFIRMATION REQUIRED: SEPARATE ALL STEMS (~$estCredits CREDITS)"
             )
@@ -1737,6 +1751,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
                 showAllStemsConfirmation = false,
                 jobStatusLabel = "SUBMITTING",
                 errorMessage = null,
+                errorPayloadDetail = null,
                 statusMessage = "DISBAND: REQUESTING ${targetStems.joinToString("+") { it.shortTag }}…"
             )
             val result = runCatching {
@@ -1765,6 +1780,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
                     lastCreditCharge = job.charge,
                     separatedStems = tracks,
                     errorMessage = null,
+                    errorPayloadDetail = null,
                     lastToastMessage = doneMsg,
                     statusMessage = doneMsg
                 )
@@ -1773,10 +1789,13 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
             }.onFailure { err ->
                 if (err is InterruptedException) return@onFailure
                 val errMsg = err.message ?: "Disband separation failed"
+                val fullDetail = (err as? DisbandApiException)?.fullDiagnostics
+                    ?: "${err::class.java.name}: $errMsg\n${err.stackTraceToString()}"
                 _stemState.value = _stemState.value.copy(
                     isRunning = false,
                     jobStatusLabel = "ERROR",
                     errorMessage = errMsg,
+                    errorPayloadDetail = fullDetail,
                     lastToastMessage = errMsg,
                     statusMessage = "DISBAND ERROR: $errMsg"
                 )

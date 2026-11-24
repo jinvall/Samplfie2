@@ -9,6 +9,8 @@ import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.Toolkit
+import java.awt.datatransfer.StringSelection
 import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
@@ -19,7 +21,9 @@ import javax.swing.JOptionPane
 import javax.swing.JPanel
 import javax.swing.JPasswordField
 import javax.swing.JScrollPane
+import javax.swing.JTextArea
 import javax.swing.JTextField
+import javax.swing.SwingUtilities
 
 /**
  * Dark hardware-styled Secrets & Keys Store dialog for Linux Desktop.
@@ -207,6 +211,52 @@ class DesktopStemSeparationPanel(
         onRequestSeparate()
     }
     private val cancelBtn = StudioTheme.hardwareButton("CANCEL", StudioTheme.TacCoral) { onCancelSeparate() }
+    private val errorPayloadArea = JTextArea().apply {
+        isEditable = false
+        lineWrap = false
+        background = StudioTheme.ObsidianChassis
+        foreground = StudioTheme.TextPrimary
+        caretColor = StudioTheme.TacCoral
+        font = StudioTheme.MonoFont
+        StudioTheme.setScaledPadding(this, 8, 10, 8, 10)
+    }
+    private val errorPayloadScroll = StudioTheme.styleScrollPane(
+        JScrollPane(
+            errorPayloadArea,
+            JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
+            JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
+        ).apply {
+            StudioTheme.setScaledPrefSize(this, 780, 240)
+            StudioTheme.setScaledMinSize(this, 360, 140)
+        }
+    )
+    private var currentErrorPayloadText: String = ""
+    private val errorPayloadPanel = StudioTheme.hardwarePanel(StudioTheme.TacCoral).apply {
+        layout = BorderLayout(StudioTheme.s(6), StudioTheme.s(6))
+        isVisible = false
+        val hdr = JPanel(BorderLayout(StudioTheme.s(8), 0)).apply {
+            isOpaque = false
+            add(StudioTheme.hardwareLabel("ERROR PAYLOAD & HEADERS (FULL)", StudioTheme.TacCoral, StudioTheme.TitleFont), BorderLayout.WEST)
+            val btns = StudioTheme.wrapRowPanel(FlowLayout.RIGHT, 6, 2).apply {
+                add(StudioTheme.hardwareButton("COPY FULL PAYLOAD", StudioTheme.NeonCyan) {
+                    if (currentErrorPayloadText.isNotBlank()) {
+                        Toolkit.getDefaultToolkit().systemClipboard.setContents(
+                            StringSelection(currentErrorPayloadText),
+                            null
+                        )
+                    }
+                })
+                add(StudioTheme.hardwareButton("EXPAND WINDOW", StudioTheme.TacCoral) {
+                    if (currentErrorPayloadText.isNotBlank()) {
+                        showFullErrorWindow()
+                    }
+                })
+            }
+            add(btns, BorderLayout.EAST)
+        }
+        add(hdr, BorderLayout.NORTH)
+        add(errorPayloadScroll, BorderLayout.CENTER)
+    }
     private val resultsPanel = JPanel().apply {
         isOpaque = false
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -268,10 +318,44 @@ class DesktopStemSeparationPanel(
         add(actionRow)
         add(statusLabel)
         add(Box.createVerticalStrut(StudioTheme.s(4)))
+        add(errorPayloadPanel)
+        add(Box.createVerticalStrut(StudioTheme.s(4)))
         add(resultsPanel)
     }
 
     override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height.coerceAtLeast(StudioTheme.s(120)))
+
+    private fun showFullErrorWindow() {
+        val owner = SwingUtilities.getWindowAncestor(this)
+        val dlg = JDialog(owner, "Disband Stem Separation — Full Error Payload & Headers", java.awt.Dialog.ModalityType.MODELESS).apply {
+            size = StudioTheme.scaledDialogSize(960, 680)
+            background = StudioTheme.GunmetalDeck
+            layout = BorderLayout(StudioTheme.s(8), StudioTheme.s(8))
+            val area = JTextArea(currentErrorPayloadText).apply {
+                isEditable = false
+                lineWrap = false
+                background = StudioTheme.ObsidianChassis
+                foreground = StudioTheme.TextPrimary
+                font = StudioTheme.MonoFont
+                StudioTheme.setScaledPadding(this, 10, 12, 10, 12)
+                caretPosition = 0
+            }
+            add(StudioTheme.styleScrollPane(JScrollPane(area)), BorderLayout.CENTER)
+            val footer = StudioTheme.wrapRowPanel(FlowLayout.RIGHT, 8, 6, opaque = true).apply {
+                background = StudioTheme.GunmetalDeck
+                add(StudioTheme.hardwareButton("COPY FULL PAYLOAD", StudioTheme.NeonCyan) {
+                    Toolkit.getDefaultToolkit().systemClipboard.setContents(
+                        StringSelection(currentErrorPayloadText),
+                        null
+                    )
+                })
+                add(StudioTheme.hardwareButton("CLOSE", StudioTheme.TacCoral) { dispose() })
+            }
+            add(footer, BorderLayout.SOUTH)
+            setLocationRelativeTo(owner)
+        }
+        dlg.isVisible = true
+    }
 
     fun updateState(st: DesktopStemState, secrets: DesktopSecretsState) {
         updating = true
@@ -292,6 +376,17 @@ class DesktopStemSeparationPanel(
             separateBtn.background = if (st.selectedStems.isEmpty()) StudioTheme.AmberHot else StudioTheme.MagentaFx
             statusLabel.text = st.errorMessage ?: st.statusMessage
             statusLabel.foreground = if (st.errorMessage != null) StudioTheme.TacCoral else StudioTheme.TextSecondary
+
+            val detail = st.errorPayloadDetail.orEmpty()
+            val shouldShowErrorPayload = detail.isNotBlank()
+            if (shouldShowErrorPayload != errorPayloadPanel.isVisible || detail != currentErrorPayloadText) {
+                currentErrorPayloadText = detail
+                errorPayloadArea.text = detail
+                errorPayloadArea.caretPosition = 0
+                errorPayloadPanel.isVisible = shouldShowErrorPayload
+                revalidate()
+                repaint()
+            }
 
             val sig = st.separatedStems.joinToString("|") { "${it.stemId}:${it.sizeBytes}" }
             if (sig != lastStemsSignature) {

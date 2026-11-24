@@ -46,6 +46,7 @@ import com.samplfie.desktop.plugins.DesktopPluginCatalogEntry
 import com.samplfie.desktop.plugins.DesktopPluginCatalogRegistry
 import com.samplfie.desktop.plugins.DesktopPluginHostEngine
 import com.samplfie.desktop.plugins.DesktopPluginRepository
+import com.samplfie.desktop.stems.DesktopDisbandApiException
 import com.samplfie.desktop.stems.DesktopDisbandClient
 import com.samplfie.desktop.stems.DesktopDisbandHttpTransport
 import com.samplfie.desktop.stems.DesktopDisbandStem
@@ -1177,6 +1178,7 @@ class DesktopStudioController {
         _stemState.value = _stemState.value.copy(
             selectedStems = next,
             errorMessage = null,
+            errorPayloadDetail = null,
             statusMessage = if (next.isEmpty()) {
                 "NO SPECIFIC STEMS SELECTED — WILL PROMPT FOR ALL-STEMS CONFIRMATION"
             } else {
@@ -1190,6 +1192,7 @@ class DesktopStudioController {
         _stemState.value = _stemState.value.copy(
             selectedStems = next,
             errorMessage = null,
+            errorPayloadDetail = null,
             statusMessage = if (next.isEmpty()) {
                 "UNSPECIFIED STEM SET — WILL PROMPT FOR ALL-STEMS CONFIRMATION"
             } else {
@@ -1206,14 +1209,24 @@ class DesktopStudioController {
         if (_stemState.value.isRunning) return false
         val source = resolveSourceBufferForStems() ?: run {
             val msg = "NO AUDIO LOADED TO SEPARATE STEMS"
-            _stemState.value = _stemState.value.copy(errorMessage = msg, statusMessage = msg, lastToastMessage = msg)
+            _stemState.value = _stemState.value.copy(
+                errorMessage = msg,
+                errorPayloadDetail = null,
+                statusMessage = msg,
+                lastToastMessage = msg
+            )
             _uiState.value = _uiState.value.copy(statusLine = msg)
             return false
         }
         val apiKey = secretsVault.resolveDisbandApiKey()
         if (apiKey.isNullOrBlank()) {
             val msg = "DISBAND_API_KEY MISSING — OPEN KEYS & SECRETS STORE IN TOP BAR OR BOOTH"
-            _stemState.value = _stemState.value.copy(errorMessage = msg, statusMessage = msg, lastToastMessage = msg)
+            _stemState.value = _stemState.value.copy(
+                errorMessage = msg,
+                errorPayloadDetail = null,
+                statusMessage = msg,
+                lastToastMessage = msg
+            )
             _uiState.value = _uiState.value.copy(statusLine = msg)
             return false
         }
@@ -1227,6 +1240,7 @@ class DesktopStudioController {
                 pendingAllStemsEstimatedCredits = est,
                 pendingAudioDurationSec = source.durationSeconds,
                 errorMessage = null,
+                errorPayloadDetail = null,
                 lastToastMessage = toast,
                 statusMessage = "CONFIRMATION REQUIRED: SEPARATE ALL STEMS (~$est CREDITS)"
             )
@@ -1291,6 +1305,7 @@ class DesktopStudioController {
             showAllStemsConfirmation = false,
             jobStatusLabel = "SUBMITTING",
             errorMessage = null,
+            errorPayloadDetail = null,
             statusMessage = "DISBAND: REQUESTING ${targetStems.joinToString("+") { it.shortTag }}…"
         )
         stemFuture = stemExecutor.submit {
@@ -1320,6 +1335,7 @@ class DesktopStudioController {
                     lastCreditCharge = job.charge,
                     separatedStems = tracks,
                     errorMessage = null,
+                    errorPayloadDetail = null,
                     lastToastMessage = done,
                     statusMessage = done
                 )
@@ -1327,10 +1343,13 @@ class DesktopStudioController {
             }.onFailure { err ->
                 if (err is InterruptedException) return@onFailure
                 val msg = err.message ?: "Disband separation failed"
+                val fullDetail = (err as? DesktopDisbandApiException)?.fullDiagnostics
+                    ?: "${err::class.java.name}: $msg\n${err.stackTraceToString()}"
                 _stemState.value = _stemState.value.copy(
                     isRunning = false,
                     jobStatusLabel = "ERROR",
                     errorMessage = msg,
+                    errorPayloadDetail = fullDetail,
                     lastToastMessage = msg,
                     statusMessage = "DISBAND ERROR: $msg"
                 )

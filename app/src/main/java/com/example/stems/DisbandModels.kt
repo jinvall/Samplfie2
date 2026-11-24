@@ -69,6 +69,7 @@ data class StemSeparationUiState(
     val lastCreditCharge: Int? = null,
     val separatedStems: List<SeparatedStemTrack> = emptyList(),
     val errorMessage: String? = null,
+    val errorPayloadDetail: String? = null,
     val lastToastMessage: String? = null,
     val statusMessage: String = "PICK SPECIFIC STEMS TO SEPARATE, OR LEAVE EMPTY FOR ALL-STEMS CONFIRMATION"
 ) {
