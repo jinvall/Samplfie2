@@ -42,6 +42,8 @@ import com.samplfie.desktop.network.MAX_COLLAB_PEERS
 import com.samplfie.desktop.network.NetBridgeState
 import com.samplfie.desktop.network.SessionHandoffSnapshot
 import com.samplfie.desktop.network.Smp2NetworkNode
+import com.samplfie.desktop.plugins.DesktopLadspaBrowserClient
+import com.samplfie.desktop.plugins.DesktopLadspaBrowserEntry
 import com.samplfie.desktop.plugins.DesktopPluginCatalogEntry
 import com.samplfie.desktop.plugins.DesktopPluginCatalogRegistry
 import com.samplfie.desktop.plugins.DesktopPluginHostEngine
@@ -689,6 +691,8 @@ class DesktopStudioController {
             VmcTarget.STOMP_MOD_SCALE -> updateStomp { copy(engaged = true, modScale = 0.2f + norm * 1.6f) }
             VmcTarget.STOMP_SPACE_SCALE -> updateStomp { copy(engaged = true, spaceScale = 0.2f + norm * 1.6f) }
             VmcTarget.FX_DRIVE -> updateFx { copy(overdriveEnabled = true, driveAmount = 1f + norm * 15f) }
+            VmcTarget.FX_DISTORTION_DRIVE -> updateFx { copy(distortionEnabled = true, distortionDrive = 1f + norm * 23f) }
+            VmcTarget.FILTER_CUTOFF -> updateFx { copy(filterEnabled = true, filterCutoffHz = 80f + norm * 13920f) }
             VmcTarget.FX_WAH_FREQ -> updateFx { copy(wahEnabled = true, wahFreqHz = 280f + norm * 2200f) }
             VmcTarget.FX_PHASER_MIX -> updateFx { copy(phaserEnabled = true, phaserMix = norm) }
             VmcTarget.FX_FLANGER_MIX -> updateFx { copy(flangerEnabled = true, flangerMix = norm) }
@@ -1901,6 +1905,60 @@ class DesktopStudioController {
         val msg = "SCANNED LINUX PLUGINS: ${found.size} LV2/LADSPA/VST BUNDLES DETECTED"
         _toolsState.value = _toolsState.value.copy(
             nativeLinuxPlugins = found,
+            lastToolReport = msg
+        )
+        _uiState.value = _uiState.value.copy(statusLine = msg)
+    }
+
+    fun setLadspaFeedUrl(url: String) {
+        _toolsState.value = _toolsState.value.copy(ladspaFeedUrl = url.take(240))
+    }
+
+    fun fetchLadspaCatalog(url: String = _toolsState.value.ladspaFeedUrl) {
+        val trimmed = url.trim()
+        if (trimmed.isBlank()) {
+            _toolsState.value = _toolsState.value.copy(ladspaStatus = "ENTER HTTP/HTTPS RDF OR JSON URL")
+            return
+        }
+        if (DesktopLadspaBrowserClient.isBlockedBinaryUrl(trimmed)) {
+            val msg = "BLOCKED (ZERO-DCL): NATIVE .SO/.DLL/.JAR/.DEX DISALLOWED"
+            _toolsState.value = _toolsState.value.copy(ladspaStatus = msg)
+            _uiState.value = _uiState.value.copy(statusLine = msg)
+            return
+        }
+        _toolsState.value = _toolsState.value.copy(
+            ladspaFeedUrl = trimmed,
+            isFetchingLadspa = true,
+            ladspaStatus = "FETCHING LADSPA/DLC CATALOG..."
+        )
+        stemExecutor.submit {
+            val res = DesktopLadspaBrowserClient.fetchFromUrl(trimmed)
+            javax.swing.SwingUtilities.invokeLater {
+                res.onSuccess { entries ->
+                    val merged = (entries + DesktopLadspaBrowserClient.CURATED_COMMUNITY_LADSPA).distinctBy { it.id }
+                    _toolsState.value = _toolsState.value.copy(
+                        isFetchingLadspa = false,
+                        ladspaEntries = merged,
+                        ladspaStatus = "FETCHED ${entries.size} LADSPA/DLC ENTRIES (DIRECT HTTPS)",
+                        lastToolReport = "LADSPA CATALOG SYNCED (${merged.size} ENTRIES)"
+                    )
+                }.onFailure { err ->
+                    _toolsState.value = _toolsState.value.copy(
+                        isFetchingLadspa = false,
+                        ladspaStatus = "FEED ERROR (${err.message?.take(48) ?: "NETWORK"}) — USING CURATED CATALOG"
+                    )
+                }
+            }
+        }
+    }
+
+    fun installLadspaPlugin(entry: DesktopLadspaBrowserEntry) {
+        val saved = pluginRepo.installPlugin(entry.toPluginDefinition())
+        val all = pluginRepo.loadAllPlugins()
+        val msg = "INSTALLED LADSPA #${entry.ladspaUniqueId}: ${saved.name}"
+        _toolsState.value = _toolsState.value.copy(
+            installedPlugins = all,
+            ladspaStatus = msg,
             lastToolReport = msg
         )
         _uiState.value = _uiState.value.copy(statusLine = msg)

@@ -237,6 +237,22 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
         }
     }
 
+    var pendingSamplerModuleIdx by remember { mutableStateOf(0) }
+    val importSamplerAudioLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: SecurityException) {
+            }
+            viewModel.loadUriToSamplerModule(pendingSamplerModuleIdx, uri)
+        }
+    }
+
     val selectedSpoke by viewModel.selectedSpoke.collectAsStateWithLifecycle()
     val workspaceConfig by viewModel.workspaceConfig.collectAsStateWithLifecycle()
     val tunerState by viewModel.tunerState.collectAsStateWithLifecycle()
@@ -262,6 +278,7 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
     val timelineState by viewModel.timelineState.collectAsStateWithLifecycle()
     val syncedPlayhead by viewModel.syncedPlayhead.collectAsStateWithLifecycle()
     val customDrumKitState by viewModel.customDrumKitState.collectAsStateWithLifecycle()
+    val samplerSlots by viewModel.samplerSlots.collectAsStateWithLifecycle()
 
     LaunchedEffect(viewModel) {
         viewModel.toastEvents.collect { msg ->
@@ -657,7 +674,31 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                                 onAuditionLoopRefiner = { viewModel.auditionLoopRefiner() },
                                 onCommitRefinerToSlot = { viewModel.commitRefinerToLoopSlot() },
                                 onSendRefinerToDeck = { viewModel.sendRefinerToDeck() },
-                                onToggleLoopSlotLock = { viewModel.toggleLoopSlotLock(it) }
+                                onToggleLoopSlotLock = { viewModel.toggleLoopSlotLock(it) },
+                                samplerSlots = samplerSlots,
+                                onTriggerSamplerModule = { viewModel.triggerSamplerModule(it) },
+                                onStopSamplerModule = { viewModel.stopSamplerModule(it) },
+                                onStopAllSamplerModules = { viewModel.stopAllSamplerModules() },
+                                onLoadDeckToSamplerModule = { viewModel.sendDeckToSamplerModule(it) },
+                                onImportFileToSamplerModule = { modIdx ->
+                                    pendingSamplerModuleIdx = modIdx
+                                    try {
+                                        importSamplerAudioLauncher.launch(arrayOf("audio/*"))
+                                    } catch (_: ActivityNotFoundException) {
+                                        try {
+                                            importSamplerAudioLauncher.launch(arrayOf("*/*"))
+                                        } catch (ex: Exception) {
+                                            Toast.makeText(context, "No audio file picker found: ${ex.message}", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                },
+                                onToggleSamplerLock = { viewModel.toggleSamplerModuleLock(it) },
+                                onToggleSamplerLoop = { viewModel.toggleSamplerModuleLoop(it) },
+                                onUpdateSamplerParams = { modIdx, gain, pan, pitch ->
+                                    viewModel.updateSamplerModuleParams(modIdx, gain, pan, pitch)
+                                },
+                                onClearSamplerModule = { viewModel.clearSamplerModule(it) },
+                                onBounceSamplerToDeck = { viewModel.bounceSamplerModulesToDeck() }
                             )
 
                             StudioSpoke.INSTRUMENTS -> InstrumentsSpokeScreen(
@@ -835,7 +876,10 @@ fun SamplfieConsoleApp(viewModel: SamplfieViewModel) {
                                     } catch (ex: Exception) {
                                         Toast.makeText(context, "No file picker found: ${ex.message}", Toast.LENGTH_LONG).show()
                                     }
-                                }
+                                },
+                                onSetLadspaUrl = { viewModel.setLadspaFeedUrl(it) },
+                                onFetchLadspaCatalog = { viewModel.fetchLadspaCatalog() },
+                                onInstallLadspaPlugin = { viewModel.installLadspaPlugin(it) }
                             )
 
                             StudioSpoke.TUNER -> TunerSpokeScreen(
@@ -887,14 +931,14 @@ private fun StudioSpokeBottomDock(
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
                 .padding(horizontal = 4.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             visibleDock.forEach { spoke ->
                 val isSelected = selectedSpoke == spoke
                 Surface(
                     modifier = Modifier
-                        .widthIn(min = 56.dp)
+                        .widthIn(min = 48.dp)
                         .minimumInteractiveComponentSize()
                         .clip(RoundedCornerShape(10.dp))
                         .clickable { onSelectSpoke(spoke) }
@@ -904,7 +948,7 @@ private fun StudioSpokeBottomDock(
                     border = BorderStroke(1.dp, if (isSelected) NeonCyan else HairlineDivider.copy(alpha = 0.6f))
                 ) {
                     Column(
-                        modifier = Modifier.padding(vertical = 6.dp, horizontal = 6.dp),
+                        modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -52,12 +53,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.audio.AudioSampleFormat
 import com.example.audio.MicCaptureTelemetry
 import com.example.audio.PlaybackState
 import com.example.audio.SpectrogramPalette
 import com.example.dsp.FxRackState
+import com.example.plugins.LadspaBrowserEntry
 import com.example.plugins.PluginCatalogEntry
 import com.example.tools.ChannelScope
 import com.example.tools.MonoFoldMode
@@ -131,6 +134,9 @@ fun ToolsAndPluginsScreen(
     onInstallCatalogPlugin: (PluginCatalogEntry) -> Unit,
     onUninstallCustomPlugin: (String) -> Unit,
     onImportPluginOrIrFile: () -> Unit,
+    onSetLadspaUrl: (String) -> Unit = {},
+    onFetchLadspaCatalog: () -> Unit = {},
+    onInstallLadspaPlugin: (LadspaBrowserEntry) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val activeBuf = editorState.processedBuffer ?: editorState.dryBuffer
@@ -175,10 +181,11 @@ fun ToolsAndPluginsScreen(
                     }
                     OutlinedTextField(
                         value = hexInputText,
-                        onValueChange = { hexInputText = it },
+                        onValueChange = { hexInputText = it.take(140) },
                         label = { Text("10 Hex Stops (comma or space separated)") },
                         modifier = Modifier.fillMaxWidth().testTag("custom_10stop_hex_input"),
-                        minLines = 3
+                        minLines = 3,
+                        maxLines = 4
                     )
                 }
             },
@@ -229,12 +236,17 @@ fun ToolsAndPluginsScreen(
                             "NO DECK AUDIO LOADED — IMPORT OR RECORD IN DECK"
                         },
                         style = MaterialTheme.typography.labelSmall,
-                        color = TextPrimary
+                        color = TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = toolsState.lastToolReport,
                         style = MaterialTheme.typography.labelSmall,
-                        color = EmeraldSignal
+                        color = EmeraldSignal,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.heightIn(min = 30.dp)
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -983,6 +995,107 @@ fun ToolsAndPluginsScreen(
                 }
 
                 val installedIds = toolsState.installedPlugins.map { it.id }.toSet()
+
+                // CLIENT-SIDE LADSPA ("LACSPA") & JSON DLC BROWSER (DIRECT HTTPS · ZERO-DCL)
+                HardwarePanel(borderColor = NeonCyan.copy(alpha = 0.7f)) {
+                    Text(
+                        text = "LADSPA (\"LACSPA\") & DLC PLUGIN BROWSER (DIRECT HTTPS · ZERO-DCL)",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = NeonCyan,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = toolsState.ladspaStatus,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AmberHot,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 30.dp)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = toolsState.ladspaFeedUrl,
+                        onValueChange = { onSetLadspaUrl(it.take(240)) },
+                        label = { Text("LADSPA RDF/XML or .smpplugin.json DLC URL") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("ladspa_feed_url_input")
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Button(
+                        onClick = onFetchLadspaCatalog,
+                        enabled = !toolsState.isFetchingLadspa,
+                        colors = ButtonDefaults.buttonColors(containerColor = NeonCyan),
+                        modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag("fetch_ladspa_catalog_button")
+                    ) {
+                        Text(
+                            text = if (toolsState.isFetchingLadspa) "FETCHING RDF/JSON CATALOG..." else "FETCH LADSPA / DLC CATALOG (NO PYTHON HOST)",
+                            color = ObsidianChassis,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    toolsState.ladspaEntries.forEach { entry ->
+                        val isInstalled = installedIds.contains(entry.id)
+                        Surface(
+                            color = ElevatedBezel,
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, if (isInstalled) EmeraldSignal else HairlineDivider),
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "${entry.name} (#${entry.ladspaUniqueId})",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = TextPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "${entry.creator} • ${entry.category.label} • ${entry.sizeLabel}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = NeonCyan,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = entry.description,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TextSecondary,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                if (isInstalled) {
+                                    OutlinedButton(
+                                        onClick = { onAddPluginToChain(entry.id) },
+                                        border = BorderStroke(1.dp, NeonCyan),
+                                        modifier = Modifier.minimumInteractiveComponentSize().testTag("add_ladspa_${entry.id}")
+                                    ) {
+                                        Text("+ CHAIN", color = NeonCyan)
+                                    }
+                                } else {
+                                    Button(
+                                        onClick = { onInstallLadspaPlugin(entry) },
+                                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldSignal),
+                                        modifier = Modifier.minimumInteractiveComponentSize().testTag("install_ladspa_${entry.id}")
+                                    ) {
+                                        Icon(Icons.Filled.Download, contentDescription = null, tint = ObsidianChassis)
+                                        Text(" GET", color = ObsidianChassis)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 HardwarePanel {
                     Text(
                         text = "AVAILABLE DSP PLUGIN CATALOG (${toolsState.catalogEntries.size})",
@@ -1004,13 +1117,15 @@ fun ToolsAndPluginsScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(entry.name, style = MaterialTheme.typography.labelLarge, color = TextPrimary)
+                                    Text(entry.name, style = MaterialTheme.typography.labelLarge, color = TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text(
                                         "${entry.vendor} v${entry.version} • ${entry.category.label} • ${entry.sizeLabel}",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = AmberHot
+                                        color = AmberHot,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
-                                    Text(entry.description, style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+                                    Text(entry.description, style = MaterialTheme.typography.bodySmall, color = TextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                 }
                                 Spacer(modifier = Modifier.width(8.dp))
                                 if (isInstalled) {

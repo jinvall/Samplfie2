@@ -8,6 +8,8 @@ import com.example.audio.WaveformPeaks
 import com.example.export.ExportedAudioResult
 import com.example.export.ExportedMp3Result
 import com.example.network.SessionHandoffSnapshot
+import com.example.plugins.LadspaBrowserClient
+import com.example.plugins.LadspaBrowserEntry
 import com.example.plugins.PluginCatalogEntry
 import com.example.plugins.PluginCatalogRegistry
 import com.example.plugins.PluginSlotInstance
@@ -36,7 +38,7 @@ enum class StudioSpoke(
     SAMPLES("SAMPLES", "LOOPER & SAMPLE REFINER", "LOOPS"),
     INSTRUMENTS("INST", "16-STEP SEQ & MIDI", "SYNTH"),
     TRACKS("TRACKS", "SYNCED TRACK TIMELINE", "SYNC"),
-    FX_RACK("FX", "14-MODULE PRO DSP RACK", "DSP"),
+    FX_RACK("FX", "13 FX + 3 FILTERS RACK", "DSP"),
     LIVE("LIVE", "LIVE STOMPBOX & RELEASE", "STAGE"),
     TOOLS("TOOLS", "PRO TOOLS & PLUGINS", "PRO"),
     TUNER("TUNER", "CHROMATIC & STROBE TUNER", "PITCH"),
@@ -84,6 +86,10 @@ data class ToolsAndPluginsState(
     val installedPlugins: List<SamplfiePluginDefinition> = PluginCatalogRegistry.BUILT_IN_PLUGINS,
     val pluginChain: List<PluginSlotInstance> = emptyList(),
     val catalogEntries: List<PluginCatalogEntry> = PluginCatalogRegistry.INSTALLABLE_CATALOG,
+    val ladspaFeedUrl: String = LadspaBrowserClient.DEFAULT_LADSPA_FEED_URL,
+    val ladspaEntries: List<LadspaBrowserEntry> = LadspaBrowserClient.CURATED_COMMUNITY_LADSPA,
+    val isFetchingLadspa: Boolean = false,
+    val ladspaStatus: String = "READY — CURATED LADSPA CATALOG (ZERO-DCL)",
     val lastToolReport: String = "READY — SELECT SPECTRAL REGION OR AUDIO TOOL"
 )
 
@@ -94,9 +100,9 @@ data class WorkspaceConfig(
         StudioSpoke.SAMPLES,
         StudioSpoke.INSTRUMENTS,
         StudioSpoke.TRACKS,
+        StudioSpoke.LIVE,
         StudioSpoke.FX_RACK,
-        StudioSpoke.TOOLS,
-        StudioSpoke.LIVE
+        StudioSpoke.TOOLS
     ),
     val radialWheelSpokes: List<StudioSpoke> = listOf(
         StudioSpoke.DECK,
@@ -104,6 +110,7 @@ data class WorkspaceConfig(
         StudioSpoke.INSTRUMENTS,
         StudioSpoke.TUNER,
         StudioSpoke.LIVE,
+        StudioSpoke.VMC,
         StudioSpoke.TOOLS,
         StudioSpoke.TRACKS,
         StudioSpoke.FX_RACK
@@ -138,7 +145,7 @@ data class EditorState(
     val canUndo: Boolean = false,
     val isProcessingFx: Boolean = false,
     val isImportingAudio: Boolean = false,
-    val visualizerMode: VisualizerMode = VisualizerMode.WAVE_SPEC,
+    val visualizerMode: VisualizerMode = VisualizerMode.DUAL,
     val statusBanner: String = "HOLD TAC PAD TO RECORD .WAV OR IMPORT ANY AUDIO",
     val savedTakes: List<SavedTakeItem> = emptyList(),
     val lastExport: ExportedMp3Result? = null,

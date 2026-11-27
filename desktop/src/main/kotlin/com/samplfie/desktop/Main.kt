@@ -318,7 +318,10 @@ class SamplfieDesktopFrame(
         onInstallCatalogPlugin = { controller.installCatalogPlugin(it) },
         onUninstallCustomPlugin = { controller.uninstallCustomPlugin(it) },
         onImportPluginOrIrFile = { chooseAndImportPluginOrIr() },
-        onRescanLinuxPlugins = { controller.rescanNativeLinuxPlugins() }
+        onRescanLinuxPlugins = { controller.rescanNativeLinuxPlugins() },
+        onSetLadspaUrl = { controller.setLadspaFeedUrl(it) },
+        onFetchLadspa = { controller.fetchLadspaCatalog() },
+        onInstallLadspa = { controller.installLadspaPlugin(it) }
     )
 
     private val tunerPanel = ChromaticTunerPanel(

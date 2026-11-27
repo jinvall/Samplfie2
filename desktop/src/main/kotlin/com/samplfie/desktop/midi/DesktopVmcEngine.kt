@@ -36,6 +36,8 @@ enum class VmcTarget(val label: String, val isContinuous: Boolean) {
     STOMP_MOD_SCALE("Stomp Mod Scale", true),
     STOMP_SPACE_SCALE("Stomp Space Scale", true),
     FX_DRIVE("Overdrive Amount", true),
+    FX_DISTORTION_DRIVE("Distortion Drive", true),
+    FILTER_CUTOFF("Resonant Filter Cutoff", true),
     FX_WAH_FREQ("Wah Center Freq", true),
     FX_PHASER_MIX("Phaser Mix", true),
     FX_FLANGER_MIX("Flanger Mix", true),

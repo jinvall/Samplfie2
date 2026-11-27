@@ -11,7 +11,7 @@ enum class DesktopStation(val shortLabel: String, val fullTitle: String, val bad
     SAMPLES("SAMPLES", "LOOPER & SAMPLE REFINER", "LOOPS"),
     INSTRUMENTS("INST", "16-STEP SEQ & MIDI", "SYNTH"),
     TRACKS("TRACKS", "SYNCED TRACK TIMELINE", "SYNC"),
-    FX_STOMP("FX RACK", "14-MODULE PRO DSP RACK", "DSP"),
+    FX_STOMP("FX RACK", "13 FX + 3 FILTERS RACK", "DSP"),
     LIVE("LIVE", "LIVE STOMPBOX & RELEASE", "STAGE"),
     TOOLS("TOOLS", "PRO TOOLS & PLUGINS", "PRO"),
     TUNER("TUNER", "CHROMATIC & STROBE TUNER", "PITCH"),
@@ -307,6 +307,24 @@ enum class DesktopDelayDivision(val label: String, val quarterMultiplier: Float)
     SIXTEENTH("1/16", 0.25f)
 }
 
+enum class DesktopDistortionCurve(val label: String) {
+    SOFT_CLIP("SOFT CLIP"),
+    HARD_CLIP("HARD CLIP"),
+    TUBE_ASYM("TUBE ASYM"),
+    WAVEFOLD("WAVEFOLD"),
+    BIT_CRUSH("CRUSH"),
+    FUZZ("SILICON FUZZ")
+}
+
+enum class DesktopBiquadFilterMode(val label: String) {
+    LOW_PASS("LOW PASS"),
+    HIGH_PASS("HIGH PASS"),
+    BAND_PASS("BAND PASS"),
+    NOTCH("NOTCH"),
+    PEAKING("PEAK / FORM"),
+    FORMANT("VOWEL FORM")
+}
+
 data class DesktopFxState(
     val masterBypass: Boolean = false,
     // 1. Noise Gate / Cleanup
@@ -442,14 +460,46 @@ data class DesktopFxState(
     val reverbStereoWidth: Float = 0.75f,
     val reverbLowCutHz: Float = 120f,
     val reverbMix: Float = 0.35f,
-    val reverbLevel: Float = 1.0f
+    val reverbLevel: Float = 1.0f,
+    // 15. Multi-Topology Distortion
+    val distortionEnabled: Boolean = false,
+    val distortionCurve: DesktopDistortionCurve = DesktopDistortionCurve.HARD_CLIP,
+    val distortionDrive: Float = 6.0f,
+    val distortionToneHz: Float = 3600f,
+    val distortionSymmetry: Float = 0.25f,
+    val distortionMix: Float = 0.72f,
+    val distortionLevel: Float = 1.0f,
+    // 16. Dedicated Resonant Multi-Mode Filter
+    val filterEnabled: Boolean = false,
+    val filterMode: DesktopBiquadFilterMode = DesktopBiquadFilterMode.LOW_PASS,
+    val filterCutoffHz: Float = 1800f,
+    val filterResonanceQ: Float = 2.2f,
+    val filterDrive: Float = 1.2f,
+    val filterLfoRateHz: Float = 0.4f,
+    val filterLfoDepth: Float = 0.15f,
+    val filterMix: Float = 0.85f,
+    val filterLevel: Float = 1.0f
 ) {
-    val activeCount: Int
+    val fxActiveCount: Int
         get() = listOf(
             noiseGateEnabled, pitchEnabled, gainEnabled, octaveEnabled, overdriveEnabled,
-            wahEnabled, phaserEnabled, flangerEnabled, chorusEnabled,
+            distortionEnabled, flangerEnabled, chorusEnabled,
             rotaryEnabled, echoEnabled, delayEnabled, analogDelayEnabled, reverbEnabled
         ).count { it }
+
+    val filterActiveCount: Int
+        get() = listOf(
+            filterEnabled, wahEnabled, phaserEnabled
+        ).count { it }
+
+    val activeCount: Int
+        get() = fxActiveCount + filterActiveCount
+
+    companion object {
+        const val FX_MODULE_COUNT = 13
+        const val FILTER_MODULE_COUNT = 3
+        const val TOTAL_MODULES = FX_MODULE_COUNT + FILTER_MODULE_COUNT
+    }
 }
 
 data class DesktopStompState(

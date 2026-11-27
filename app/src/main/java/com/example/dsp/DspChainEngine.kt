@@ -46,11 +46,18 @@ object DspChainEngine {
         if (!stompActive || !stompbox.killDrive) {
             working = DspModules.applyGain(working, rack.gain, ch)
             working = DspModules.applyOverdrive(working, sr, ch, rack.overdrive)
+            working = DspModules.applyDistortion(working, sr, ch, rack.distortion)
         }
 
         // 3. Filters & Modulation (honors Stompbox Mod Kill + Mod Scale)
         if (!stompActive || !stompbox.killMod) {
             val modScale = if (stompActive) stompbox.modScale.coerceIn(0f, 1.8f) else 1f
+            working = DspModules.applyBiquadFilter(
+                working,
+                sr,
+                ch,
+                rack.biquadFilter.copy(mix = (rack.biquadFilter.mix * modScale).coerceIn(0f, 1f))
+            )
             working = DspModules.applyWah(
                 working,
                 sr,

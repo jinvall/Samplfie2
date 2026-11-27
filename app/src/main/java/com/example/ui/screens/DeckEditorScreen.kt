@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.audio.MicCaptureTelemetry
@@ -132,12 +134,17 @@ fun DeckEditorScreen(
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Status Banner + Import Any Audio + Quick OSC generator
+        // Status Banner + Import Any Audio + Quick OSC generator (Fixed height prevents live-update jitter)
         HardwarePanel {
             Text(
                 text = editorState.statusBanner,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (micTelemetry.isActiveCapture) TacCoral else NeonCyan
+                color = if (micTelemetry.isActiveCapture) TacCoral else NeonCyan,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 34.dp)
             )
             Spacer(modifier = Modifier.height(6.dp))
             FlowRow(
@@ -434,7 +441,9 @@ fun DeckEditorScreen(
                         "IDLE • ${micTelemetry.monitorWindowSec}s RING"
                     },
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (micTelemetry.isLiveMonitoring) EmeraldSignal else TextSecondary
+                    color = if (micTelemetry.isLiveMonitoring) EmeraldSignal else TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))

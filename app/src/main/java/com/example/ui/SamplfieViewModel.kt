@@ -6,12 +6,15 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.audio.AudioAnalyzer
 import com.example.audio.AudioBuffer
+import com.example.audio.AudioEngine
 import com.example.audio.AudioImporter
 import com.example.audio.AudioPlaybackEngine
 import com.example.audio.AudioSampleFormat
 import com.example.audio.MicCaptureEngine
 import com.example.audio.MicCaptureTelemetry
+import com.example.audio.Mp3Jump3rDecoder
 import com.example.audio.PlaybackState
+import com.example.audio.SamplerModuleSlot
 import com.example.audio.SpectrogramAnalyzer
 import com.example.audio.SpectrogramPalette
 import com.example.audio.WavCodec
@@ -56,6 +59,8 @@ import com.example.drums.DrumKitPreset
 import com.example.drums.DrumKitStyle
 import com.example.drums.DrumKitSynthesizerLibrary
 import com.example.plugins.AndroidPluginRepository
+import com.example.plugins.LadspaBrowserClient
+import com.example.plugins.LadspaBrowserEntry
 import com.example.plugins.PluginCatalogEntry
 import com.example.plugins.PluginCatalogRegistry
 import com.example.plugins.SamplfiePluginDefinition
@@ -173,6 +178,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
     )
     private val midiController = MidiControllerManager(appContext)
     private val studioEngine = StudioEngine()
+    val audioEngine = AudioEngine()
     val drumKitManager = DrumKitManager()
     private val pluginRepo = AndroidPluginRepository(File(appContext.filesDir, "plugins"))
 
@@ -242,6 +248,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
     val timelineState: StateFlow<TimelineState> = studioEngine.timelineState
     val syncedPlayhead: StateFlow<SyncedPlayheadState> = studioEngine.syncedPlayhead
     val customDrumKitState: StateFlow<CustomDrumKitState> = drumKitManager.state
+    val samplerSlots: StateFlow<List<SamplerModuleSlot>> = audioEngine.slots
 
     init {
         viewModelScope.launch {
@@ -251,6 +258,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
                 playbackEngine.setMasterVolume(loaded.masterVolume, loaded.isMasterMuted)
                 studioEngine.setMasterVolume(loaded.masterVolume, loaded.isMasterMuted)
                 micEngine.setMasterVolume(loaded.masterVolume, loaded.isMasterMuted)
+                audioEngine.setMasterVolume(loaded.masterVolume, loaded.isMasterMuted)
                 val style = CollabInstrumentStyle.fromOrdinalOrName(null, loaded.myStyleName)
                 _bandRecState.value = _bandRecState.value.copy(
                     myStyle = style,
@@ -315,7 +323,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         val cur = _workspaceConfig.value.radialWheelSpokes.toMutableList()
         if (cur.contains(spoke)) {
             if (cur.size > 4) cur.remove(spoke)
-        } else if (cur.size < 8) {
+        } else if (cur.size < 9) {
             cur.add(spoke)
         }
         _workspaceConfig.value = _workspaceConfig.value.copy(radialWheelSpokes = cur)
@@ -1191,6 +1199,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         playbackEngine.setMasterVolume(clamped, _rigConfig.value.isMasterMuted)
         studioEngine.setMasterVolume(clamped, _rigConfig.value.isMasterMuted)
         micEngine.setMasterVolume(clamped, _rigConfig.value.isMasterMuted)
+        audioEngine.setMasterVolume(clamped, _rigConfig.value.isMasterMuted)
         updateRigConfig { copy(masterVolume = clamped) }
     }
 
@@ -1200,6 +1209,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         playbackEngine.setMasterVolume(vol, nextMuted)
         studioEngine.setMasterVolume(vol, nextMuted)
         micEngine.setMasterVolume(vol, nextMuted)
+        audioEngine.setMasterVolume(vol, nextMuted)
         updateRigConfig { copy(isMasterMuted = nextMuted) }
     }
 
@@ -1584,6 +1594,8 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
             VmcTarget.STOMP_MOD_SCALE -> updateStompbox { copy(engaged = true, modScale = 0.2f + norm * 1.6f) }
             VmcTarget.STOMP_SPACE_SCALE -> updateStompbox { copy(engaged = true, spaceScale = 0.2f + norm * 1.6f) }
             VmcTarget.FX_DRIVE -> updateFxRack { copy(overdrive = overdrive.copy(enabled = true, drive = 1f + norm * 15f)) }
+            VmcTarget.FX_DISTORTION_DRIVE -> updateFxRack { copy(distortion = distortion.copy(enabled = true, drive = 1f + norm * 23f)) }
+            VmcTarget.FILTER_CUTOFF -> updateFxRack { copy(biquadFilter = biquadFilter.copy(enabled = true, cutoffHz = 80f + norm * 13920f)) }
             VmcTarget.FX_WAH_FREQ -> updateFxRack { copy(wah = wah.copy(enabled = true, centerFreqHz = 280f + norm * 2200f)) }
             VmcTarget.FX_PHASER_MIX -> updateFxRack { copy(phaser = phaser.copy(enabled = true, mix = norm)) }
             VmcTarget.FX_FLANGER_MIX -> updateFxRack { copy(flanger = flanger.copy(enabled = true, mix = norm)) }
@@ -2442,6 +2454,144 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    // --- 12-MODULE HARDWARE SAMPLER (AudioEngine + jump3r MP3) ---
+
+    fun sendDeckToSamplerModule(moduleIndex: Int, forceReplace: Boolean = false) {
+        val buf = activeOutputBuffer() ?: run {
+            _toastEvents.tryEmit("Load or record audio in Deck first")
+            return
+        }
+        val ed = _editorState.value
+        val slice = if (ed.selectionStart > 0.001f || ed.selectionEnd < 0.999f) {
+            buf.extractSelection(ed.selectionStart, ed.selectionEnd)
+        } else buf
+        val ok = if (forceReplace) {
+            audioEngine.forceReplaceModule(moduleIndex, slice, lockSlot = true, sourceTag = "DECK LOCK")
+        } else {
+            audioEngine.loadSampleToModule(moduleIndex, slice, lockSlot = true, sourceTag = "DECK LOCK")
+        }
+        if (ok) {
+            _toastEvents.tryEmit("Bound Deck to Module M${moduleIndex + 1} (Locked)")
+        } else {
+            _toastEvents.tryEmit("M${moduleIndex + 1} is locked — unlock or force replace")
+        }
+    }
+
+    fun loadUriToSamplerModule(moduleIndex: Int, uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val cacheDir = File(appContext.cacheDir, "sampler_mod_$moduleIndex").apply { mkdirs() }
+            val bytesAttempt = runCatching {
+                appContext.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            }.getOrNull()
+            val decoded = if (bytesAttempt != null && Mp3Jump3rDecoder.isLikelyMp3(bytesAttempt)) {
+                Mp3Jump3rDecoder.decodeMp3Bytes(bytesAttempt, "MP3_M${moduleIndex + 1}").map {
+                    it.buffer to "MP3 ${it.bitrateKbps}k"
+                }
+            } else {
+                AudioImporter.importUriAsWav(appContext, uri, cacheDir, targetSampleRate = null).map { (b, f) ->
+                    b to f.extension.uppercase().ifBlank { "AUDIO" }
+                }
+            }
+            withContext(Dispatchers.Main) {
+                decoded.onSuccess { (buf, tag) ->
+                    audioEngine.forceReplaceModule(moduleIndex, buf, lockSlot = true, sourceTag = tag)
+                    _toastEvents.tryEmit("Loaded ${buf.name} into M${moduleIndex + 1} ($tag)")
+                }.onFailure { err ->
+                    _toastEvents.tryEmit("Module M${moduleIndex + 1} load failed: ${err.message}")
+                }
+            }
+        }
+    }
+
+    fun triggerSamplerModule(moduleIndex: Int) = audioEngine.triggerModule(moduleIndex)
+    fun stopSamplerModule(moduleIndex: Int) = audioEngine.stopModule(moduleIndex)
+    fun stopAllSamplerModules() = audioEngine.stopAllModules()
+    fun toggleSamplerModuleLock(moduleIndex: Int) = audioEngine.toggleModuleLock(moduleIndex)
+    fun toggleSamplerModuleLoop(moduleIndex: Int) = audioEngine.toggleModuleLoop(moduleIndex)
+
+    fun updateSamplerModuleParams(
+        moduleIndex: Int,
+        gain: Float? = null,
+        pan: Float? = null,
+        pitchSemitones: Float? = null
+    ) = audioEngine.setModuleParams(moduleIndex, gain, pan, pitchSemitones)
+
+    fun clearSamplerModule(moduleIndex: Int, force: Boolean = false) {
+        if (!audioEngine.clearModule(moduleIndex, force)) {
+            _toastEvents.tryEmit("M${moduleIndex + 1} is locked — unlock first")
+        }
+    }
+
+    fun bounceSamplerModulesToDeck() {
+        val mix = audioEngine.mixActiveModulesSnapshot(targetSampleRate = _rigConfig.value.sampleRate)
+        if (mix == null) {
+            _toastEvents.tryEmit("Load at least 1 sampler module first")
+            return
+        }
+        mutateDryBufferWithUndo(mix, "12-MOD SAMPLER MIX LOADED", "BOUNCED 12-MODULE SAMPLER MIX")
+        _selectedSpoke.value = StudioSpoke.DECK
+    }
+
+    // --- LADSPA ("LACSPA") & JSON DLC CLIENT-SIDE BROWSER (ZERO-DCL) ---
+
+    fun setLadspaFeedUrl(url: String) {
+        _toolsState.value = _toolsState.value.copy(ladspaFeedUrl = url.take(240))
+    }
+
+    fun fetchLadspaCatalog(url: String = _toolsState.value.ladspaFeedUrl) {
+        val trimmed = url.trim()
+        if (trimmed.isBlank()) {
+            _toolsState.value = _toolsState.value.copy(ladspaStatus = "ENTER HTTP/HTTPS RDF OR JSON URL")
+            return
+        }
+        if (LadspaBrowserClient.isBlockedBinaryUrl(trimmed)) {
+            _toolsState.value = _toolsState.value.copy(
+                ladspaStatus = "BLOCKED (ZERO-DCL): NATIVE .SO/.JAR/.DEX BINARIES DISALLOWED"
+            )
+            _toastEvents.tryEmit("Blocked native binary URL (Zero-DCL policy)")
+            return
+        }
+        _toolsState.value = _toolsState.value.copy(
+            ladspaFeedUrl = trimmed,
+            isFetchingLadspa = true,
+            ladspaStatus = "FETCHING LADSPA/DLC CATALOG..."
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = LadspaBrowserClient.fetchFromUrl(trimmed)
+            withContext(Dispatchers.Main) {
+                result.onSuccess { entries ->
+                    val merged = (entries + LadspaBrowserClient.CURATED_COMMUNITY_LADSPA).distinctBy { it.id }
+                    _toolsState.value = _toolsState.value.copy(
+                        isFetchingLadspa = false,
+                        ladspaEntries = merged,
+                        ladspaStatus = "FETCHED ${entries.size} LADSPA/DLC ENTRIES (DIRECT HTTPS)",
+                        lastToolReport = "LADSPA CATALOG SYNCED (${merged.size} ENTRIES)"
+                    )
+                }.onFailure { err ->
+                    _toolsState.value = _toolsState.value.copy(
+                        isFetchingLadspa = false,
+                        ladspaStatus = "FEED ERROR (${err.message?.take(48) ?: "NETWORK"}) — USING CURATED CATALOG"
+                    )
+                }
+            }
+        }
+    }
+
+    fun installLadspaPlugin(entry: LadspaBrowserEntry) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val saved = pluginRepo.installPlugin(entry.toPluginDefinition())
+            val all = pluginRepo.loadAllPlugins()
+            withContext(Dispatchers.Main) {
+                _toolsState.value = _toolsState.value.copy(
+                    installedPlugins = all,
+                    ladspaStatus = "INSTALLED LADSPA #${entry.ladspaUniqueId}: ${saved.name}",
+                    lastToolReport = "INSTALLED LADSPA: ${saved.name}"
+                )
+                _toastEvents.tryEmit("Installed LADSPA ${saved.name}")
+            }
+        }
+    }
+
     private fun mutateDryBufferWithUndo(nextDry: AudioBuffer, banner: String, report: String? = null) {
         val currentDry = _editorState.value.dryBuffer
         if (currentDry != null && currentDry.frameCount > 0) {
@@ -2477,6 +2627,7 @@ class SamplfieViewModel(application: Application) : AndroidViewModel(application
     override fun onCleared() {
         super.onCleared()
         stemJob?.cancel()
+        audioEngine.release()
         micEngine.release()
         playbackEngine.release()
         networkTransmitter.release()

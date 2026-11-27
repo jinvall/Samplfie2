@@ -150,18 +150,10 @@ class LinuxSoundEngine(
 
         val total = newBuf.frameCount
         cursorFrame = cursorFrame.coerceIn(0, total - 1)
-        val formatChanged = oldBuf?.sampleRate != newBuf.sampleRate || oldBuf.channels != newBuf.channels
-        if (formatChanged) {
-            // Restart stream smoothly on new audio format while preserving loop & playing state
-            playingFlag.set(false)
-            runCatching { playThread?.join(120) }
-            startPlayback()
-        } else {
-            _playbackState.value = _playbackState.value.copy(
-                playheadFraction = cursorFrame.toFloat() / total.coerceAtLeast(1),
-                liveSpectrum = SignalAnalyzer.computeSpectrumBands(newBuf, cursorFrame, 1024, 48)
-            )
-        }
+        _playbackState.value = _playbackState.value.copy(
+            playheadFraction = cursorFrame.toFloat() / total.coerceAtLeast(1),
+            liveSpectrum = SignalAnalyzer.computeSpectrumBands(newBuf, cursorFrame, 1024, 48)
+        )
     }
 
     fun setBuffer(newBuf: DesktopAudioBuffer?) = updateBufferHot(newBuf, preserveLoopPlayback = false)
@@ -196,11 +188,15 @@ class LinuxSoundEngine(
         }
     }
 
+    @Volatile
+    private var playSessionGen: Long = 0L
+
     fun startPlayback() {
         val initial = bufferRef.get() ?: return
         if (initial.frameCount == 0) return
         if (playingFlag.getAndSet(true)) return
 
+        val myGen = ++playSessionGen
         _playbackState.value = _playbackState.value.copy(isPlaying = true)
         playThread = thread(isDaemon = true, name = "SamplfieDesktopPlay") {
             var line: SourceDataLine? = null
@@ -297,13 +293,15 @@ class LinuxSoundEngine(
                 }
             } catch (_: Exception) {
             } finally {
-                playingFlag.set(false)
                 runCatching { line?.drain(); line?.stop(); line?.close() }
-                _playbackState.value = _playbackState.value.copy(
-                    isPlaying = false,
-                    livePeak = 0f,
-                    liveRms = 0f
-                )
+                if (playSessionGen == myGen) {
+                    playingFlag.set(false)
+                    _playbackState.value = _playbackState.value.copy(
+                        isPlaying = false,
+                        livePeak = 0f,
+                        liveRms = 0f
+                    )
+                }
             }
         }
     }

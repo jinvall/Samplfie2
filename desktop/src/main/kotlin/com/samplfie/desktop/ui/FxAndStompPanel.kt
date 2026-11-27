@@ -1,7 +1,9 @@
 package com.samplfie.desktop.ui
 
 import com.samplfie.desktop.DesktopStudioUiState
+import com.samplfie.desktop.model.DesktopBiquadFilterMode
 import com.samplfie.desktop.model.DesktopDelayDivision
+import com.samplfie.desktop.model.DesktopDistortionCurve
 import com.samplfie.desktop.model.DesktopFxState
 import com.samplfie.desktop.model.DesktopPreset
 import com.samplfie.desktop.model.DesktopStompState
@@ -38,7 +40,7 @@ class FxAndStompPanel(
         background = StudioTheme.ObsidianChassis
     }
 
-    private val rackCountLabel = StudioTheme.hardwareLabel("0/14 ACTIVE", StudioTheme.NeonCyan, StudioTheme.MonoFont)
+    private val rackCountLabel = StudioTheme.hardwareLabel("FX 0/13 · FLT 0/3", StudioTheme.NeonCyan, StudioTheme.MonoFont)
     private val stompStatusLabel = StudioTheme.hardwareLabel("STOMP ENGAGED", StudioTheme.EmeraldSignal, StudioTheme.MonoFont)
     private val killDriveCb = darkCheck("KILL DRIVE", StudioTheme.TacCoral) { c -> onUpdateStomp { copy(killDrive = c) } }
     private val killModCb = darkCheck("KILL MOD", StudioTheme.VioletMod) { c -> onUpdateStomp { copy(killMod = c) } }
@@ -64,7 +66,7 @@ class FxAndStompPanel(
         // Top Rack Header + Presets Strip
         val presetsBar = StudioTheme.hardwarePanel(StudioTheme.NeonCyan).apply {
             layout = StudioWrapLayout(FlowLayout.LEFT, 8, 4)
-            add(StudioTheme.hardwareLabel("14-MODULE PRO DSP RACK", StudioTheme.NeonCyan, StudioTheme.TitleFont))
+            add(StudioTheme.hardwareLabel("13 FX + 3 FILTERS PRO DSP RACK", StudioTheme.NeonCyan, StudioTheme.TitleFont))
             add(rackCountLabel)
             add(StudioTheme.hardwareLabel("PRESETS:", StudioTheme.TextSecondary))
             DesktopPreset.entries.forEach { preset ->
@@ -119,7 +121,7 @@ class FxAndStompPanel(
         root.add(filterBar)
         root.add(Box.createVerticalStrut(StudioTheme.s(8)))
 
-        buildAllFourteenCards()
+        buildAllSixteenCards()
         rebuildVisibleGrid()
         root.add(cardsGrid)
         root.add(Box.createVerticalGlue())
@@ -141,7 +143,30 @@ class FxAndStompPanel(
         syncHooks += { fx -> syncFn(fx) }
     }
 
-    private fun buildAllFourteenCards() {
+    private fun buildAllSixteenCards() {
+        // F1. Dedicated Biquad Filter (Filter Line)
+        card(FxSectionFilter.FILTERS, "F1. BIQUAD FILTER (6 MODES)", "LPF / HPF / BPF / Notch / Peak / Vowel Formant + LFO Sweep", StudioTheme.NeonCyan, { c -> onUpdateFx { copy(filterEnabled = c) } }) {
+            val modeBox = addCombo("MODE:", DesktopBiquadFilterMode.entries.toTypedArray()) { m -> onUpdateFx { copy(filterEnabled = true, filterMode = m) } }
+            val cutoff = addSlider("CUTOFF FREQ", 80, 14000, 1800, { "$it Hz" }) { v -> onUpdateFx { copy(filterEnabled = true, filterCutoffHz = v.toFloat()) } }
+            val resQ = addSlider("RESONANCE Q", 5, 100, 22, { "${"%.1f".format(it / 10f)}" }) { v -> onUpdateFx { copy(filterEnabled = true, filterResonanceQ = v / 10f) } }
+            val drv = addSlider("FILTER DRIVE", 10, 40, 12, { "${"%.1f".format(it / 10f)}x" }) { v -> onUpdateFx { copy(filterEnabled = true, filterDrive = v / 10f) } }
+            val lfoRate = addSlider("LFO RATE", 1, 60, 4, { "${"%.1f".format(it / 10f)} Hz" }) { v -> onUpdateFx { copy(filterEnabled = true, filterLfoRateHz = v / 10f) } }
+            val lfoDepth = addSlider("LFO DEPTH", 0, 100, 15, { "$it%" }) { v -> onUpdateFx { copy(filterEnabled = true, filterLfoDepth = v / 100f) } }
+            val mix = addSlider("WET MIX", 0, 100, 85, { "$it%" }) { v -> onUpdateFx { copy(filterEnabled = true, filterMix = v / 100f) } }
+            val lvl = addSlider("LEVEL GAIN", 0, 200, 100, { "$it%" }) { v -> onUpdateFx { copy(filterEnabled = true, filterLevel = v / 100f) } }
+            return@card { fx ->
+                syncHeader(fx.filterEnabled)
+                if (modeBox.selectedItem != fx.filterMode) modeBox.selectedItem = fx.filterMode
+                cutoff.syncValue(fx.filterCutoffHz.roundToInt())
+                resQ.syncValue((fx.filterResonanceQ * 10f).roundToInt())
+                drv.syncValue((fx.filterDrive * 10f).roundToInt())
+                lfoRate.syncValue((fx.filterLfoRateHz * 10f).roundToInt())
+                lfoDepth.syncValue((fx.filterLfoDepth * 100f).roundToInt())
+                mix.syncValue((fx.filterMix * 100f).roundToInt())
+                lvl.syncValue((fx.filterLevel * 100f).roundToInt())
+            }
+        }
+
         // 1. Noise Removal & HPF
         card(FxSectionFilter.DYNAMICS_PITCH, "1. NOISE REMOVAL & HPF", "Gate Threshold, Reduction, Attack/Release, Knee & Level", StudioTheme.EmeraldSignal, { c -> onUpdateFx { copy(noiseGateEnabled = c) } }) {
             val hpfCb = addCheck("HPF", StudioTheme.EmeraldSignal) { c -> onUpdateFx { copy(noiseGateEnabled = true, noiseHighPassEnabled = c) } }
@@ -241,8 +266,27 @@ class FxAndStompPanel(
             }
         }
 
-        // 6. Auto / LFO / Pedal Wah
-        card(FxSectionFilter.DRIVE_MOD, "6. WAH FILTER", "State-Variable Bandpass: Auto Env / LFO / Manual Pedal", StudioTheme.AmberHot, { c -> onUpdateFx { copy(wahEnabled = c) } }) {
+        // 6. Multi-Topology Distortion
+        card(FxSectionFilter.DRIVE_MOD, "6. DISTORTION (6 CURVES)", "Soft/Hard Clip, Asymmetric Tube, Wavefold, Crush & Silicon Fuzz", StudioTheme.TacCoral, { c -> onUpdateFx { copy(distortionEnabled = c) } }) {
+            val curveBox = addCombo("CURVE:", DesktopDistortionCurve.entries.toTypedArray()) { c -> onUpdateFx { copy(distortionEnabled = true, distortionCurve = c) } }
+            val drv = addSlider("DRIVE", 10, 240, 60, { "${"%.1f".format(it / 10f)}x" }) { v -> onUpdateFx { copy(distortionEnabled = true, distortionDrive = v / 10f) } }
+            val sym = addSlider("ASYMMETRY", 0, 100, 25, { "$it%" }) { v -> onUpdateFx { copy(distortionEnabled = true, distortionSymmetry = v / 100f) } }
+            val tone = addSlider("TONE LPF", 600, 12000, 3600, { "$it Hz" }) { v -> onUpdateFx { copy(distortionEnabled = true, distortionToneHz = v.toFloat()) } }
+            val mix = addSlider("WET MIX", 0, 100, 72, { "$it%" }) { v -> onUpdateFx { copy(distortionEnabled = true, distortionMix = v / 100f) } }
+            val lvl = addSlider("LEVEL GAIN", 0, 200, 100, { "$it%" }) { v -> onUpdateFx { copy(distortionEnabled = true, distortionLevel = v / 100f) } }
+            return@card { fx ->
+                syncHeader(fx.distortionEnabled)
+                if (curveBox.selectedItem != fx.distortionCurve) curveBox.selectedItem = fx.distortionCurve
+                drv.syncValue((fx.distortionDrive * 10f).roundToInt())
+                sym.syncValue((fx.distortionSymmetry * 100f).roundToInt())
+                tone.syncValue(fx.distortionToneHz.roundToInt())
+                mix.syncValue((fx.distortionMix * 100f).roundToInt())
+                lvl.syncValue((fx.distortionLevel * 100f).roundToInt())
+            }
+        }
+
+        // F2. Auto / LFO / Pedal Wah (Filter Line)
+        card(FxSectionFilter.FILTERS, "F2. WAH FILTER", "State-Variable Bandpass: Auto Env / LFO / Manual Pedal", StudioTheme.AmberHot, { c -> onUpdateFx { copy(wahEnabled = c) } }) {
             val modeBox = addCombo("MODE:", DesktopWahMode.entries.toTypedArray()) { m -> onUpdateFx { copy(wahEnabled = true, wahMode = m) } }
             val freq = addSlider("CENTER FREQ", 350, 2200, 950, { "$it Hz" }) { v -> onUpdateFx { copy(wahEnabled = true, wahFreqHz = v.toFloat()) } }
             val q = addSlider("RESONANCE Q", 15, 80, 35, { "${"%.1f".format(it / 10f)}" }) { v -> onUpdateFx { copy(wahEnabled = true, wahResonanceQ = v / 10f) } }
@@ -264,8 +308,8 @@ class FxAndStompPanel(
             }
         }
 
-        // 7. Phaser
-        card(FxSectionFilter.DRIVE_MOD, "7. PHASER", "4/6/8-Stage Stereo All-Pass Network & Feedback", StudioTheme.VioletMod, { c -> onUpdateFx { copy(phaserEnabled = c) } }) {
+        // F3. Stereo Phaser (Filter Line)
+        card(FxSectionFilter.FILTERS, "F3. STEREO PHASER", "4/6/8-Stage Stereo All-Pass Network & Feedback", StudioTheme.VioletMod, { c -> onUpdateFx { copy(phaserEnabled = c) } }) {
             val stBox = addCombo("STAGES:", arrayOf(4, 6, 8)) { st -> onUpdateFx { copy(phaserEnabled = true, phaserStages = st) } }
             val rate = addSlider("RATE", 10, 500, 80, { "${"%.2f".format(it / 100f)} Hz" }) { v -> onUpdateFx { copy(phaserEnabled = true, phaserRateHz = v / 100f) } }
             val depth = addSlider("DEPTH", 0, 100, 75, { "$it%" }) { v -> onUpdateFx { copy(phaserEnabled = true, phaserDepth = v / 100f) } }
@@ -471,7 +515,7 @@ class FxAndStompPanel(
         try {
             val s = ui.stompState
             val fx = ui.fxState
-            rackCountLabel.text = "${fx.activeCount}/14 ACTIVE${if (fx.masterBypass) " (BYPASSED)" else ""}"
+            rackCountLabel.text = "FX ${fx.fxActiveCount}/13 · FLT ${fx.filterActiveCount}/3${if (fx.masterBypass) " (BYPASSED)" else ""}"
             stompStatusLabel.text = if (s.engaged) "ACTIVE • TILT ${(s.toneTilt * 100).toInt()}%" else "BYPASSED"
             killDriveCb.isSelected = s.killDrive
             killModCb.isSelected = s.killMod

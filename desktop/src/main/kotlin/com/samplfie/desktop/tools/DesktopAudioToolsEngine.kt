@@ -4,6 +4,8 @@ import com.samplfie.desktop.audio.DesktopSpectrogramAnalyzer
 import com.samplfie.desktop.audio.DesktopSpectrogramPalette
 import com.samplfie.desktop.model.DesktopAudioBuffer
 import com.samplfie.desktop.model.DesktopSampleFormat
+import com.samplfie.desktop.plugins.DesktopLadspaBrowserClient
+import com.samplfie.desktop.plugins.DesktopLadspaBrowserEntry
 import com.samplfie.desktop.plugins.DesktopPluginCatalogEntry
 import com.samplfie.desktop.plugins.DesktopPluginCatalogRegistry
 import com.samplfie.desktop.plugins.DesktopPluginDefinition
@@ -82,6 +84,10 @@ data class DesktopToolsState(
     val pluginChain: List<PluginSlotInstanceAlias> = emptyList(),
     val catalogEntries: List<DesktopPluginCatalogEntry> = DesktopPluginCatalogRegistry.INSTALLABLE_CATALOG,
     val nativeLinuxPlugins: List<NativeLinuxPluginInfo> = emptyList(),
+    val ladspaFeedUrl: String = DesktopLadspaBrowserClient.DEFAULT_LADSPA_FEED_URL,
+    val ladspaEntries: List<DesktopLadspaBrowserEntry> = DesktopLadspaBrowserClient.CURATED_COMMUNITY_LADSPA,
+    val isFetchingLadspa: Boolean = false,
+    val ladspaStatus: String = "READY — CURATED LADSPA CATALOG (ZERO-DCL)",
     val lastToolReport: String = "READY — SELECT SPECTRAL REGION OR AUDIO TOOL"
 )
 

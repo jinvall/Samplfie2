@@ -435,6 +435,117 @@ object DspModules {
         return out
     }
 
+    // 5b. Multi-Topology Distortion (Soft Clip / Hard Clip / Tube Asym / Wavefold / Crush / Silicon Fuzz)
+    fun applyDistortion(
+        samples: FloatArray,
+        sampleRate: Int,
+        channels: Int,
+        params: DistortionParams
+    ): FloatArray {
+        if (!params.enabled || samples.isEmpty()) return samples
+        val out = FloatArray(samples.size)
+        val frames = samples.size / channels
+        val drive = params.drive.coerceIn(1f, 24f)
+        val mix = params.mix.coerceIn(0f, 1f)
+        val dry = 1f - mix
+        val sym = params.symmetry.coerceIn(0f, 1f) * 0.45f
+        val fc = params.toneHz.coerceIn(450f, sampleRate * 0.45f)
+        val lpAlpha = (1f - exp(-2f * PI.toFloat() * fc / sampleRate)).coerceIn(0.01f, 1f)
+        val lp = FloatArray(channels)
+        val levelGain = params.level.coerceIn(0f, 2f)
+
+        for (f in 0 until frames) {
+            for (c in 0 until channels) {
+                val idx = f * channels + c
+                val x = samples[idx]
+                val pre = x * drive + sym * 0.35f
+                val shaped = when (params.curve) {
+                    DistortionCurve.SOFT_CLIP -> tanh(pre * 0.85f)
+                    DistortionCurve.HARD_CLIP -> pre.coerceIn(-0.82f, 0.82f) / 0.82f
+                    DistortionCurve.TUBE_ASYM -> {
+                        val pos = if (pre >= 0f) tanh(pre * 1.15f) else tanh(pre * 0.65f)
+                        (pos - tanh(sym * 0.35f)).coerceIn(-1f, 1f)
+                    }
+                    DistortionCurve.WAVEFOLD -> sin(pre * 1.35f).coerceIn(-1f, 1f)
+                    DistortionCurve.BIT_CRUSH -> {
+                        val steps = max(4f, 36f - drive * 1.25f)
+                        (kotlin.math.round(pre.coerceIn(-1.2f, 1.2f) * steps) / steps).coerceIn(-1f, 1f)
+                    }
+                    DistortionCurve.FUZZ -> {
+                        val hard = (pre * 1.4f).coerceIn(-1f, 1f)
+                        val sign = if (hard >= 0f) 1f else -1f
+                        sign * (1f - exp(-abs(hard) * 3.2f))
+                    }
+                }
+                lp[c] += lpAlpha * (shaped - lp[c])
+                out[idx] = ((x * dry + lp[c] * mix) * levelGain).coerceIn(-1f, 1f)
+            }
+        }
+        return out
+    }
+
+    // 5c. Dedicated Resonant Multi-Mode Filter (LP/HP/BP/Notch/Peaking/Formant + Drive + LFO)
+    fun applyBiquadFilter(
+        samples: FloatArray,
+        sampleRate: Int,
+        channels: Int,
+        params: BiquadFilterParams
+    ): FloatArray {
+        if (!params.enabled || samples.isEmpty()) return samples
+        val out = FloatArray(samples.size)
+        val frames = samples.size / channels
+        val mix = params.mix.coerceIn(0f, 1f)
+        val dry = 1f - mix
+        val q = params.resonanceQ.coerceIn(0.5f, 12f)
+        val qInv = 1f / q
+        val drive = params.drive.coerceIn(0.8f, 5f)
+        val levelGain = params.level.coerceIn(0f, 2f)
+
+        val low = FloatArray(channels)
+        val band = FloatArray(channels)
+        val low2 = FloatArray(channels)
+        val band2 = FloatArray(channels)
+
+        for (f in 0 until frames) {
+            val lfo = if (params.lfoDepth > 0.01f && params.lfoRateHz > 0.01f) {
+                sin(2.0 * PI * params.lfoRateHz * f / sampleRate).toFloat() * params.lfoDepth.coerceIn(0f, 1f)
+            } else {
+                0f
+            }
+            val baseCutoff = params.cutoffHz.coerceIn(45f, sampleRate * 0.42f)
+            val modCutoff = (baseCutoff * (1f + lfo * 0.75f)).coerceIn(45f, sampleRate * 0.42f)
+            val fCoeff = (2f * sin(PI.toFloat() * modCutoff / sampleRate)).coerceIn(0.002f, 0.92f)
+            val fCoeffFormant = (2f * sin(PI.toFloat() * (modCutoff * 1.48f).coerceIn(120f, sampleRate * 0.44f) / sampleRate))
+                .coerceIn(0.002f, 0.92f)
+
+            for (c in 0 until channels) {
+                val idx = f * channels + c
+                val raw = samples[idx]
+                val x = if (drive > 1.05f) tanh(raw * drive) / tanh(drive) else raw
+
+                low[c] += fCoeff * band[c]
+                val high = x - low[c] - qInv * band[c]
+                band[c] += fCoeff * high
+
+                val filtered = when (params.mode) {
+                    BiquadFilterMode.LOW_PASS -> low[c]
+                    BiquadFilterMode.HIGH_PASS -> high
+                    BiquadFilterMode.BAND_PASS -> band[c] * 1.35f
+                    BiquadFilterMode.NOTCH -> low[c] + high
+                    BiquadFilterMode.PEAKING -> x + band[c] * 0.85f
+                    BiquadFilterMode.FORMANT -> {
+                        low2[c] += fCoeffFormant * band2[c]
+                        val hp2 = x - low2[c] - qInv * band2[c]
+                        band2[c] += fCoeffFormant * hp2
+                        (band[c] * 0.75f + band2[c] * 0.65f + x * 0.25f)
+                    }
+                }.coerceIn(-1f, 1f)
+                out[idx] = ((raw * dry + filtered * mix) * levelGain).coerceIn(-1f, 1f)
+            }
+        }
+        return out
+    }
+
     // Master DJ Stompbox Tilt EQ + Dynamics Trim
     fun applyTiltEqAndTrim(
         samples: FloatArray,

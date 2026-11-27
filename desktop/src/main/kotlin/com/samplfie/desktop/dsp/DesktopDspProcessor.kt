@@ -1,7 +1,9 @@
 package com.samplfie.desktop.dsp
 
 import com.samplfie.desktop.model.DesktopAudioBuffer
+import com.samplfie.desktop.model.DesktopBiquadFilterMode
 import com.samplfie.desktop.model.DesktopDelayDivision
+import com.samplfie.desktop.model.DesktopDistortionCurve
 import com.samplfie.desktop.model.DesktopFxState
 import com.samplfie.desktop.model.DesktopStompState
 import com.samplfie.desktop.model.DesktopWahMode
@@ -51,9 +53,11 @@ object DesktopDspProcessor {
         if (!stomp.engaged || !stomp.killDrive) {
             if (fx.gainEnabled) buf = applyGain(buf, fx)
             if (fx.overdriveEnabled) buf = applyOverdrive(buf, fx, sr)
+            if (fx.distortionEnabled) buf = applyDistortion(buf, fx, sr)
         }
         if (!stomp.engaged || !stomp.killMod) {
             val mScale = if (stomp.engaged) stomp.modScale.coerceIn(0f, 1.8f) else 1f
+            if (fx.filterEnabled) buf = applyBiquadFilter(buf, fx, mScale, sr)
             if (fx.wahEnabled) buf = applyWah(buf, fx, mScale, sr)
             if (fx.phaserEnabled) buf = applyPhaser(buf, fx, mScale, sr)
             if (fx.flangerEnabled) buf = applyFlanger(buf, fx, mScale, sr)
@@ -336,6 +340,97 @@ object DesktopDspProcessor {
                 val shaped = (tanh(pre * drive + bias) - tanh(bias)) * norm
                 lpState[c] += lpAlpha * (shaped - lpState[c])
                 out[idx] = ((x * dry + lpState[c] * mix) * levelGain).coerceIn(-1f, 1f)
+            }
+        }
+        return buf.copy(samples = out)
+    }
+
+    private fun applyDistortion(buf: DesktopAudioBuffer, fx: DesktopFxState, sr: Int): DesktopAudioBuffer {
+        val ch = buf.channels
+        val out = FloatArray(buf.samples.size)
+        val drive = fx.distortionDrive.coerceIn(1f, 24f)
+        val mix = fx.distortionMix.coerceIn(0f, 1f)
+        val dry = 1f - mix
+        val sym = fx.distortionSymmetry.coerceIn(0f, 1f) * 0.45f
+        val fc = fx.distortionToneHz.coerceIn(450f, sr * 0.45f)
+        val lpAlpha = (1f - exp(-2f * PI.toFloat() * fc / sr)).coerceIn(0.01f, 1f)
+        val lp = FloatArray(ch)
+        val levelGain = fx.distortionLevel.coerceIn(0f, 2f)
+
+        for (f in 0 until buf.frameCount) {
+            for (c in 0 until ch) {
+                val idx = f * ch + c
+                val x = buf.samples[idx]
+                val pre = x * drive + sym * 0.35f
+                val shaped = when (fx.distortionCurve) {
+                    DesktopDistortionCurve.SOFT_CLIP -> tanh(pre * 0.85f)
+                    DesktopDistortionCurve.HARD_CLIP -> pre.coerceIn(-0.82f, 0.82f) / 0.82f
+                    DesktopDistortionCurve.TUBE_ASYM -> {
+                        val pos = if (pre >= 0f) tanh(pre * 1.15f) else tanh(pre * 0.65f)
+                        (pos - tanh(sym * 0.35f)).coerceIn(-1f, 1f)
+                    }
+                    DesktopDistortionCurve.WAVEFOLD -> sin(pre * 1.35f).coerceIn(-1f, 1f)
+                    DesktopDistortionCurve.BIT_CRUSH -> {
+                        val steps = max(4f, 36f - drive * 1.25f)
+                        (kotlin.math.round(pre.coerceIn(-1.2f, 1.2f) * steps) / steps).coerceIn(-1f, 1f)
+                    }
+                    DesktopDistortionCurve.FUZZ -> {
+                        val hard = (pre * 1.4f).coerceIn(-1f, 1f)
+                        val sign = if (hard >= 0f) 1f else -1f
+                        sign * (1f - exp(-abs(hard) * 3.2f))
+                    }
+                }
+                lp[c] += lpAlpha * (shaped - lp[c])
+                out[idx] = ((x * dry + lp[c] * mix) * levelGain).coerceIn(-1f, 1f)
+            }
+        }
+        return buf.copy(samples = out)
+    }
+
+    private fun applyBiquadFilter(buf: DesktopAudioBuffer, fx: DesktopFxState, mScale: Float, sr: Int): DesktopAudioBuffer {
+        val ch = buf.channels
+        val out = FloatArray(buf.samples.size)
+        val mix = (fx.filterMix * mScale).coerceIn(0f, 1f)
+        val dry = 1f - mix
+        val qInv = 1f / fx.filterResonanceQ.coerceIn(0.5f, 12f)
+        val drive = fx.filterDrive.coerceIn(0.8f, 5f)
+        val levelGain = fx.filterLevel.coerceIn(0f, 2f)
+        val low = FloatArray(ch)
+        val band = FloatArray(ch)
+        val low2 = FloatArray(ch)
+        val band2 = FloatArray(ch)
+
+        for (f in 0 until buf.frameCount) {
+            val lfo = if (fx.filterLfoDepth > 0.01f && fx.filterLfoRateHz > 0.01f) {
+                sin(2.0 * PI * fx.filterLfoRateHz * f / sr).toFloat() * fx.filterLfoDepth.coerceIn(0f, 1f)
+            } else 0f
+            val baseCutoff = fx.filterCutoffHz.coerceIn(45f, sr * 0.42f)
+            val modCutoff = (baseCutoff * (1f + lfo * 0.75f)).coerceIn(45f, sr * 0.42f)
+            val fCoef = (2f * sin(PI.toFloat() * modCutoff / sr)).coerceIn(0.002f, 0.92f)
+            val fCoef2 = (2f * sin(PI.toFloat() * (modCutoff * 1.48f).coerceIn(120f, sr * 0.44f) / sr)).coerceIn(0.002f, 0.92f)
+
+            for (c in 0 until ch) {
+                val idx = f * ch + c
+                val raw = buf.samples[idx]
+                val x = if (drive > 1.05f) tanh(raw * drive) / tanh(drive) else raw
+                low[c] += fCoef * band[c]
+                val high = x - low[c] - qInv * band[c]
+                band[c] += fCoef * high
+
+                val filtered = when (fx.filterMode) {
+                    DesktopBiquadFilterMode.LOW_PASS -> low[c]
+                    DesktopBiquadFilterMode.HIGH_PASS -> high
+                    DesktopBiquadFilterMode.BAND_PASS -> band[c] * 1.35f
+                    DesktopBiquadFilterMode.NOTCH -> low[c] + high
+                    DesktopBiquadFilterMode.PEAKING -> x + band[c] * 0.85f
+                    DesktopBiquadFilterMode.FORMANT -> {
+                        low2[c] += fCoef2 * band2[c]
+                        val hp2 = x - low2[c] - qInv * band2[c]
+                        band2[c] += fCoef2 * hp2
+                        (band[c] * 0.75f + band2[c] * 0.65f + x * 0.25f)
+                    }
+                }.coerceIn(-1f, 1f)
+                out[idx] = ((raw * dry + filtered * mix) * levelGain).coerceIn(-1f, 1f)
             }
         }
         return buf.copy(samples = out)

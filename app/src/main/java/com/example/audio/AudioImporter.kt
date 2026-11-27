@@ -34,12 +34,13 @@ object AudioImporter {
         targetSampleRate: Int? = null
     ): Result<Pair<AudioBuffer, File>> = withContext(Dispatchers.IO) {
         try {
-            val displayName = resolveDisplayName(context, uri)
+            val rawFileName = resolveDisplayName(context, uri)
+            val displayName = rawFileName
                 .substringBeforeLast('.')
                 .replace(Regex("[^a-zA-Z0-9._-]"), "_")
                 .ifBlank { "IMPORT_${System.currentTimeMillis()}" }
 
-            // Fast path: check if source is a standard RIFF WAV file without loading huge streams blindly
+            // Fast path 1: check if source is a standard RIFF WAV file without loading huge streams blindly
             val wavHeadBytes = runCatching {
                 context.contentResolver.openInputStream(uri)?.use { stream ->
                     readWavIfHeaderMatches(stream)
@@ -49,7 +50,19 @@ object AudioImporter {
             val decodedBuffer = if (wavHeadBytes != null) {
                 WavCodec.readWav(wavHeadBytes, displayName)
             } else {
-                decodeWithMediaCodec(context, uri, displayName)
+                // Fast path 2: decode MP3 files cleanly via pure-Java jump3r MPGLib before MediaCodec
+                val mp3Bytes = runCatching {
+                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                        readMp3IfMatches(stream, rawFileName)
+                    }
+                }.getOrNull()
+                if (mp3Bytes != null) {
+                    Mp3Jump3rDecoder.decodeMp3Bytes(mp3Bytes, displayName).getOrNull()
+                        ?.buffer
+                        ?: decodeWithMediaCodec(context, uri, displayName)
+                } else {
+                    decodeWithMediaCodec(context, uri, displayName)
+                }
             }
 
             require(decodedBuffer.frameCount > 0) { "Imported file contains no playable audio frames" }
@@ -94,6 +107,32 @@ object AudioImporter {
 
         val baos = ByteArrayOutputStream(minOf(65536, MAX_WAV_FASTPATH_BYTES))
         baos.write(head, 0, 12)
+        val buf = ByteArray(16 * 1024)
+        while (baos.size() < MAX_WAV_FASTPATH_BYTES) {
+            val r = stream.read(buf)
+            if (r <= 0) break
+            val allowed = minOf(r, MAX_WAV_FASTPATH_BYTES - baos.size())
+            baos.write(buf, 0, allowed)
+        }
+        return baos.toByteArray()
+    }
+
+    private fun readMp3IfMatches(stream: InputStream, fileName: String): ByteArray? {
+        val probe = ByteArray(16)
+        var probeRead = 0
+        while (probeRead < probe.size) {
+            val r = stream.read(probe, probeRead, probe.size - probeRead)
+            if (r < 0) break
+            probeRead += r
+        }
+        if (probeRead < 3) return null
+        val isId3 = probe[0] == 'I'.code.toByte() && probe[1] == 'D'.code.toByte() && probe[2] == '3'.code.toByte()
+        val isMpegSync = (probe[0].toInt() and 0xFF) == 0xFF && (probe[1].toInt() and 0xE0) == 0xE0
+        val isMp3Ext = fileName.endsWith(".mp3", ignoreCase = true)
+        if (!isId3 && !isMpegSync && !isMp3Ext) return null
+
+        val baos = ByteArrayOutputStream(minOf(65536, MAX_WAV_FASTPATH_BYTES))
+        baos.write(probe, 0, probeRead)
         val buf = ByteArray(16 * 1024)
         while (baos.size() < MAX_WAV_FASTPATH_BYTES) {
             val r = stream.read(buf)

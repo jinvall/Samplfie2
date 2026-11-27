@@ -6,6 +6,8 @@ import com.samplfie.desktop.midi.VmcMsgType
 import com.samplfie.desktop.midi.VmcRouteMode
 import com.samplfie.desktop.midi.VmcTarget
 import com.samplfie.desktop.model.DesktopAudioBuffer
+import com.samplfie.desktop.model.DesktopBiquadFilterMode
+import com.samplfie.desktop.model.DesktopDistortionCurve
 import com.samplfie.desktop.model.DesktopFxState
 import com.samplfie.desktop.model.DesktopLiveMode
 import com.samplfie.desktop.model.DesktopStation
@@ -74,6 +76,18 @@ data class SessionHandoffSnapshot(
             "fx.overdriveEnabled" to fxState.overdriveEnabled.toString(),
             "fx.driveAmount" to fxState.driveAmount.toString(),
             "fx.overdriveLevel" to fxState.overdriveLevel.toString(),
+            "fx.distortionEnabled" to fxState.distortionEnabled.toString(),
+            "fx.distortionCurve" to fxState.distortionCurve.name,
+            "fx.distortionDrive" to fxState.distortionDrive.toString(),
+            "fx.distortionToneHz" to fxState.distortionToneHz.toString(),
+            "fx.distortionMix" to fxState.distortionMix.toString(),
+            "fx.distortionLevel" to fxState.distortionLevel.toString(),
+            "fx.filterEnabled" to fxState.filterEnabled.toString(),
+            "fx.filterMode" to fxState.filterMode.name,
+            "fx.filterCutoffHz" to fxState.filterCutoffHz.toString(),
+            "fx.filterQ" to fxState.filterResonanceQ.toString(),
+            "fx.filterMix" to fxState.filterMix.toString(),
+            "fx.filterLevel" to fxState.filterLevel.toString(),
             "fx.wahEnabled" to fxState.wahEnabled.toString(),
             "fx.wahFreqHz" to fxState.wahFreqHz.toString(),
             "fx.wahLevel" to fxState.wahLevel.toString(),
@@ -232,6 +246,20 @@ data class SessionHandoffSnapshot(
                 overdriveEnabled = b("fx.overdriveEnabled", false),
                 driveAmount = f("fx.driveAmount", 4f),
                 overdriveLevel = f("fx.overdriveLevel", 1.0f),
+                distortionEnabled = b("fx.distortionEnabled", false),
+                distortionCurve = runCatching { DesktopDistortionCurve.valueOf(map["fx.distortionCurve"] ?: "") }
+                    .getOrDefault(DesktopDistortionCurve.HARD_CLIP),
+                distortionDrive = f("fx.distortionDrive", 6.0f),
+                distortionToneHz = f("fx.distortionToneHz", 3600f),
+                distortionMix = f("fx.distortionMix", 0.72f),
+                distortionLevel = f("fx.distortionLevel", 1.0f),
+                filterEnabled = b("fx.filterEnabled", false),
+                filterMode = runCatching { DesktopBiquadFilterMode.valueOf(map["fx.filterMode"] ?: "") }
+                    .getOrDefault(DesktopBiquadFilterMode.LOW_PASS),
+                filterCutoffHz = f("fx.filterCutoffHz", 1800f),
+                filterResonanceQ = f("fx.filterQ", 2.2f),
+                filterMix = f("fx.filterMix", 0.85f),
+                filterLevel = f("fx.filterLevel", 1.0f),
                 wahEnabled = b("fx.wahEnabled", false),
                 wahFreqHz = f("fx.wahFreqHz", 950f),
                 wahLevel = f("fx.wahLevel", 1.0f),

@@ -5,6 +5,7 @@ import com.samplfie.desktop.audio.DesktopPlaybackState
 import com.samplfie.desktop.audio.DesktopSpectrogramPalette
 import com.samplfie.desktop.model.DesktopSampleFormat
 import com.samplfie.desktop.model.VisualizerMode
+import com.samplfie.desktop.plugins.DesktopLadspaBrowserEntry
 import com.samplfie.desktop.plugins.DesktopPluginCatalogEntry
 import com.samplfie.desktop.plugins.DesktopPluginSlotInstance
 import com.samplfie.desktop.tools.ChannelScope
@@ -91,7 +92,10 @@ class ToolsAndPluginsPanel(
     private val onInstallCatalogPlugin: (DesktopPluginCatalogEntry) -> Unit,
     private val onUninstallCustomPlugin: (String) -> Unit,
     private val onImportPluginOrIrFile: () -> Unit,
-    private val onRescanLinuxPlugins: () -> Unit
+    private val onRescanLinuxPlugins: () -> Unit,
+    private val onSetLadspaUrl: (String) -> Unit = {},
+    private val onFetchLadspa: () -> Unit = {},
+    private val onInstallLadspa: (DesktopLadspaBrowserEntry) -> Unit = {}
 ) : JPanel() {
 
     private var updating = false
@@ -99,8 +103,14 @@ class ToolsAndPluginsPanel(
     private var playState = DesktopPlaybackState()
     private var toolsState = DesktopToolsState()
 
-    private val headerInfoLabel = StudioTheme.hardwareLabel("NO AUDIO LOADED", StudioTheme.TextPrimary, StudioTheme.MonoFont)
-    private val reportLabel = StudioTheme.hardwareLabel("READY", StudioTheme.EmeraldSignal, StudioTheme.MonoFont)
+    private val headerInfoLabel = StudioTheme.hardwareLabel("NO AUDIO LOADED", StudioTheme.TextPrimary, StudioTheme.MonoFont).apply {
+        preferredSize = StudioTheme.dim(520, 20)
+        maximumSize = Dimension(Int.MAX_VALUE, StudioTheme.s(22))
+    }
+    private val reportLabel = StudioTheme.hardwareLabel("READY", StudioTheme.EmeraldSignal, StudioTheme.MonoFont).apply {
+        preferredSize = StudioTheme.dim(520, 20)
+        maximumSize = Dimension(Int.MAX_VALUE, StudioTheme.s(22))
+    }
 
     private val playBtn = StudioTheme.hardwareButton("PLAY", StudioTheme.EmeraldSignal, filled = true) { onTogglePlay() }
     private val stopBtn = StudioTheme.hardwareButton("STOP", StudioTheme.TextSecondary) { onStop() }
@@ -181,7 +191,27 @@ class ToolsAndPluginsPanel(
     )
     private val slotBindings = mutableMapOf<String, SlotUiBinding>()
 
-    // --- Tab 5: Plugin Installer & Linux Scanner ---
+    // --- Tab 5: Plugin Installer, LADSPA Browser & Linux Scanner ---
+    private val ladspaUrlField = StudioTheme.styleTextField(JTextField("", 38)).apply {
+        maximumSize = StudioTheme.dim(540, 30)
+        preferredSize = StudioTheme.dim(460, 30)
+    }
+    private val ladspaStatusLabel = StudioTheme.hardwareLabel(
+        "READY — CURATED LADSPA CATALOG (ZERO-DCL)",
+        StudioTheme.NeonCyan,
+        StudioTheme.MonoSmallFont
+    ).apply {
+        preferredSize = StudioTheme.dim(620, 18)
+        maximumSize = Dimension(Int.MAX_VALUE, StudioTheme.s(20))
+    }
+    private val ladspaFetchBtn = StudioTheme.hardwareButton("FETCH RDF/JSON", StudioTheme.EmeraldSignal, filled = true) {
+        onSetLadspaUrl(ladspaUrlField.text)
+        onFetchLadspa()
+    }
+    private val ladspaEntriesHost = JPanel().apply {
+        isOpaque = false
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+    }
     private val nativeScannerHost = JPanel().apply {
         isOpaque = false
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -192,6 +222,7 @@ class ToolsAndPluginsPanel(
     }
     private var renderedNativeSignature: String = "__init__"
     private var renderedCatalogSignature: String = "__init__"
+    private var renderedLadspaSignature: String = "__init__"
 
     init {
         background = StudioTheme.ObsidianChassis
@@ -471,6 +502,24 @@ class ToolsAndPluginsPanel(
         }
         add(importCard)
         add(Box.createVerticalStrut(8))
+
+        val ladspaCard = StudioTheme.hardwarePanel(StudioTheme.NeonCyan).apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            add(StudioTheme.hardwareLabel("LADSPA (LACSPA) & JSON DLC BROWSER (DIRECT CLIENT · ZERO PYTHON · ZERO-DCL)", StudioTheme.NeonCyan, StudioTheme.TitleFont))
+            add(Box.createVerticalStrut(4))
+            val urlRow = StudioTheme.wrapRowPanel(FlowLayout.LEFT, 8, 4).apply {
+                add(StudioTheme.hardwareLabel("RDF / DLC URL:", StudioTheme.TextSecondary, StudioTheme.MonoSmallFont))
+                add(ladspaUrlField)
+                add(ladspaFetchBtn)
+            }
+            add(urlRow)
+            add(ladspaStatusLabel)
+            add(Box.createVerticalStrut(6))
+            add(ladspaEntriesHost)
+        }
+        add(ladspaCard)
+        add(Box.createVerticalStrut(8))
+
         add(catalogHost)
         add(Box.createVerticalStrut(8))
         add(nativeScannerHost)
@@ -792,6 +841,47 @@ class ToolsAndPluginsPanel(
             }
             catalogHost.revalidate()
             catalogHost.repaint()
+        }
+
+        if (!ladspaUrlField.hasFocus() && ladspaUrlField.text != tools.ladspaFeedUrl) {
+            ladspaUrlField.text = tools.ladspaFeedUrl
+        }
+        ladspaStatusLabel.text = tools.ladspaStatus.take(96)
+        ladspaFetchBtn.isEnabled = !tools.isFetchingLadspa
+        ladspaFetchBtn.text = if (tools.isFetchingLadspa) "FETCHING..." else "FETCH RDF/JSON"
+
+        val ladSig = tools.ladspaEntries.joinToString(",") { it.id } + "|" + tools.installedPlugins.joinToString(",") { it.id }
+        if (ladSig != renderedLadspaSignature) {
+            renderedLadspaSignature = ladSig
+            ladspaEntriesHost.removeAll()
+            val installedIds = tools.installedPlugins.map { it.id }.toSet()
+            tools.ladspaEntries.forEach { entry ->
+                val isInstalled = installedIds.contains(entry.id)
+                val rowCard = StudioTheme.hardwarePanel(if (isInstalled) StudioTheme.EmeraldSignal else StudioTheme.HairlineDivider).apply {
+                    layout = BorderLayout(8, 4)
+                    val info = JPanel().apply {
+                        isOpaque = false
+                        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                        add(StudioTheme.hardwareLabel("${entry.name} (#${entry.ladspaUniqueId}) • ${entry.creator} • ${entry.sizeLabel}", StudioTheme.TextPrimary, StudioTheme.LabelFont))
+                        add(StudioTheme.hardwareLabel(entry.description, StudioTheme.TextSecondary, StudioTheme.BodyFont))
+                    }
+                    val actions = StudioTheme.wrapRowPanel(FlowLayout.RIGHT, 6, 2).apply {
+                        if (isInstalled) {
+                            add(StudioTheme.hardwareButton("+ CHAIN", StudioTheme.NeonCyan, filled = true) { onAddPluginToChain(entry.id) })
+                        } else {
+                            add(StudioTheme.hardwareButton("GET / INSTALL", StudioTheme.EmeraldSignal, filled = true) {
+                                onInstallLadspa(entry)
+                            })
+                        }
+                    }
+                    add(info, BorderLayout.CENTER)
+                    add(actions, BorderLayout.EAST)
+                }
+                ladspaEntriesHost.add(rowCard)
+                ladspaEntriesHost.add(Box.createVerticalStrut(4))
+            }
+            ladspaEntriesHost.revalidate()
+            ladspaEntriesHost.repaint()
         }
 
         val natSig = tools.nativeLinuxPlugins.joinToString(",") { it.path }

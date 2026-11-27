@@ -2,7 +2,10 @@ package com.example.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -14,9 +17,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -43,6 +48,7 @@ import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -51,12 +57,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.audio.MicCaptureTelemetry
 import com.example.audio.PlaybackState
 import com.example.config.SecretsVaultState
@@ -193,7 +202,7 @@ internal fun buildStudioSpokes(
             StudioSpoke.FX_RACK -> SpokeDescriptor(
                 spoke = StudioSpoke.FX_RACK,
                 title = "FX RACK",
-                subtitle = "${fxRack.activeCount}/14 FX",
+                subtitle = "${fxRack.fxActiveCount}/13 · ${fxRack.filterActiveCount}/3",
                 angleDeg = angle,
                 accent = VioletMod,
                 icon = Icons.Filled.Tune
@@ -260,15 +269,15 @@ fun CircularStudioWheel(
             .fillMaxWidth()
             .testTag("${tagPrefix}circular_studio_wheel")
     ) {
-        val cappedWheel = if (maxWidth < 360.dp) min(maxWheelDp, 260f) else maxWheelDp
+        val cappedWheel = if (maxWidth < 360.dp) min(maxWheelDp, 248f) else maxWheelDp
         val wheelSize: Dp = min(maxWidth.value, cappedWheel).dp
         val nodeSize: Dp = when {
-            wheelSize < 280.dp -> 60.dp
+            wheelSize < 280.dp -> 56.dp
             wheelSize < 340.dp -> 74.dp
             else -> 88.dp
         }
         val hubSize: Dp = when {
-            wheelSize < 280.dp -> 82.dp
+            wheelSize < 280.dp -> 78.dp
             wheelSize < 340.dp -> 106.dp
             else -> 124.dp
         }
@@ -278,19 +287,41 @@ fun CircularStudioWheel(
             modifier = Modifier
                 .size(wheelSize)
                 .align(Alignment.Center)
+                .clip(CircleShape)
         ) {
+            Image(
+                painter = painterResource(id = R.drawable.img_studio_rotunda),
+                contentDescription = "Photorealistic Circular Studio Rotunda",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(0.42f)
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                ObsidianChassis.copy(alpha = 0.55f),
+                                ObsidianChassis.copy(alpha = 0.72f),
+                                ObsidianChassis.copy(alpha = 0.92f)
+                            )
+                        )
+                    )
+            )
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val center = Offset(size.width / 2f, size.height / 2f)
                 val outerR = size.minDimension * 0.36f
                 val innerR = size.minDimension * 0.19f
 
-                // Circular studio room ambiance
+                // Circular studio hardware ring glow
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            NeonCyan.copy(alpha = 0.16f),
-                            GunmetalDeck.copy(alpha = 0.55f),
-                            ObsidianChassis
+                            NeonCyan.copy(alpha = 0.18f),
+                            GunmetalDeck.copy(alpha = 0.35f),
+                            Color.Transparent
                         ),
                         center = center,
                         radius = size.minDimension * 0.5f
@@ -616,11 +647,13 @@ fun CircularStudioHub(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
+                Column(modifier = Modifier.weight(1f).heightIn(min = 34.dp)) {
                     Text(
                         text = "CIRCULAR PRODUCTION BOOTH",
                         style = MaterialTheme.typography.titleSmall,
-                        color = TextPrimary
+                        color = TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = editorState.statusBanner,
@@ -667,6 +700,9 @@ fun CircularStudioHub(
                 )
             }
         }
+
+        // Photorealistic Circular Studio Bay Walkthrough (Enter each physical studio bay)
+        StudioBayWalkthroughStrip(onEnterBay = onSelectSpoke)
 
         // 4-Device Live Band Collaborators & Instrument Style Strip
         BandCollaboratorsStrip(
@@ -894,7 +930,7 @@ fun CircularStudioHub(
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
-            Text("RADIAL 360° WHEEL SPOKES (4–8)", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+            Text("RADIAL 360° WHEEL SPOKES (4–9)", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
             Spacer(modifier = Modifier.height(4.dp))
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
@@ -921,21 +957,146 @@ fun CircularStudioHub(
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "DECK: ${activeBuf?.name ?: "Empty"} • FX: ${fxRack.activeCount}/12 • STOMP: ${if (stompbox.engaged) "ON (${stompbox.liveMode.title})" else "BYPASS"}",
+                text = "DECK: ${activeBuf?.name ?: "Empty"} • FX: ${fxRack.fxActiveCount}/13 • FLT: ${fxRack.filterActiveCount}/3 • STOMP: ${if (stompbox.engaged) stompbox.liveMode.title else "BYPASS"}",
                 style = MaterialTheme.typography.labelSmall,
-                color = TextPrimary
+                color = TextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
                 text = "LOOPER: $activeLoops/4 Active • TIMELINE: $activeTracks/4 Tracks (${"%.1f".format(syncedPlayhead.playheadSec)}s) • NET: ${networkState.statusMessage}",
                 style = MaterialTheme.typography.labelSmall,
-                color = TextSecondary
+                color = TextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             if (editorState.lastLocalExport != null) {
                 Text(
                     text = "LAST EXPORT (${editorState.lastLocalExport.formatLabel}): ${editorState.lastLocalExport.displayLocation}",
                     style = MaterialTheme.typography.labelSmall,
-                    color = EmeraldSignal
+                    color = EmeraldSignal,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
+            }
+        }
+    }
+}
+
+private data class StudioBayWalkthroughItem(
+    val spoke: StudioSpoke,
+    val bayTitle: String,
+    val bayRole: String,
+    val drawableRes: Int,
+    val accent: Color
+)
+
+@Composable
+private fun StudioBayWalkthroughStrip(
+    onEnterBay: (StudioSpoke) -> Unit
+) {
+    val bays = listOf(
+        StudioBayWalkthroughItem(StudioSpoke.DECK, "CAPTURE CONSOLE BAY", "Desk, Monitors & WAV Deck", R.drawable.img_console_bay, NeonCyan),
+        StudioBayWalkthroughItem(StudioSpoke.SAMPLES, "ACOUSTIC & SAMPLER BAY", "12-Mod Sampler & Loop Booth", R.drawable.img_acoustic_booth, EmeraldSignal),
+        StudioBayWalkthroughItem(StudioSpoke.INSTRUMENTS, "SYNTH & DRUM ISLAND", "16-Step Seq & Kit Stage", R.drawable.img_synth_bay, AmberHot),
+        StudioBayWalkthroughItem(StudioSpoke.FX_RACK, "OUTBOARD DSP & FILTER RACK", "13 FX + 3 Filters Patchbay", R.drawable.img_rack_hardware, VioletMod),
+        StudioBayWalkthroughItem(StudioSpoke.TOOLS, "MASTERING & LADSPA SUITE", "Spectral & Plugin Console", R.drawable.img_console_bay, MagentaFx),
+        StudioBayWalkthroughItem(StudioSpoke.LIVE, "LIVE ROTUNDA STAGE", "Stompbox & Band Broadcast", R.drawable.img_studio_rotunda, TacCoral)
+    )
+
+    HardwarePanel(borderColor = ElevatedBezel) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "STUDIO WALKTHROUGH · STEP INTO ANY PHYSICAL BAY",
+                style = MaterialTheme.typography.labelMedium,
+                color = TextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            bays.forEach { bay ->
+                Surface(
+                    modifier = Modifier
+                        .width(172.dp)
+                        .height(98.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { onEnterBay(bay.spoke) }
+                        .testTag("walkthrough_bay_${bay.spoke.name.lowercase()}"),
+                    shape = RoundedCornerShape(10.dp),
+                    color = ObsidianChassis,
+                    border = BorderStroke(1.dp, bay.accent.copy(alpha = 0.72f))
+                ) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        Image(
+                            painter = painterResource(id = bay.drawableRes),
+                            contentDescription = bay.bayTitle,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .alpha(0.68f)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    Brush.verticalGradient(
+                                        colors = listOf(
+                                            Color.Transparent,
+                                            ObsidianChassis.copy(alpha = 0.78f),
+                                            ObsidianChassis.copy(alpha = 0.94f)
+                                        )
+                                    )
+                                )
+                        )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(8.dp),
+                            verticalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Surface(
+                                color = ObsidianChassis.copy(alpha = 0.8f),
+                                shape = RoundedCornerShape(4.dp),
+                                border = BorderStroke(1.dp, bay.accent.copy(alpha = 0.7f))
+                            ) {
+                                Text(
+                                    text = "ENTER ${bay.spoke.shortLabel} ➔",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = bay.accent,
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                )
+                            }
+                            Column {
+                                Text(
+                                    text = bay.bayTitle,
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = TextPrimary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = bay.bayRole,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = TextSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }

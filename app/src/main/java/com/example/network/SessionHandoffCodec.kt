@@ -3,8 +3,12 @@ package com.example.network
 import com.example.audio.AudioBuffer
 import com.example.audio.WavCodec
 import com.example.dsp.AnalogDelayParams
+import com.example.dsp.BiquadFilterMode
+import com.example.dsp.BiquadFilterParams
 import com.example.dsp.ChorusParams
 import com.example.dsp.DelayParams
+import com.example.dsp.DistortionCurve
+import com.example.dsp.DistortionParams
 import com.example.dsp.EchoParams
 import com.example.dsp.FlangerParams
 import com.example.dsp.FxRackState
@@ -88,6 +92,18 @@ data class SessionHandoffSnapshot(
             "fx.overdriveEnabled" to fxRack.overdrive.enabled.toString(),
             "fx.driveAmount" to fxRack.overdrive.drive.toString(),
             "fx.overdriveLevel" to fxRack.overdrive.level.toString(),
+            "fx.distortionEnabled" to fxRack.distortion.enabled.toString(),
+            "fx.distortionCurve" to fxRack.distortion.curve.name,
+            "fx.distortionDrive" to fxRack.distortion.drive.toString(),
+            "fx.distortionToneHz" to fxRack.distortion.toneHz.toString(),
+            "fx.distortionMix" to fxRack.distortion.mix.toString(),
+            "fx.distortionLevel" to fxRack.distortion.level.toString(),
+            "fx.filterEnabled" to fxRack.biquadFilter.enabled.toString(),
+            "fx.filterMode" to fxRack.biquadFilter.mode.name,
+            "fx.filterCutoffHz" to fxRack.biquadFilter.cutoffHz.toString(),
+            "fx.filterQ" to fxRack.biquadFilter.resonanceQ.toString(),
+            "fx.filterMix" to fxRack.biquadFilter.mix.toString(),
+            "fx.filterLevel" to fxRack.biquadFilter.level.toString(),
             "fx.wahEnabled" to fxRack.wah.enabled.toString(),
             "fx.wahFreqHz" to fxRack.wah.centerFreqHz.toString(),
             "fx.wahLevel" to fxRack.wah.level.toString(),
@@ -252,6 +268,24 @@ data class SessionHandoffSnapshot(
                     enabled = b("fx.overdriveEnabled", false),
                     drive = f("fx.driveAmount", 4f),
                     level = f("fx.overdriveLevel", 1.0f)
+                ),
+                distortion = DistortionParams(
+                    enabled = b("fx.distortionEnabled", false),
+                    curve = runCatching { DistortionCurve.valueOf(map["fx.distortionCurve"] ?: "") }
+                        .getOrDefault(DistortionCurve.HARD_CLIP),
+                    drive = f("fx.distortionDrive", 6.0f),
+                    toneHz = f("fx.distortionToneHz", 3600f),
+                    mix = f("fx.distortionMix", 0.72f),
+                    level = f("fx.distortionLevel", 1.0f)
+                ),
+                biquadFilter = BiquadFilterParams(
+                    enabled = b("fx.filterEnabled", false),
+                    mode = runCatching { BiquadFilterMode.valueOf(map["fx.filterMode"] ?: "") }
+                        .getOrDefault(BiquadFilterMode.LOW_PASS),
+                    cutoffHz = f("fx.filterCutoffHz", 1800f),
+                    resonanceQ = f("fx.filterQ", 2.2f),
+                    mix = f("fx.filterMix", 0.85f),
+                    level = f("fx.filterLevel", 1.0f)
                 ),
                 wah = WahParams(
                     enabled = b("fx.wahEnabled", false),

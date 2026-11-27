@@ -201,6 +201,46 @@ data class AnalogDelayParams(
     val level: Float = 1.0f
 )
 
+enum class DistortionCurve(val label: String) {
+    SOFT_CLIP("SOFT CLIP"),
+    HARD_CLIP("HARD CLIP"),
+    TUBE_ASYM("TUBE ASYM"),
+    WAVEFOLD("WAVEFOLD"),
+    BIT_CRUSH("CRUSH"),
+    FUZZ("SILICON FUZZ")
+}
+
+data class DistortionParams(
+    val enabled: Boolean = false,
+    val curve: DistortionCurve = DistortionCurve.HARD_CLIP,
+    val drive: Float = 6.0f,
+    val toneHz: Float = 3600f,
+    val symmetry: Float = 0.25f,
+    val mix: Float = 0.72f,
+    val level: Float = 1.0f
+)
+
+enum class BiquadFilterMode(val label: String) {
+    LOW_PASS("LOW PASS"),
+    HIGH_PASS("HIGH PASS"),
+    BAND_PASS("BAND PASS"),
+    NOTCH("NOTCH"),
+    PEAKING("PEAK / FORM"),
+    FORMANT("VOWEL FORM")
+}
+
+data class BiquadFilterParams(
+    val enabled: Boolean = false,
+    val mode: BiquadFilterMode = BiquadFilterMode.LOW_PASS,
+    val cutoffHz: Float = 1800f,
+    val resonanceQ: Float = 2.2f,
+    val drive: Float = 1.2f,
+    val lfoRateHz: Float = 0.4f,
+    val lfoDepth: Float = 0.15f,
+    val mix: Float = 0.85f,
+    val level: Float = 1.0f
+)
+
 data class ReverbParams(
     val enabled: Boolean = false,
     val roomSize: Float = 0.65f,
@@ -220,8 +260,10 @@ data class FxRackState(
     val gain: GainParams = GainParams(),
     val octave: OctaveParams = OctaveParams(),
     val overdrive: OverdriveParams = OverdriveParams(),
+    val distortion: DistortionParams = DistortionParams(),
     val wah: WahParams = WahParams(),
     val phaser: PhaserParams = PhaserParams(),
+    val biquadFilter: BiquadFilterParams = BiquadFilterParams(),
     val flanger: FlangerParams = FlangerParams(),
     val chorus: ChorusParams = ChorusParams(),
     val rotarySpeaker: RotaryParams = RotaryParams(),
@@ -230,15 +272,14 @@ data class FxRackState(
     val analogDelay: AnalogDelayParams = AnalogDelayParams(),
     val reverb: ReverbParams = ReverbParams()
 ) {
-    val activeCount: Int
+    val fxActiveCount: Int
         get() = listOf(
             noiseRemoval.enabled,
             pitchSpeed.enabled,
             gain.enabled,
             octave.enabled,
             overdrive.enabled,
-            wah.enabled,
-            phaser.enabled,
+            distortion.enabled,
             flanger.enabled,
             chorus.enabled,
             rotarySpeaker.enabled,
@@ -247,6 +288,22 @@ data class FxRackState(
             analogDelay.enabled,
             reverb.enabled
         ).count { it }
+
+    val filterActiveCount: Int
+        get() = listOf(
+            biquadFilter.enabled,
+            wah.enabled,
+            phaser.enabled
+        ).count { it }
+
+    val activeCount: Int
+        get() = fxActiveCount + filterActiveCount
+
+    companion object {
+        const val FX_MODULE_COUNT = 13
+        const val FILTER_MODULE_COUNT = 3
+        const val TOTAL_MODULES = FX_MODULE_COUNT + FILTER_MODULE_COUNT
+    }
 }
 
 enum class FxPreset(val label: String) {

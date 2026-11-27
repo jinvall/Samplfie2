@@ -8,17 +8,17 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -72,6 +72,7 @@ import kotlin.math.min
  * - SPECTROGRAM: Time-frequency STFT heatmap rendered with the 10-stop gradient & 2D box select.
  * - WAVE + SPEC / DUAL: Simultaneous Waveform + Spectrogram or Waveform + FFT stacked view.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AudioVisualizerPanel(
     dryPeaks: WaveformPeaks,
@@ -111,11 +112,10 @@ fun AudioVisualizerPanel(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            FlowRow(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 VisualizerMode.entries.forEach { mode ->
                     val selected = mode == visualizerMode
@@ -132,7 +132,7 @@ fun AudioVisualizerPanel(
                             text = mode.label,
                             style = MaterialTheme.typography.labelSmall,
                             color = if (selected) NeonCyan else TextSecondary,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 5.dp)
                         )
                     }
                 }
@@ -185,7 +185,7 @@ fun AudioVisualizerPanel(
                     onSeekPlayhead = onSeekPlayhead,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(176.dp)
+                        .height(144.dp)
                 )
             }
             VisualizerMode.SPECTRUM -> {
@@ -197,7 +197,7 @@ fun AudioVisualizerPanel(
                     isMasterBypass = isMasterBypass,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(176.dp)
+                        .height(144.dp)
                 )
             }
             VisualizerMode.SPECTROGRAM -> {
